@@ -1,0 +1,379 @@
+export type AppLocale = "ko" | "en";
+
+type Dict = Record<string, string>;
+
+const en: Dict = {
+  "brand.name": "Drift",
+  "brand.sub": "Shell + agent",
+  "chat.title": "Chat",
+  "chat.sub": "Cursor agent",
+  "chat.new": "Reset chat",
+  "chat.hide": "Hide chat",
+  "chat.show": "Show chat",
+  "chrome.toggleNav": "Toggle sidebar",
+  "chrome.toggleAgent": "Toggle chat panel",
+  "strip.cpu": "CPU",
+  "strip.load": "Load",
+  "strip.mem": "Mem",
+  "strip.disk": "Disk",
+  "strip.gpu": "GPU",
+  "strip.cpuTitle": "CPU load",
+  "strip.loadTitle": "1-minute load average",
+  "strip.memTitle": "Free memory (RAM)",
+  "strip.diskTitle": "Root disk usage",
+  "strip.gpuTitle": "GPU utilization",
+  "chat.placeholder": "Plan, search, build anything…",
+  "chat.send": "Send",
+  "chat.empty.title": "How can I help?",
+  "chat.empty.sub":
+    "Ask about the active shell. Commands that change the system will ask for approval.",
+  "chat.suggest.port": "Port 3000",
+  "chat.suggest.git": "Git status",
+  "chat.suggest.disk": "Disk usage",
+  "chat.suggest.port.prompt": "Which process is using port 3000?",
+  "chat.suggest.git.prompt": "Summarize git status in this folder",
+  "chat.suggest.disk.prompt": "Show disk usage for the current directory",
+  "status.needKey": "API key needed",
+  "status.ready": "Ready",
+  "strip.shellIdle": "Shell idle",
+  "strip.shellBusy": "Agent busy",
+  "strip.stop": "Stop",
+  "nav.sessions": "Sessions",
+  "nav.sessions.sub": "Local shell & SSH hosts",
+  "nav.files": "Files",
+  "nav.files.sub": "Follows the active tab",
+  "nav.settings": "Settings",
+  "nav.settings.sub": "Key, model, language",
+  "sidebar.hosts": "Hosts",
+  "sidebar.local": "Local terminal",
+  "sidebar.localGroup": "This Mac",
+  "sidebar.localShell": "Local shell",
+  "sidebar.files": "Files",
+  "files.server": "Server",
+  "files.local": "This Mac",
+  "files.filter": "Filter by name",
+  "files.refresh": "Refresh",
+  "files.collapse": "Collapse",
+  "files.expand": "Expand",
+  "files.serverEmpty": "Connect an SSH session to browse the server",
+  "files.dropHint": "Drop files to copy here",
+  "files.dropping": "Copying…",
+  "files.dropOk": "Copied",
+  "files.dropFail": "Copy failed",
+  "files.uploading": "Uploading…",
+  "files.uploadOk": "Uploaded",
+  "files.uploadFail": "Upload failed",
+  "files.downloading": "Downloading…",
+  "files.download": "Download to This Mac",
+  "files.downloadOk": "Downloaded",
+  "files.downloadFail": "Download failed",
+  "files.noLocalDest": "Open a local folder first",
+  "files.rename": "Rename",
+  "files.renamePrompt": "New name",
+  "files.dialogCancel": "Cancel",
+  "files.renameOk": "Renamed",
+  "files.renameFail": "Rename failed",
+  "files.renameInvalid": "Name cannot contain /",
+  "files.delete": "Delete",
+  "files.deleteConfirm": "Delete {kind} “{name}”?",
+  "files.deleteOk": "Deleted",
+  "files.deleteFail": "Delete failed",
+  "files.kindFile": "file",
+  "files.kindDir": "folder",
+  "files.copyPath": "Copy path",
+  "files.pathCopied": "Path copied",
+  "files.pathCopyFail": "Could not copy path",
+  "files.history": "Recent transfers",
+  "files.history.upload": "Upload",
+  "files.history.download": "Download",
+  "files.history.copy": "Copy",
+  "files.history.rename": "Rename",
+  "files.history.delete": "Delete",
+  "files.manyItems": "{count} items",
+  "files.dropNoPath": "Could not read dropped file paths",
+  "files.progress": "{percent}%",
+  "files.progressNamed": "{percent}% · {name}",
+  "sidebar.addSsh": "Add SSH",
+  "sidebar.import": "Import config",
+  "sidebar.ssh": "SSH sessions",
+  "sidebar.empty":
+    "No saved SSH hosts yet.\nAdd one or import ~/.ssh/config.",
+  "tabs.empty": "Open a local shell or an SSH session",
+  "mode.agent": "Agent",
+  "mode.agent.desc": "Run commands with approval",
+  "mode.plan": "Plan",
+  "mode.plan.desc": "Outline steps, don’t execute",
+  "mode.ask": "Ask",
+  "mode.ask.desc": "Answers only, read-only",
+  "mode.changed": "Mode → {mode}",
+  "settings.title": "Settings",
+  "settings.lead":
+    "API key is encrypted in the OS keychain. Sessions never store secrets.",
+  "settings.apiKey": "Cursor API key",
+  "settings.model": "Default model",
+  "model.search": "Search models",
+  "model.empty": "No models found",
+  "settings.language": "Language",
+  "settings.refreshModels": "Refresh",
+  "settings.clearKey": "Clear",
+  "settings.close": "Close",
+  "settings.save": "Save",
+  "settings.keySaved": "API key saved",
+  "settings.keyCleared": "API key cleared",
+  "update.title": "Update available",
+  "update.lead": "A new version of Drift is ready.",
+  "update.current": "Current",
+  "update.latest": "Latest",
+  "update.later": "Later",
+  "update.download": "Update",
+  "update.downloading": "Downloading… {percent}%",
+  "update.install": "Restart & install",
+  "update.error": "Update failed: {error}",
+  "ssh.title": "SSH session",
+  "ssh.lead":
+    "Passwords are never saved. Use keys or enter credentials in the terminal.",
+  "ssh.name": "Name",
+  "ssh.host": "Host",
+  "ssh.user": "User",
+  "ssh.port": "Port",
+  "ssh.identity": "Identity file",
+  "ssh.jump": "ProxyJump",
+  "ssh.dir": "Start dir",
+  "ssh.cancel": "Cancel",
+  "ssh.save": "Save session",
+  "ssh.imported": "Imported hosts from ~/.ssh/config",
+  "ssh.importOk": "Imported {created} of {total} hosts",
+  "ssh.importUpdated": "Updated {count} hosts from ~/.ssh/config",
+  "ssh.importEmpty": "No Host entries found in ~/.ssh/config",
+  "ssh.importMissing": "~/.ssh/config not found",
+  "ssh.importFail": "Import failed: {error}",
+  "approval.wait": "Waiting for approval",
+  "approval.deny": "Deny",
+  "approval.session": "Allow for session",
+  "approval.once": "Allow once",
+  "approval.denied": "Denied",
+  "approval.allowedSession": "Allowed for session",
+  "approval.allowedOnce": "Allowed once",
+  "thinking": "Thinking",
+  "thinking.running": "Running",
+  "thinking.approval": "Waiting for approval",
+  "error.openTab": "Open a terminal tab first.",
+  "lang.changed": "Language → {lang}",
+};
+
+const ko: Dict = {
+  "brand.name": "Drift",
+  "brand.sub": "셸 + 에이전트",
+  "chat.title": "채팅",
+  "chat.sub": "Cursor 에이전트",
+  "chat.new": "대화 초기화",
+  "chat.hide": "채팅 숨기기",
+  "chat.show": "채팅 보이기",
+  "chrome.toggleNav": "사이드바 토글",
+  "chrome.toggleAgent": "채팅 패널 토글",
+  "strip.cpu": "CPU",
+  "strip.load": "Load",
+  "strip.mem": "Mem",
+  "strip.disk": "Disk",
+  "strip.gpu": "GPU",
+  "strip.cpuTitle": "CPU 부하",
+  "strip.loadTitle": "1분 로드 평균",
+  "strip.memTitle": "여유 메모리 (RAM)",
+  "strip.diskTitle": "루트 디스크 사용량",
+  "strip.gpuTitle": "GPU 사용률",
+  "chat.placeholder": "계획하고, 찾고, 무엇이든 만들어 보세요…",
+  "chat.send": "전송",
+  "chat.empty.title": "무엇을 도와드릴까요?",
+  "chat.empty.sub":
+    "활성 셸에 대해 물어보세요. 시스템을 바꾸는 명령은 먼저 승인을 요청합니다.",
+  "chat.suggest.port": "포트 3000",
+  "chat.suggest.git": "Git 상태",
+  "chat.suggest.disk": "디스크 사용량",
+  "chat.suggest.port.prompt": "포트 3000을 쓰는 프로세스가 뭐야?",
+  "chat.suggest.git.prompt": "이 폴더의 git status를 요약해줘",
+  "chat.suggest.disk.prompt": "현재 디렉터리 디스크 사용량을 보여줘",
+  "status.needKey": "API 키 필요",
+  "status.ready": "준비됨",
+  "strip.shellIdle": "Shell idle",
+  "strip.shellBusy": "Agent busy",
+  "strip.stop": "Stop",
+  "nav.sessions": "Sessions",
+  "nav.sessions.sub": "로컬 셸 & SSH 호스트",
+  "nav.files": "Files",
+  "nav.files.sub": "활성 탭 경로를 따름",
+  "nav.settings": "Settings",
+  "nav.settings.sub": "키, 모델, 언어",
+  "sidebar.hosts": "호스트",
+  "sidebar.local": "로컬 터미널",
+  "sidebar.localGroup": "This Mac",
+  "sidebar.localShell": "로컬 셸",
+  "sidebar.files": "Files",
+  "files.server": "Server",
+  "files.local": "This Mac",
+  "files.filter": "이름으로 필터",
+  "files.refresh": "새로고침",
+  "files.collapse": "접기",
+  "files.expand": "펼치기",
+  "files.serverEmpty": "SSH 세션에 연결하면 서버 파일을 볼 수 있습니다",
+  "files.dropHint": "파일을 놓으면 여기로 복사됩니다",
+  "files.dropping": "복사 중…",
+  "files.dropOk": "복사됨",
+  "files.dropFail": "복사 실패",
+  "files.uploading": "업로드 중…",
+  "files.uploadOk": "업로드됨",
+  "files.uploadFail": "업로드 실패",
+  "files.downloading": "다운로드 중…",
+  "files.download": "This Mac으로 받기",
+  "files.downloadOk": "다운로드됨",
+  "files.downloadFail": "다운로드 실패",
+  "files.noLocalDest": "먼저 로컬 폴더를 여세요",
+  "files.rename": "이름 바꾸기",
+  "files.renamePrompt": "새 이름",
+  "files.dialogCancel": "취소",
+  "files.renameOk": "이름 변경됨",
+  "files.renameFail": "이름 변경 실패",
+  "files.renameInvalid": "이름에 / 를 넣을 수 없습니다",
+  "files.delete": "삭제",
+  "files.deleteConfirm": "{kind} “{name}”을(를) 삭제할까요?",
+  "files.deleteOk": "삭제됨",
+  "files.deleteFail": "삭제 실패",
+  "files.kindFile": "파일",
+  "files.kindDir": "폴더",
+  "files.copyPath": "경로 복사",
+  "files.pathCopied": "경로를 복사했습니다",
+  "files.pathCopyFail": "경로를 복사하지 못했습니다",
+  "files.history": "최근 전송",
+  "files.history.upload": "업로드",
+  "files.history.download": "다운로드",
+  "files.history.copy": "복사",
+  "files.history.rename": "이름 변경",
+  "files.history.delete": "삭제",
+  "files.manyItems": "{count}개 항목",
+  "files.dropNoPath": "드롭한 파일 경로를 읽을 수 없습니다",
+  "files.progress": "{percent}%",
+  "files.progressNamed": "{percent}% · {name}",
+  "sidebar.addSsh": "SSH 추가",
+  "sidebar.import": "config 가져오기",
+  "sidebar.ssh": "SSH 세션",
+  "sidebar.empty":
+    "저장된 SSH 호스트가 없습니다.\n추가하거나 ~/.ssh/config를 가져오세요.",
+  "tabs.empty": "로컬 셸 또는 SSH 세션을 여세요",
+  "mode.agent": "Agent",
+  "mode.agent.desc": "승인 후 명령 실행",
+  "mode.plan": "Plan",
+  "mode.plan.desc": "계획만 작성, 실행 없음",
+  "mode.ask": "Ask",
+  "mode.ask.desc": "답변만, 읽기 전용",
+  "mode.changed": "모드 → {mode}",
+  "settings.title": "설정",
+  "settings.lead":
+    "API 키는 OS 키체인에 암호화되어 저장됩니다. 세션에는 비밀값을 저장하지 않습니다.",
+  "settings.apiKey": "Cursor API 키",
+  "settings.model": "기본 모델",
+  "model.search": "모델 검색",
+  "model.empty": "모델이 없습니다",
+  "settings.language": "언어",
+  "settings.refreshModels": "새로고침",
+  "settings.clearKey": "삭제",
+  "settings.close": "닫기",
+  "settings.save": "저장",
+  "settings.keySaved": "API 키를 저장했습니다",
+  "settings.keyCleared": "API 키를 삭제했습니다",
+  "update.title": "업데이트 가능",
+  "update.lead": "새 버전의 Drift를 사용할 수 있습니다.",
+  "update.current": "현재",
+  "update.latest": "최신",
+  "update.later": "나중에",
+  "update.download": "업데이트",
+  "update.downloading": "다운로드 중… {percent}%",
+  "update.install": "재시작하여 설치",
+  "update.error": "업데이트 실패: {error}",
+  "ssh.title": "SSH 세션",
+  "ssh.lead":
+    "비밀번호는 저장되지 않습니다. 키를 쓰거나 터미널에서 직접 입력하세요.",
+  "ssh.name": "이름",
+  "ssh.host": "호스트",
+  "ssh.user": "사용자",
+  "ssh.port": "포트",
+  "ssh.identity": "Identity 파일",
+  "ssh.jump": "ProxyJump",
+  "ssh.dir": "시작 디렉터리",
+  "ssh.cancel": "취소",
+  "ssh.save": "세션 저장",
+  "ssh.imported": "~/.ssh/config에서 호스트를 가져왔습니다",
+  "ssh.importOk": "{total}개 중 {created}개 가져옴",
+  "ssh.importUpdated": "이미 있는 호스트 {count}개 갱신됨",
+  "ssh.importEmpty": "~/.ssh/config에 Host 항목이 없습니다",
+  "ssh.importMissing": "~/.ssh/config 파일이 없습니다",
+  "ssh.importFail": "가져오기 실패: {error}",
+  "approval.wait": "승인 대기",
+  "approval.deny": "거부",
+  "approval.session": "세션 동안 허용",
+  "approval.once": "한 번 허용",
+  "approval.denied": "거부됨",
+  "approval.allowedSession": "세션 동안 허용됨",
+  "approval.allowedOnce": "한 번 허용됨",
+  "thinking": "생각 중",
+  "thinking.running": "실행 중",
+  "thinking.approval": "승인 대기 중",
+  "error.openTab": "먼저 터미널 탭을 여세요.",
+  "lang.changed": "언어 → {lang}",
+};
+
+const tables: Record<AppLocale, Dict> = { en, ko };
+
+let locale: AppLocale = "ko";
+
+export function getLocale(): AppLocale {
+  return locale;
+}
+
+export function setLocale(next: AppLocale): void {
+  locale = next === "en" ? "en" : "ko";
+  if (typeof document !== "undefined") {
+    document.documentElement.lang = locale;
+  }
+}
+
+export function t(key: string, vars?: Record<string, string>): string {
+  const table = tables[locale] ?? en;
+  let out = table[key] ?? en[key] ?? key;
+  if (vars) {
+    for (const [k, v] of Object.entries(vars)) {
+      out = out.replaceAll(`{${k}}`, v);
+    }
+  }
+  return out;
+}
+
+export function normalizeLocale(value: unknown): AppLocale {
+  return value === "en" ? "en" : "ko";
+}
+
+/** Apply text to elements with data-i18n / data-i18n-placeholder / data-i18n-title. */
+export function applyDomI18n(root: ParentNode = document): void {
+  root.querySelectorAll<HTMLElement>("[data-i18n]").forEach((el) => {
+    const key = el.dataset.i18n;
+    if (!key) return;
+    el.textContent = t(key);
+  });
+  root.querySelectorAll<HTMLElement>("[data-i18n-html]").forEach((el) => {
+    const key = el.dataset.i18nHtml;
+    if (!key) return;
+    el.innerHTML = t(key).replaceAll("\n", "<br>");
+  });
+  root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+    "[data-i18n-placeholder]"
+  ).forEach((el) => {
+    const key = el.dataset.i18nPlaceholder;
+    if (!key) return;
+    el.placeholder = t(key);
+  });
+  root.querySelectorAll<HTMLElement>("[data-i18n-title]").forEach((el) => {
+    const key = el.dataset.i18nTitle;
+    if (!key) return;
+    const label = t(key);
+    el.title = label;
+    if (el.hasAttribute("aria-label")) el.setAttribute("aria-label", label);
+  });
+}

@@ -1,0 +1,250 @@
+import { spawn as ptySpawn, type IPty } from "node-pty";
+import { spawn } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { readlink } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { newId, type ExecResult, type TargetRef } from "@drift/core";
+
+export interface LocalPtyBackend {
+  readonly id: string;
+  readonly pid: number;
+  readonly target: TargetRef;
+  onData(cb: (chunk: string) => void): () => void;
+  onExit(cb: (info: { exitCode: number; signal?: number }) => void): () => void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  exec(
+    command: string,
+    opts?: { cwd?: string; timeoutMs?: number }
+  ): Promise<ExecResult>;
+  getCwd(): Promise<string>;
+  dispose(): Promise<void>;
+}
+
+/** Env injected by Cursor agent / npm that must not leak into the user shell. */
+const SANDBOX_ENV_RE = /cursor-sandbox-cache/i;
+const STRIP_ENV_KEYS = new Set([
+  "CURSOR_AGENT",
+  "CURSOR_AGENT_STORE_FILES_DIR",
+  "CURSOR_AGENT_STORE_SHARED_PATHS",
+  "CURSOR_CONVERSATION_ID",
+  "CURSOR_REQUEST_ID",
+  "CURSOR_SPAWNED_BY_EXTENSION_ID",
+  "CURSOR_SPAWN_CHAIN",
+  "CI",
+]);
+
+function cleanEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value !== "string") continue;
+    // Cursor redirects Homebrew/npm caches into a sandbox dir. Interactive
+    // shells then hit empty caches (e.g. "==> Downloading Homebrew API data")
+    // while iTerm uses ~/Library/Caches/Homebrew and looks fine.
+    if (STRIP_ENV_KEYS.has(key) || SANDBOX_ENV_RE.test(value)) continue;
+    env[key] = value;
+  }
+  if (!env.PATH) {
+    env.PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+  }
+  // Electron/Cursor often sets TERM=dumb; a real PTY needs a usable TERM.
+  if (!env.TERM || env.TERM === "dumb") env.TERM = "xterm-256color";
+  if (!env.HOME) env.HOME = os.homedir();
+  // Agnoster / powerline prompts need a UTF-8 locale for correct glyph width.
+  const lang = env.LC_ALL || env.LANG || "";
+  if (!/utf-?8/i.test(lang)) {
+    env.LANG = "en_US.UTF-8";
+    if (env.LC_ALL) env.LC_ALL = "en_US.UTF-8";
+  }
+  return env;
+}
+
+function defaultShell(): string {
+  if (process.platform === "win32") {
+    return process.env.COMSPEC || "powershell.exe";
+  }
+  const candidates = [process.env.SHELL, "/bin/zsh", "/bin/bash", "/bin/sh"];
+  for (const c of candidates) {
+    if (c && c.startsWith("/")) return c;
+  }
+  return "/bin/zsh";
+}
+
+export function createLocalPty(opts?: {
+  cwd?: string;
+  cols?: number;
+  rows?: number;
+}): LocalPtyBackend {
+  const shell = defaultShell();
+  const cwd = opts?.cwd ?? process.env.HOME ?? os.homedir();
+  const id = newId();
+  const env = cleanEnv();
+  // Bash: OSC 7 via PROMPT_COMMAND. zsh: tiny ZDOTDIR wrapper that sources ~/.zshrc.
+  const osc =
+    'printf "\\033]7;file://%s%s\\033\\\\" "localhost" "$PWD"';
+  if (!env.PROMPT_COMMAND) {
+    env.PROMPT_COMMAND = osc;
+  } else if (!env.PROMPT_COMMAND.includes("]7;")) {
+    env.PROMPT_COMMAND = `${osc}; ${env.PROMPT_COMMAND}`;
+  }
+  if (path.basename(shell) === "zsh") {
+    const zdot = path.join(os.tmpdir(), `drift-zsh-${id}`);
+    mkdirSync(zdot, { recursive: true });
+    writeFileSync(
+      path.join(zdot, ".zshrc"),
+      [
+        // Source user config first (oh-my-zsh may reset precmd hooks).
+        '[[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"',
+        // Powerline prompts (agnoster) glitch on wrap if RPROMPT indent is off.
+        "ZLE_RPROMPT_INDENT=${ZLE_RPROMPT_INDENT:-0}",
+        // Emit OSC 7 after omz so cwd tracking survives theme init.
+        'pwd_report(){ printf "\\033]7;file://localhost%s\\033\\\\" "$PWD"; }',
+        "typeset -ga precmd_functions",
+        'precmd_functions=("${(@)precmd_functions:#pwd_report}")',
+        "precmd_functions+=(pwd_report)",
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      path.join(zdot, ".zprofile"),
+      '[[ -f "$HOME/.zprofile" ]] && source "$HOME/.zprofile"\n',
+      "utf8"
+    );
+    env.ZDOTDIR = zdot;
+  }
+  const pty: IPty = ptySpawn(shell, ["-l"], {
+    name: "xterm-256color",
+    cols: opts?.cols ?? 120,
+    rows: opts?.rows ?? 30,
+    cwd,
+    env,
+  });
+
+  let disposed = false;
+  let cwdGuess = cwd;
+  const listeners = new Set<(chunk: string) => void>();
+  const exitListeners = new Set<(info: { exitCode: number; signal?: number }) => void>();
+
+  pty.onData((data) => {
+    for (const cb of listeners) cb(data);
+  });
+  pty.onExit(({ exitCode, signal }) => {
+    for (const cb of exitListeners) {
+      cb({ exitCode, signal: signal ?? undefined });
+    }
+  });
+
+  return {
+    id,
+    get pid() {
+      return pty.pid;
+    },
+    get target(): TargetRef {
+      return { kind: "local", cwd: cwdGuess };
+    },
+    onData(cb) {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    },
+    onExit(cb) {
+      exitListeners.add(cb);
+      return () => exitListeners.delete(cb);
+    },
+    write(data) {
+      if (!disposed) pty.write(data);
+    },
+    resize(cols, rows) {
+      if (!disposed) pty.resize(cols, rows);
+    },
+    async exec(command, execOpts) {
+      const live = await readProcessCwd(pty.pid).catch(() => null);
+      return runDetached(
+        command,
+        execOpts?.cwd ?? live ?? cwdGuess,
+        execOpts?.timeoutMs
+      );
+    },
+    async getCwd() {
+      const live = await readProcessCwd(pty.pid).catch(() => null);
+      if (live) cwdGuess = live;
+      return cwdGuess;
+    },
+    async dispose() {
+      if (disposed) return;
+      disposed = true;
+      listeners.clear();
+      exitListeners.clear();
+      try {
+        pty.kill();
+      } catch {
+        /* ignore */
+      }
+    },
+  };
+}
+
+/** Resolve the shell process working directory (macOS/Linux). */
+export async function readProcessCwd(pid: number): Promise<string | null> {
+  if (!pid || pid < 1) return null;
+  if (process.platform === "linux") {
+    try {
+      return await readlink(`/proc/${pid}/cwd`);
+    } catch {
+      return null;
+    }
+  }
+  if (process.platform === "darwin") {
+    return await new Promise((resolve) => {
+      const child = spawn("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
+        env: process.env,
+      });
+      let out = "";
+      child.stdout.on("data", (d: Buffer) => {
+        out += d.toString("utf8");
+      });
+      child.on("close", () => {
+        const line = out.split("\n").find((l) => l.startsWith("n"));
+        resolve(line ? line.slice(1) : null);
+      });
+      child.on("error", () => resolve(null));
+    });
+  }
+  return null;
+}
+
+function runDetached(
+  command: string,
+  cwd: string,
+  timeoutMs = 60_000
+): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    const child = spawn(process.env.SHELL || "/bin/zsh", ["-lc", command], {
+      cwd,
+      env: process.env,
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGKILL");
+      resolve({ stdout, stderr, exitCode: null, timedOut: true });
+    }, timeoutMs);
+
+    child.stdout.on("data", (d: Buffer) => {
+      stdout += d.toString("utf8");
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      stderr += d.toString("utf8");
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ stdout, stderr, exitCode: code });
+    });
+  });
+}

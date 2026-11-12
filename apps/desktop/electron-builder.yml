@@ -1,0 +1,36 @@
+appId: app.drift.desktop
+productName: Drift
+copyright: Drift
+directories:
+  output: release
+  buildResources: resources/brand
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+asar: true
+asarUnpack:
+  - "**/*.node"
+  - "**/node-pty/**"
+mac:
+  category: public.app-category.developer-tools
+  icon: resources/brand/icon.icns
+  target:
+    - dmg
+    - zip
+  # Code signing / notarization is intentionally off for now.
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+dmg:
+  artifactName: "${productName}-${version}-mac-${arch}.${ext}"
+publish:
+  - provider: github
+    owner: doob9p
+    repo: drift-app
+    releaseType: release
+artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
+npmRebuild: false
+electronLanguages:
+  - en
+  - ko

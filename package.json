@@ -1,0 +1,29 @@
+{
+  "name": "drift",
+  "private": true,
+  "version": "0.1.0",
+  "productName": "Drift",
+  "description": "Drift — terminal + SSH sessions with Cursor agent",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @drift/desktop",
+    "build": "npm run build -w @drift/desktop",
+    "typecheck": "npm run typecheck -ws --if-present",
+    "rebuild:native": "npm run rebuild:native -w @drift/desktop",
+    "dist:mac": "npm run dist:mac -w @drift/desktop",
+    "release:mac": "npm run release:mac -w @drift/desktop",
+    "patch:electron-name": "node scripts/patch-electron-name.mjs",
+    "postinstall": "npm run rebuild:native && npm run patch:electron-name"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "allowScripts": {
+    "electron@35.7.5": true,
+    "node-pty@1.1.0": true,
+    "esbuild@0.25.12": true
+  }
+}
