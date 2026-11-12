@@ -238,13 +238,7 @@ app.innerHTML = `
 
         <section class="nav-view hidden" data-view="settings">
           <div class="settings-panel">
-            <div class="settings-brand">
-              <img class="settings-brand-icon" src="./brand/icon.png" alt="" width="36" height="36" draggable="false" />
-              <div class="settings-brand-text">
-                <div class="settings-brand-name">Drift</div>
-                <p class="settings-lead" data-i18n="settings.lead">API key is encrypted in the OS keychain. Sessions never store secrets.</p>
-              </div>
-            </div>
+            <p class="settings-lead" data-i18n="settings.lead">API key is encrypted in the OS keychain. Sessions never store secrets.</p>
             <div class="form-grid settings-form">
               <label>
                 <span class="settings-field-head">

@@ -918,37 +918,6 @@ html.is-mac .titlebar {
   align-content: start;
 }
 
-.settings-brand {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-}
-
-.settings-brand-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 9px;
-  flex: none;
-  object-fit: cover;
-  box-shadow: 0 0 0 1px var(--line-strong);
-  user-select: none;
-  -webkit-user-drag: none;
-}
-
-.settings-brand-text {
-  min-width: 0;
-  display: grid;
-  gap: 0.2rem;
-}
-
-.settings-brand-name {
-  font-size: 0.95rem;
-  font-weight: 650;
-  letter-spacing: -0.03em;
-  color: var(--text);
-  line-height: 1.2;
-}
-
 .settings-lead {
   margin: 0;
   color: var(--text-3);
