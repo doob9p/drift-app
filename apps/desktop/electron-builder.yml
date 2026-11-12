@@ -25,6 +25,24 @@ mac:
   gatekeeperAssess: false
 dmg:
   artifactName: "${productName}-${version}-mac-${arch}.${ext}"
+win:
+  icon: resources/brand/icon.ico
+  # Unsigned builds (no Authenticode cert yet).
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Drift
 publish:
   - provider: github
     owner: doob9p

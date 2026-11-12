@@ -15,6 +15,8 @@
     "rebuild:native": "npm run rebuild:native -w @drift/desktop",
     "dist:mac": "npm run dist:mac -w @drift/desktop",
     "release:mac": "npm run release:mac -w @drift/desktop",
+    "dist:win": "npm run dist:win -w @drift/desktop",
+    "release:win": "npm run release:win -w @drift/desktop",
     "patch:electron-name": "node scripts/patch-electron-name.mjs",
     "postinstall": "npm run rebuild:native && npm run patch:electron-name"
   },

@@ -214,7 +214,7 @@ app.innerHTML = `
               <section class="files-pane" data-scope="local">
                 <button type="button" class="files-pane-head" data-collapse-toggle data-i18n-title="files.collapse" title="Collapse">
                   <span class="files-pane-chevron" aria-hidden="true">${icons.chevronDown(12)}</span>
-                  <span class="files-pane-title" data-i18n="files.local">This Mac</span>
+                  <span class="files-pane-title" data-i18n="files.local">This computer</span>
                   <span class="files-pane-host"></span>
                 </button>
                 <div class="files-pane-body">
@@ -246,13 +246,6 @@ app.innerHTML = `
                   <button type="button" class="ghost settings-inline-btn" id="btn-clear-key" data-i18n="settings.clearKey">Clear key</button>
                 </span>
                 <input id="api-key-input" type="password" autocomplete="off" placeholder="cursor_…" />
-              </label>
-              <label>
-                <span data-i18n="settings.model">Default model</span>
-                <div class="settings-field-row">
-                  <select id="settings-model-select"></select>
-                  <button type="button" class="ghost settings-inline-btn" id="btn-refresh-models" data-i18n="settings.refreshModels">Refresh</button>
-                </div>
               </label>
               <label>
                 <span data-i18n="settings.language">Language</span>
@@ -442,9 +435,6 @@ const els = {
   modelPopover: document.getElementById("model-popover")!,
   modelSearch: document.getElementById("model-search") as HTMLInputElement,
   modelList: document.getElementById("model-list")!,
-  settingsModelSelect: document.getElementById(
-    "settings-model-select"
-  ) as HTMLSelectElement,
   settingsLocale: document.getElementById("settings-locale") as HTMLSelectElement,
   usageMini: document.getElementById("usage-mini")!,
   btnMode: document.getElementById("btn-mode") as HTMLButtonElement,
@@ -706,23 +696,6 @@ function modelBadge(m: ModelOption): string {
   return d.length <= 18 ? d : "";
 }
 
-function fillSettingsModelSelect(): void {
-  const options = modelOptions();
-  const select = els.settingsModelSelect;
-  select.innerHTML = "";
-  for (const m of options) {
-    const opt = document.createElement("option");
-    opt.value = m.id;
-    opt.textContent = m.displayName || m.id;
-    if (m.description) opt.title = m.description;
-    select.append(opt);
-  }
-  select.value = state.modelId;
-  if (select.value !== state.modelId && options[0]) {
-    select.value = options[0].id;
-  }
-}
-
 function renderModelPicker(filter = ""): void {
   els.modelLabel.textContent = currentModelLabel();
   const q = filter.trim().toLowerCase();
@@ -784,14 +757,12 @@ async function refreshModels(): Promise<void> {
     state.modelId = state.models[0].id;
     await api.setModel(state.modelId);
   }
-  fillSettingsModelSelect();
   renderModelPicker(els.modelSearch.value);
 }
 
 async function applyModel(modelId: string): Promise<void> {
   state.modelId = modelId;
   await api.setModel(modelId);
-  fillSettingsModelSelect();
   renderModelPicker();
   closeModelPopover();
   const label = currentModelLabel();
@@ -1696,11 +1667,6 @@ document.getElementById("btn-clear-key")!.onclick = async () => {
 els.settingsLocale.onchange = () => {
   void applyLocale(normalizeLocale(els.settingsLocale.value));
 };
-document.getElementById("btn-refresh-models")!.onclick = () =>
-  void refreshModels();
-els.settingsModelSelect.onchange = () =>
-  void applyModel(els.settingsModelSelect.value);
-
 els.btnModel.onclick = (e) => {
   e.stopPropagation();
   if (els.modelPopover.classList.contains("hidden")) openModelPopover();

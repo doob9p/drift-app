@@ -1,12 +1,12 @@
 # Drift
 
-macOS-first terminal app with saved SSH sessions and a Cursor agent panel.
+Terminal app with saved SSH sessions and a Cursor agent panel.
 
 > Repo folder: `drift-app`. npm packages: `@drift/*`.
 
 ## MVP
 
-- Local PTY terminal
+- Local PTY terminal (macOS / Windows)
 - Saved SSH sessions (no passwords stored)
 - Cursor API key entered in-app (OS encrypted storage)
 - Agent proposes commands → approve → run on the active host
@@ -20,7 +20,7 @@ npm install          # also rebuilds node-pty for Electron
 npm run dev
 ```
 
-If the local terminal fails with `posix_spawnp`:
+If the local terminal fails with `posix_spawnp` (macOS) or a native module error:
 
 ```bash
 npm run rebuild:native
@@ -50,21 +50,49 @@ npm run dist:mac
 npm run release:mac
 ```
 
-The release should include at least:
+The macOS release should include at least:
 
 - `Drift-*-mac-*.dmg` (install)
 - `Drift-*-mac-*.zip` (auto-update)
 - `latest-mac.yml` (updater feed)
 
+### Code signing (macOS, later)
+
+This project currently ships **without** Apple Developer ID signing / notarization (`identity: null`). Users may need `xattr -cr` / Gatekeeper workarounds the first time. Add signing + notarization before a wide public launch.
+
+## Release (Windows)
+
+Windows installers must be built on Windows (native `node-pty`). From this Mac, use GitHub Actions:
+
+```bash
+# after pushing a version tag, or manually:
+# Actions → “Release Windows” → Run workflow
+```
+
+Workflow: [`.github/workflows/release-windows.yml`](.github/workflows/release-windows.yml)
+
+On a Windows machine locally:
+
+```bash
+export GH_TOKEN=ghp_...   # or set in the environment
+npm run rebuild:native
+npm run dist:win          # no upload
+npm run release:win       # publish to GitHub Releases
+```
+
+Windows artifacts:
+
+- `Drift-*-win-*-setup.exe` (NSIS installer)
+- `Drift-*-win-*.zip` (portable / updater)
+- `latest.yml` (updater feed)
+
+Unsigned Windows builds may show SmartScreen warnings until Authenticode signing is added.
+
 Packaged apps check for updates on launch (and every 4 hours). When a newer version exists, Drift shows an in-app modal: **Later** / **Update** → download progress → **Restart & install**.
-
-### Code signing (later)
-
-This project currently ships **without** Apple Developer ID signing / notarization (`identity: null`). Users may need to right-click the app → **Open** the first time (Gatekeeper). Auto-update still uses the GitHub zip channel; add signing + notarization before a wide public launch.
 
 ## Notes
 
-- Set your Cursor API key in **Settings** (gear). Stored encrypted in the OS keychain.
-- SSH sessions are saved without passwords; uses system `ssh` + IdentityFile / agent.
+- Set your Cursor API key in **Settings** (gear). Stored encrypted in the OS keychain / credential store.
+- SSH sessions are saved without passwords; uses system `ssh` + IdentityFile / agent (Windows: OpenSSH).
 - Agent proposes commands → approve once / for session / deny → runs on the active host.
 - Dev mode (`npm run dev`) does not check for updates.

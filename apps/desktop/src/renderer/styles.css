@@ -946,13 +946,6 @@ html.is-mac .titlebar {
   min-width: 0;
 }
 
-.settings-field-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.35rem;
-  align-items: center;
-}
-
 .settings-inline-btn {
   flex: 0 0 auto;
   height: 32px;
