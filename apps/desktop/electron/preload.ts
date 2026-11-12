@@ -225,7 +225,7 @@ export type DesktopApi = {
   >;
   installUpdate: () => Promise<
     | { ok: true; version: string | null }
-    | { ok: false; reason: "dev" }
+    | { ok: false; reason: "dev" | "error"; message?: string }
   >;
   dismissUpdate: (version: string) => Promise<{ ok: true }>;
   onUpdateAvailable: (

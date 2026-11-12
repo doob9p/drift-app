@@ -1014,7 +1014,22 @@ function showUpdateModal(payload: {
   };
   els.updateCurrent.textContent = payload.currentVersion;
   els.updateLatest.textContent = payload.version;
-  const notes = (payload.releaseNotes ?? "").trim();
+  // Always plain text (never innerHTML) — release notes may still contain markup.
+  const notes = (payload.releaseNotes ?? "")
+    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/\s*p\s*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/\n{3,}/g, "\n\n")
+    .split("\n")
+    .filter((line) => !/^\s*Co-authored-by:/i.test(line))
+    .join("\n")
+    .trim();
   if (notes) {
     els.updateNotes.textContent = notes;
     els.updateNotes.classList.remove("hidden");
@@ -1049,7 +1064,7 @@ els.btnUpdateAction.onclick = () => {
       const result = await api.installUpdate();
       if (!result.ok) {
         els.updateError.textContent = t("update.error", {
-          error: result.reason,
+          error: "message" in result && result.message ? result.message : result.reason,
         });
         els.updateError.classList.remove("hidden");
       }
