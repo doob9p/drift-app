@@ -275,6 +275,25 @@ export function createLocalPty(opts?: {
   };
 }
 
+/**
+ * macOS `lsof -Fn` escapes non-ASCII path bytes as `\xNN` (literal).
+ * Decode those runs as UTF-8 so Hangul / NFD names resolve on disk.
+ */
+export function decodeLsofPath(raw: string): string {
+  const decoded = raw.replace(/(?:\\x[0-9a-fA-F]{2})+/g, (seq) => {
+    const bytes = [...seq.matchAll(/\\x([0-9a-fA-F]{2})/g)].map((m) =>
+      parseInt(m[1]!, 16)
+    );
+    return Buffer.from(bytes).toString("utf8");
+  });
+  // APFS stores Hangul as NFD; NFC is nicer in the UI and still opens.
+  try {
+    return decoded.normalize("NFC");
+  } catch {
+    return decoded;
+  }
+}
+
 /** Resolve the shell process working directory when the OS exposes it. */
 export async function readProcessCwd(pid: number): Promise<string | null> {
   if (!pid || pid < 1) return null;
@@ -296,7 +315,7 @@ export async function readProcessCwd(pid: number): Promise<string | null> {
       });
       child.on("close", () => {
         const line = out.split("\n").find((l) => l.startsWith("n"));
-        resolve(line ? line.slice(1) : null);
+        resolve(line ? decodeLsofPath(line.slice(1)) : null);
       });
       child.on("error", () => resolve(null));
     });

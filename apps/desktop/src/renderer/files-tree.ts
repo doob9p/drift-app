@@ -43,7 +43,7 @@ type PaneCallbacks = {
   listDir: ListDir;
   onOpenDir: (dirPath: string) => void | Promise<void>;
   onInsertPath: (filePath: string) => void | Promise<void>;
-  formatPath?: (path: string, home?: string) => string;
+  onOpenFile?: (filePath: string) => void | Promise<void>;
   resolveDropPaths?: (files: File[]) => string[];
   onImportFiles?: (
     destDir: string,
@@ -97,24 +97,100 @@ function formatSize(n?: number): string {
   return `${(n / 1_000_000_000).toFixed(1)} GB`;
 }
 
-function defaultFormatPath(path: string, home?: string): string {
-  if (home && (path === home || path.startsWith(home + "/"))) {
-    return "~" + path.slice(home.length);
-  }
-  return path;
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, "/");
 }
 
 function pathBasename(p: string): string {
-  const cleaned = p.replace(/\/+$/, "");
+  const cleaned = normalizePath(p).replace(/\/+$/, "");
   const i = cleaned.lastIndexOf("/");
   return i >= 0 ? cleaned.slice(i + 1) : cleaned;
 }
 
 function pathDirname(p: string): string {
-  const cleaned = p.replace(/\/+$/, "");
+  const cleaned = normalizePath(p).replace(/\/+$/, "");
+  if (!cleaned || cleaned === "/") return "/";
+  // Windows drive root: C: or C:/
+  if (/^[A-Za-z]:$/.test(cleaned)) return cleaned + "/";
   const i = cleaned.lastIndexOf("/");
-  if (i <= 0) return "/";
-  return cleaned.slice(0, i);
+  if (i < 0) return "/";
+  if (i === 0) return "/";
+  const parent = cleaned.slice(0, i);
+  if (/^[A-Za-z]:$/.test(parent)) return parent + "/";
+  return parent || "/";
+}
+
+function canGoUp(p: string, home?: string): boolean {
+  const cur = normalizePath(p).replace(/\/+$/, "") || "/";
+  if (cur === "/" || /^[A-Za-z]:$/.test(cur)) return false;
+  const parent = pathDirname(cur);
+  const parentNorm = normalizePath(parent).replace(/\/+$/, "") || "/";
+  if (parentNorm === cur) return false;
+  // Optional: stop at home as soft root? No — allow above home.
+  void home;
+  return true;
+}
+
+type PathCrumb = { label: string; path: string; current: boolean };
+
+function buildBreadcrumbs(absPath: string, home?: string): PathCrumb[] {
+  const raw = normalizePath(absPath);
+  const cleaned = raw.replace(/\/+$/, "") || "/";
+  const h = home ? normalizePath(home).replace(/\/+$/, "") : "";
+
+  const crumbs: PathCrumb[] = [];
+  if (h && (cleaned === h || cleaned.startsWith(h + "/"))) {
+    crumbs.push({ label: "~", path: h, current: cleaned === h });
+    if (cleaned !== h) {
+      const rest = cleaned.slice(h.length + 1).split("/").filter(Boolean);
+      let acc = h;
+      rest.forEach((seg, i) => {
+        acc = `${acc}/${seg}`;
+        crumbs.push({
+          label: seg,
+          path: acc,
+          current: i === rest.length - 1,
+        });
+      });
+    }
+    return crumbs;
+  }
+
+  if (/^[A-Za-z]:/.test(cleaned)) {
+    const drive = cleaned.slice(0, 2);
+    const drivePath = `${drive}/`;
+    crumbs.push({
+      label: drive,
+      path: drivePath,
+      current: cleaned === drive || cleaned === drivePath.replace(/\/$/, ""),
+    });
+    const rest = cleaned.slice(2).replace(/^\//, "").split("/").filter(Boolean);
+    let acc = drive;
+    rest.forEach((seg, i) => {
+      acc = `${acc}/${seg}`;
+      crumbs.push({
+        label: seg,
+        path: acc,
+        current: i === rest.length - 1,
+      });
+    });
+    return crumbs;
+  }
+
+  crumbs.push({ label: "/", path: "/", current: cleaned === "/" });
+  if (cleaned !== "/") {
+    const rest = cleaned.replace(/^\//, "").split("/").filter(Boolean);
+    let acc = "";
+    rest.forEach((seg, i) => {
+      acc = `${acc}/${seg}`;
+      crumbs.push({
+        label: seg,
+        path: acc,
+        current: i === rest.length - 1,
+      });
+    });
+  }
+  return crumbs;
 }
 
 function pathJoin(parent: string, name: string): string {
@@ -288,6 +364,33 @@ function collapseStorageKey(scope: PaneScope): string {
   return `drift.files.collapsed.${scope}`;
 }
 
+const SHOW_HIDDEN_KEY = "drift.files.showHidden";
+const showHiddenListeners = new Set<() => void>();
+
+function readShowHidden(): boolean {
+  try {
+    return localStorage.getItem(SHOW_HIDDEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+let showHidden = readShowHidden();
+
+function setShowHidden(on: boolean): void {
+  showHidden = on;
+  try {
+    localStorage.setItem(SHOW_HIDDEN_KEY, on ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+  for (const fn of showHiddenListeners) fn();
+}
+
+function isHiddenName(name: string): boolean {
+  return name.startsWith(".");
+}
+
 function createPane(
   root: HTMLElement,
   scope: PaneScope,
@@ -299,10 +402,14 @@ function createPane(
   const titleEl = root.querySelector(".files-pane-title") as HTMLElement;
   const hostEl = root.querySelector(".files-pane-host") as HTMLElement;
   const pathEl = root.querySelector(".files-path") as HTMLElement;
+  const upBtn = root.querySelector("[data-path-up]") as HTMLButtonElement | null;
   const filterEl = root.querySelector(".files-filter") as HTMLInputElement;
   const treeEl = root.querySelector(".files-tree") as HTMLElement;
   const emptyEl = root.querySelector(".files-empty") as HTMLElement;
   const refreshBtn = root.querySelector("[data-refresh]") as HTMLButtonElement | null;
+  const showHiddenBtn = root.querySelector(
+    "[data-show-hidden]"
+  ) as HTMLButtonElement | null;
 
   const bodyEl = root.querySelector(".files-pane-body") as HTMLElement | null;
   const expanded = new Set<string>();
@@ -414,11 +521,52 @@ function createPane(
     applyCollapsed(!root.classList.contains("collapsed"));
   });
 
+  function goToDir(next: string): void {
+    if (!next || next === rootPath || !enabled) return;
+    rootPath = next;
+    void opts.onOpenDir(rootPath);
+    void render();
+  }
+
+  function renderPathBar(): void {
+    pathEl.setAttribute("aria-label", t("files.breadcrumb"));
+    pathEl.title = rootPath || "";
+    if (!rootPath) {
+      pathEl.innerHTML = "";
+      if (upBtn) upBtn.disabled = true;
+      return;
+    }
+    const crumbs = buildBreadcrumbs(rootPath, home || undefined);
+    pathEl.innerHTML = crumbs
+      .map((c, i) => {
+        const sep =
+          i === 0
+            ? ""
+            : `<span class="files-crumb-sep" aria-hidden="true">${icons.chevronRight(10)}</span>`;
+        if (c.current) {
+          return `${sep}<span class="files-crumb is-current" title="${escapeHtml(c.path)}">${escapeHtml(c.label)}</span>`;
+        }
+        return `${sep}<button type="button" class="files-crumb" data-crumb-path="${escapeHtml(c.path)}" title="${escapeHtml(c.path)}">${escapeHtml(c.label)}</button>`;
+      })
+      .join("");
+    if (upBtn) {
+      const enabledUp = canGoUp(rootPath, home || undefined);
+      upBtn.disabled = !enabledUp;
+      upBtn.title = t("files.up");
+      upBtn.setAttribute("aria-label", t("files.up"));
+    }
+    // Keep the current (rightmost) crumb visible when the trail overflows.
+    requestAnimationFrame(() => {
+      pathEl.scrollLeft = pathEl.scrollWidth;
+    });
+  }
+
   function showEmpty(msg: string): void {
     emptyEl.textContent = msg;
     emptyEl.classList.remove("hidden");
     treeEl.classList.add("hidden");
-    pathEl.textContent = "";
+    pathEl.innerHTML = "";
+    if (upBtn) upBtn.disabled = true;
   }
 
   function showTree(): void {
@@ -444,9 +592,29 @@ function createPane(
   }
 
   function matchesFilter(name: string): boolean {
+    if (!showHidden && isHiddenName(name)) return false;
     if (!filter) return true;
     return name.toLowerCase().includes(filter);
   }
+
+  function syncShowHiddenBtn(): void {
+    if (!showHiddenBtn) return;
+    showHiddenBtn.setAttribute("aria-pressed", showHidden ? "true" : "false");
+    showHiddenBtn.classList.toggle("is-on", showHidden);
+    showHiddenBtn.title = showHidden
+      ? t("files.hideHidden")
+      : t("files.showHidden");
+    showHiddenBtn.innerHTML = showHidden
+      ? icons.eye(12)
+      : icons.eyeOff(12);
+  }
+
+  syncShowHiddenBtn();
+  const onShowHiddenChange = (): void => {
+    syncShowHiddenBtn();
+    void render();
+  };
+  showHiddenListeners.add(onShowHiddenChange);
 
   function rowHtml(entry: FsEntry, depth: number, open: boolean): string {
     const pad = 4 + depth * 12;
@@ -456,7 +624,7 @@ function createPane(
       return `
         <div class="fs-row" data-kind="dir" data-path="${escapeHtml(entry.path)}" style="padding-left:${pad}px">
           <button type="button" class="fs-twist" data-twist aria-label="Toggle">${open ? icons.chevronDown(11) : icons.chevronRight(11)}</button>
-          <button type="button" class="fs-name" data-open-dir>
+          <button type="button" class="fs-name" data-select-path>
             <span class="fs-ico">${open ? icons.folderOpen(13) : icons.folder(13)}</span>
             <span class="fs-label">${escapeHtml(entry.name)}</span>
           </button>
@@ -467,7 +635,7 @@ function createPane(
     }
     return `
       <div class="fs-row" data-kind="file" data-path="${escapeHtml(entry.path)}" style="padding-left:${pad + 16}px">
-        <button type="button" class="fs-name" data-insert-path>
+        <button type="button" class="fs-name" data-select-path>
           <span class="fs-ico">${icons.file(13)}</span>
           <span class="fs-label">${escapeHtml(entry.name)}</span>
         </button>
@@ -518,9 +686,7 @@ function createPane(
       return;
     }
     showTree();
-    const fmt = opts.formatPath ?? defaultFormatPath;
-    pathEl.textContent = fmt(rootPath, home || undefined);
-    pathEl.title = rootPath;
+    renderPathBar();
     const top = treeEl.scrollTop;
     treeEl.innerHTML = `<div class="fs-children" data-parent="${escapeHtml(rootPath)}"></div>`;
     const child = childOf(treeEl, rootPath);
@@ -537,11 +703,20 @@ function createPane(
     }
   }
 
+  function selectRow(path: string): void {
+    treeEl.querySelectorAll(".fs-row.active").forEach((el) => el.classList.remove("active"));
+    for (const el of treeEl.querySelectorAll(".fs-row")) {
+      if (el instanceof HTMLElement && el.dataset.path === path) {
+        el.classList.add("active");
+        break;
+      }
+    }
+  }
+
   treeEl.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
     const twist = target.closest("[data-twist]") as HTMLElement | null;
-    const openDir = target.closest("[data-open-dir]") as HTMLElement | null;
-    const insert = target.closest("[data-insert-path]") as HTMLElement | null;
+    const select = target.closest("[data-select-path]") as HTMLElement | null;
 
     if (twist) {
       e.preventDefault();
@@ -555,24 +730,36 @@ function createPane(
       return;
     }
 
-    if (openDir) {
+    if (select) {
       e.preventDefault();
-      const row = openDir.closest("[data-path]") as HTMLElement | null;
+      const row = select.closest("[data-path]") as HTMLElement | null;
       const p = row?.dataset.path;
       if (!p) return;
+      selectRow(p);
+    }
+  });
+
+  treeEl.addEventListener("dblclick", (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest("[data-twist]")) return;
+    const select = target.closest("[data-select-path]") as HTMLElement | null;
+    const row = (select?.closest("[data-path]") ||
+      target.closest(".fs-row[data-path]")) as HTMLElement | null;
+    const p = row?.dataset.path;
+    const kind = row?.dataset.kind;
+    if (!p || !kind) return;
+    e.preventDefault();
+    selectRow(p);
+    if (kind === "dir") {
       expanded.add(p);
       void opts.onOpenDir(p);
       void render(p);
       return;
     }
-
-    if (insert) {
-      e.preventDefault();
-      const row = insert.closest("[data-path]") as HTMLElement | null;
-      const p = row?.dataset.path;
-      if (!p) return;
+    if (opts.onOpenFile) {
+      void opts.onOpenFile(p);
+    } else {
       void opts.onInsertPath(p);
-      void render(p);
     }
   });
 
@@ -594,6 +781,10 @@ function createPane(
       danger?: boolean;
       disabled?: boolean;
     }> = [];
+    items.push({ id: "insert", label: t("files.insertPath") });
+    if (kind === "file" && opts.onOpenFile) {
+      items.push({ id: "open", label: t("files.openEditor") });
+    }
     if (opts.onDownloadPaths) {
       items.push({ id: "download", label: t("files.download") });
     }
@@ -628,6 +819,14 @@ function createPane(
         ev.stopPropagation();
         hideFsMenu();
         const action = btn.dataset.action;
+        if (action === "insert") {
+          void opts.onInsertPath(targetPath);
+          return;
+        }
+        if (action === "open" && opts.onOpenFile) {
+          void opts.onOpenFile(targetPath);
+          return;
+        }
         if (action === "copy") {
           void navigator.clipboard?.writeText(targetPath).then(
             () => showToast(t("files.pathCopied"), "ok"),
@@ -794,19 +993,28 @@ function createPane(
     void render();
   });
 
+  showHiddenBtn?.addEventListener("click", () => {
+    setShowHidden(!showHidden);
+  });
+
   refreshBtn?.addEventListener("click", () => {
     void api.refresh();
   });
 
-  pathEl.addEventListener("click", () => {
+  pathEl.addEventListener("click", (e) => {
     if (!rootPath || !enabled) return;
-    // climb to parent
-    const parent = rootPath.replace(/\/+$/, "").replace(/\/[^/]+$/, "") || "/";
-    if (parent && parent !== rootPath) {
-      rootPath = parent === "" ? "/" : parent;
-      void opts.onOpenDir(rootPath);
-      void render();
-    }
+    const crumb = (e.target as HTMLElement).closest(
+      "[data-crumb-path]"
+    ) as HTMLElement | null;
+    const next = crumb?.dataset.crumbPath;
+    if (!next) return;
+    goToDir(next);
+  });
+
+  upBtn?.addEventListener("click", () => {
+    if (!rootPath || !enabled || upBtn.disabled) return;
+    const parent = pathDirname(rootPath);
+    if (parent && parent !== rootPath) goToDir(parent);
   });
 
   if (bodyEl && opts.onImportFiles && opts.resolveDropPaths) {
@@ -995,8 +1203,10 @@ export function createFilesBrowser(opts: {
   listServer: ListDir;
   onLocalOpenDir: (dirPath: string) => void | Promise<void>;
   onLocalInsertPath: (filePath: string) => void | Promise<void>;
+  onLocalOpenFile?: (filePath: string) => void | Promise<void>;
   onServerOpenDir: (dirPath: string) => void | Promise<void>;
   onServerInsertPath: (filePath: string) => void | Promise<void>;
+  onServerOpenFile?: (filePath: string) => void | Promise<void>;
   resolveDropPaths?: (files: File[]) => string[];
   onLocalImport?: (
     destDir: string,
@@ -1068,6 +1278,7 @@ export function createFilesBrowser(opts: {
     listDir: opts.listLocal,
     onOpenDir: opts.onLocalOpenDir,
     onInsertPath: opts.onLocalInsertPath,
+    onOpenFile: opts.onLocalOpenFile,
     resolveDropPaths: opts.resolveDropPaths,
     onImportFiles: opts.onLocalImport,
     onRenamePath: opts.onLocalRename,
@@ -1082,6 +1293,7 @@ export function createFilesBrowser(opts: {
     listDir: opts.listServer,
     onOpenDir: opts.onServerOpenDir,
     onInsertPath: opts.onServerInsertPath,
+    onOpenFile: opts.onServerOpenFile,
     resolveDropPaths: opts.resolveDropPaths,
     onImportFiles: opts.onServerImport,
     onDownloadPaths: opts.onServerDownload

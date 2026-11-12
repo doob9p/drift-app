@@ -173,6 +173,30 @@ export type DesktopApi = {
     }>;
     error?: string;
   }>;
+  readFile: (
+    filePath: string
+  ) => Promise<
+    | { path: string; kind: "text"; content: string }
+    | { path: string; kind: "image"; mime: string; dataUrl: string }
+    | { error: string }
+  >;
+  writeFile: (
+    filePath: string,
+    content: string
+  ) => Promise<{ ok: true; path: string } | { error: string }>;
+  readTabFile: (
+    tabId: string,
+    filePath: string
+  ) => Promise<
+    | { path: string; kind: "text"; content: string }
+    | { path: string; kind: "image"; mime: string; dataUrl: string }
+    | { error: string }
+  >;
+  writeTabFile: (
+    tabId: string,
+    filePath: string,
+    content: string
+  ) => Promise<{ ok: true; path: string } | { error: string }>;
   copyFilesInto: (
     destDir: string,
     sources: string[],
@@ -358,6 +382,17 @@ const api: DesktopApi = {
   listDir: (dirPath) => ipcRenderer.invoke("fs:list", dirPath),
   listTabDir: (tabId, dirPath) =>
     ipcRenderer.invoke("fs:list-tab", { tabId, dirPath }),
+  readFile: (filePath) => ipcRenderer.invoke("fs:read-file", filePath),
+  writeFile: (filePath, content) =>
+    ipcRenderer.invoke("fs:write-file", { path: filePath, content }),
+  readTabFile: (tabId, filePath) =>
+    ipcRenderer.invoke("fs:read-tab-file", { tabId, path: filePath }),
+  writeTabFile: (tabId, filePath, content) =>
+    ipcRenderer.invoke("fs:write-tab-file", {
+      tabId,
+      path: filePath,
+      content,
+    }),
   copyFilesInto: (destDir, sources, transferId) =>
     ipcRenderer.invoke("fs:copy-into", { destDir, sources, transferId }),
   uploadFilesToTab: (tabId, destDir, sources, transferId) =>

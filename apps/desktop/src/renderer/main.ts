@@ -21,7 +21,9 @@ import {
   type AppLocale,
 } from "./i18n.js";
 import { icons } from "./icons.js";
+import { createEditorPane } from "./editor-pane.js";
 import { createFilesBrowser } from "./files-tree.js";
+import { showToast } from "./toast.js";
 
 declare global {
   interface Window {
@@ -180,7 +182,6 @@ app.innerHTML = `
                 aria-label="Import config"
               >${icons.importConfig(14)}</button>
             </div>
-            <div class="sidebar-status hidden" id="import-ssh-status" role="status" aria-live="polite"></div>
           </div>
           <div class="section-label"><span data-i18n="sidebar.ssh">SSH sessions</span></div>
           <div class="session-empty" id="session-empty" data-i18n-html="sidebar.empty"></div>
@@ -198,12 +199,16 @@ app.innerHTML = `
                 </button>
                 <div class="files-pane-body">
                   <div class="files-pane-body-inner">
-                    <button type="button" class="files-path" title=""></button>
+                    <div class="files-pathbar">
+                      <button type="button" class="icon ghost files-up" data-path-up data-i18n-title="files.up" title="Go up" aria-label="Go up">${icons.folderUp(12)}</button>
+                      <nav class="files-path" aria-label="Path"></nav>
+                    </div>
                     <div class="files-toolbar">
                       <label class="files-filter-wrap">
                         <span class="files-filter-ico">${icons.search(12)}</span>
                         <input class="files-filter" type="search" data-i18n-placeholder="files.filter" placeholder="Filter by name" />
                       </label>
+                      <button type="button" class="icon ghost" data-show-hidden data-i18n-title="files.showHidden" title="Show hidden files" aria-pressed="false">${icons.eyeOff(12)}</button>
                       <button type="button" class="icon ghost" data-refresh data-i18n-title="files.refresh" title="Refresh">${icons.refresh(12)}</button>
                     </div>
                     <div class="files-tree"></div>
@@ -219,12 +224,16 @@ app.innerHTML = `
                 </button>
                 <div class="files-pane-body">
                   <div class="files-pane-body-inner">
-                    <button type="button" class="files-path" title=""></button>
+                    <div class="files-pathbar">
+                      <button type="button" class="icon ghost files-up" data-path-up data-i18n-title="files.up" title="Go up" aria-label="Go up">${icons.folderUp(12)}</button>
+                      <nav class="files-path" aria-label="Path"></nav>
+                    </div>
                     <div class="files-toolbar">
                       <label class="files-filter-wrap">
                         <span class="files-filter-ico">${icons.search(12)}</span>
                         <input class="files-filter" type="search" data-i18n-placeholder="files.filter" placeholder="Filter by name" />
                       </label>
+                      <button type="button" class="icon ghost" data-show-hidden data-i18n-title="files.showHidden" title="Show hidden files" aria-pressed="false">${icons.eyeOff(12)}</button>
                       <button type="button" class="icon ghost" data-refresh data-i18n-title="files.refresh" title="Refresh">${icons.refresh(12)}</button>
                     </div>
                     <div class="files-tree"></div>
@@ -262,17 +271,37 @@ app.innerHTML = `
         </section>
       </aside>
 
+      <div
+        class="col-split"
+        id="split-sidebar"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+      ></div>
+
       <section class="main">
-        <div class="tabstrip">
-          <div class="tabs" id="tabs"></div>
-          <div class="tabs-empty" id="tabs-empty" data-i18n="tabs.empty"></div>
-        </div>
-        <div class="terminal-stage">
-          <div class="terminal-frame">
-            <div class="terminal-host" id="terminal-host"></div>
+        <div class="main-stage" id="main-stage">
+          <div class="editor-pane hidden" id="editor-pane"></div>
+          <div class="main-split hidden" id="main-split" role="separator" aria-orientation="horizontal"></div>
+          <div class="terminal-stage" id="terminal-stage">
+            <div class="tabstrip">
+              <div class="tabs" id="tabs"></div>
+              <div class="tabs-empty" id="tabs-empty" data-i18n="tabs.empty"></div>
+            </div>
+            <div class="terminal-frame">
+              <div class="terminal-host" id="terminal-host"></div>
+            </div>
           </div>
         </div>
       </section>
+
+      <div
+        class="col-split"
+        id="split-agent"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize agent panel"
+      ></div>
 
       <aside class="agent" id="agent-panel">
         <div class="panel-head agent-top">
@@ -511,6 +540,7 @@ function updateSessionEmpty(): void {
 
 function updateTabsEmpty(): void {
   els.tabsEmpty.classList.toggle("hidden", state.tabs.size > 0);
+  syncMainStageLayout();
 }
 
 const chat = createChatController(els.chatThread);
@@ -1089,7 +1119,18 @@ function handleShortcut(payload: {
       void openLocal();
       break;
     case "close-tab":
+      // Close the focused surface first (editor doc vs terminal tab).
+      if (editorPane.isFocused()) {
+        void editorPane.closeActive();
+        break;
+      }
       if (state.activeTabId) void closeTab(state.activeTabId);
+      break;
+    case "save":
+      if (editorPane.isOpen()) void editorPane.saveActive();
+      break;
+    case "find":
+      if (editorPane.isOpen()) editorPane.find();
       break;
     case "clear":
       clearActiveTerminal();
@@ -1392,6 +1433,175 @@ async function resolveApproval(
 
 let filesServerTabId: string | null = null;
 
+const mainStage = document.getElementById("main-stage")!;
+const mainSplit = document.getElementById("main-split")!;
+let editorOpen = false;
+
+function syncMainStageLayout(): void {
+  const hasEditor = editorOpen;
+  const hasTerminal = state.tabs.size > 0;
+  mainStage.classList.toggle("has-editor", hasEditor);
+  mainStage.classList.toggle("has-terminal", hasTerminal);
+  mainStage.classList.toggle("editor-only", hasEditor && !hasTerminal);
+  mainSplit.classList.toggle("hidden", !(hasEditor && hasTerminal));
+  requestAnimationFrame(() => refitTerminals());
+}
+
+function setEditorVisible(open: boolean): void {
+  editorOpen = open;
+  syncMainStageLayout();
+}
+
+const editorPane = createEditorPane({
+  root: document.getElementById("editor-pane")!,
+  readLocal: (filePath) => api.readFile(filePath),
+  writeLocal: (filePath, content) => api.writeFile(filePath, content),
+  readRemote: (tabId, filePath) => api.readTabFile(tabId, filePath),
+  writeRemote: (tabId, filePath, content) =>
+    api.writeTabFile(tabId, filePath, content),
+  onVisibilityChange: setEditorVisible,
+});
+
+{
+  let dragging = false;
+  mainSplit.addEventListener("mousedown", (e) => {
+    if (
+      !mainStage.classList.contains("has-editor") ||
+      !mainStage.classList.contains("has-terminal")
+    ) {
+      return;
+    }
+    e.preventDefault();
+    dragging = true;
+    document.body.classList.add("is-resizing-editor");
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const rect = mainStage.getBoundingClientRect();
+    if (rect.height < 80) return;
+    const y = e.clientY - rect.top;
+    const ratio = Math.min(0.75, Math.max(0.2, y / rect.height));
+    mainStage.style.setProperty("--editor-ratio", `${ratio * 100}%`);
+    refitTerminals();
+  });
+  window.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove("is-resizing-editor");
+  });
+}
+
+{
+  const layoutEl = document.querySelector(".layout") as HTMLElement | null;
+  const splitSidebar = document.getElementById("split-sidebar");
+  const splitAgent = document.getElementById("split-agent");
+  const SIDEBAR_KEY = "drift.sidebarWidth";
+  const AGENT_KEY = "drift.agentWidth";
+  const SIDEBAR_MIN = 200;
+  const SIDEBAR_MAX = 480;
+  const AGENT_MIN = 280;
+  const AGENT_MAX = 560;
+
+  function clamp(n: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, n));
+  }
+
+  function applyStoredWidths(): void {
+    if (!layoutEl) return;
+    const side = Number(localStorage.getItem(SIDEBAR_KEY));
+    const agent = Number(localStorage.getItem(AGENT_KEY));
+    if (Number.isFinite(side) && side > 0) {
+      layoutEl.style.setProperty(
+        "--sidebar",
+        `${clamp(side, SIDEBAR_MIN, SIDEBAR_MAX)}px`
+      );
+    }
+    if (Number.isFinite(agent) && agent > 0) {
+      layoutEl.style.setProperty(
+        "--agent",
+        `${clamp(agent, AGENT_MIN, AGENT_MAX)}px`
+      );
+    }
+  }
+
+  applyStoredWidths();
+
+  type ColDrag = {
+    kind: "sidebar" | "agent";
+    startX: number;
+    startWidth: number;
+  } | null;
+  let colDrag: ColDrag = null;
+
+  function currentVarPx(name: "--sidebar" | "--agent", fallback: number): number {
+    if (!layoutEl) return fallback;
+    const raw = getComputedStyle(layoutEl).getPropertyValue(name).trim();
+    const n = Number.parseFloat(raw);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function beginColDrag(
+    kind: "sidebar" | "agent",
+    handle: HTMLElement,
+    e: MouseEvent
+  ): void {
+    e.preventDefault();
+    const startWidth =
+      kind === "sidebar"
+        ? currentVarPx("--sidebar", 288)
+        : currentVarPx("--agent", 380);
+    colDrag = { kind, startX: e.clientX, startWidth };
+    handle.classList.add("is-active");
+    document.body.classList.add("is-resizing-col");
+  }
+
+  splitSidebar?.addEventListener("mousedown", (e) => {
+    if (layoutEl?.classList.contains("nav-collapsed")) return;
+    beginColDrag("sidebar", splitSidebar, e);
+  });
+  splitAgent?.addEventListener("mousedown", (e) => {
+    if (layoutEl?.classList.contains("agent-collapsed")) return;
+    beginColDrag("agent", splitAgent, e);
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (!colDrag || !layoutEl) return;
+    if (colDrag.kind === "sidebar") {
+      const next = clamp(
+        colDrag.startWidth + (e.clientX - colDrag.startX),
+        SIDEBAR_MIN,
+        SIDEBAR_MAX
+      );
+      layoutEl.style.setProperty("--sidebar", `${next}px`);
+    } else {
+      const next = clamp(
+        colDrag.startWidth - (e.clientX - colDrag.startX),
+        AGENT_MIN,
+        AGENT_MAX
+      );
+      layoutEl.style.setProperty("--agent", `${next}px`);
+    }
+    refitTerminals();
+  });
+
+  window.addEventListener("mouseup", () => {
+    if (!colDrag || !layoutEl) return;
+    const kind = colDrag.kind;
+    colDrag = null;
+    splitSidebar?.classList.remove("is-active");
+    splitAgent?.classList.remove("is-active");
+    document.body.classList.remove("is-resizing-col");
+    if (kind === "sidebar") {
+      localStorage.setItem(
+        SIDEBAR_KEY,
+        String(currentVarPx("--sidebar", 288))
+      );
+    } else {
+      localStorage.setItem(AGENT_KEY, String(currentVarPx("--agent", 380)));
+    }
+  });
+}
+
 const filesBrowser = createFilesBrowser({
   root: document.getElementById("files-panel")!,
   listLocal: (dirPath) => api.listDir(dirPath),
@@ -1412,6 +1622,9 @@ const filesBrowser = createFilesBrowser({
     const tab = await ensureActiveLocalTab();
     await api.writeTerminal(tab.id, shellQuote(filePath));
     tab.term.focus();
+  },
+  onLocalOpenFile: async (filePath) => {
+    await editorPane.openLocal(filePath);
   },
   onServerOpenDir: async (dirPath) => {
     if (!filesServerTabId) return;
@@ -1434,6 +1647,10 @@ const filesBrowser = createFilesBrowser({
     activateTab(tab.id);
     await api.writeTerminal(tab.id, shellQuote(filePath));
     tab.term.focus();
+  },
+  onServerOpenFile: async (filePath) => {
+    if (!filesServerTabId) return;
+    await editorPane.openRemote(filesServerTabId, filePath);
   },
   resolveDropPaths: (files) => {
     const out: string[] = [];
@@ -1586,19 +1803,6 @@ document.getElementById("btn-save-ssh")!.onclick = async () => {
   els.modalSsh.classList.add("hidden");
   await refreshSessions();
 };
-const importSshStatus = document.getElementById("import-ssh-status")!;
-let importSshStatusTimer: number | undefined;
-
-function flashImportStatus(message: string, kind: "ok" | "muted" = "ok"): void {
-  importSshStatus.textContent = message;
-  importSshStatus.classList.toggle("muted", kind === "muted");
-  importSshStatus.classList.remove("hidden");
-  if (importSshStatusTimer != null) window.clearTimeout(importSshStatusTimer);
-  importSshStatusTimer = window.setTimeout(() => {
-    importSshStatus.classList.add("hidden");
-  }, 3200);
-}
-
 document.getElementById("btn-import-ssh")!.onclick = async () => {
   const btn = document.getElementById("btn-import-ssh") as HTMLButtonElement;
   btn.disabled = true;
@@ -1606,25 +1810,29 @@ document.getElementById("btn-import-ssh")!.onclick = async () => {
     const result = await api.importSshConfig();
     await refreshSessions();
     if (result.missingConfig) {
-      flashImportStatus(t("ssh.importMissing"), "muted");
+      showToast(t("ssh.importMissing"), "info");
     } else if (result.found === 0) {
-      flashImportStatus(t("ssh.importEmpty"), "muted");
+      showToast(t("ssh.importEmpty"), "info");
     } else if (result.created === 0) {
-      flashImportStatus(t("ssh.importUpdated", { count: String(result.updated) }));
+      showToast(
+        t("ssh.importUpdated", { count: String(result.updated) }),
+        "ok"
+      );
     } else {
-      flashImportStatus(
+      showToast(
         t("ssh.importOk", {
           created: String(result.created),
           total: String(result.found),
-        })
+        }),
+        "ok"
       );
     }
   } catch (err) {
-    flashImportStatus(
+    showToast(
       t("ssh.importFail", {
         error: err instanceof Error ? err.message : String(err),
       }),
-      "muted"
+      "error"
     );
   } finally {
     btn.disabled = false;

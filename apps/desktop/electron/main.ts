@@ -20,6 +20,7 @@ import {
   rm,
   stat,
   statfs,
+  writeFile,
 } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import os from "node:os";
@@ -269,6 +270,28 @@ function buildApplicationMenu(): void {
     });
   }
 
+  const fileMenu: MenuItemConstructorOptions = {
+    label: "File",
+    submenu: [
+      {
+        label: "Save",
+        accelerator: "CmdOrCtrl+S",
+        click: () => sendShortcut("save"),
+      },
+      {
+        label: "Find",
+        accelerator: "CmdOrCtrl+F",
+        click: () => sendShortcut("find"),
+      },
+      { type: "separator" },
+      {
+        label: "Close Tab",
+        accelerator: "CmdOrCtrl+W",
+        click: () => sendShortcut("close-tab"),
+      },
+    ],
+  };
+
   const shellMenu: MenuItemConstructorOptions = {
     label: "Shell",
     submenu: [
@@ -276,11 +299,6 @@ function buildApplicationMenu(): void {
         label: "New Local Terminal",
         accelerator: "CmdOrCtrl+T",
         click: () => sendShortcut("new-local"),
-      },
-      {
-        label: "Close Tab",
-        accelerator: "CmdOrCtrl+W",
-        click: () => sendShortcut("close-tab"),
       },
       { type: "separator" },
       {
@@ -356,7 +374,7 @@ function buildApplicationMenu(): void {
         ]
       : [
           {
-            label: "File",
+            label: "Drift",
             submenu: [
               {
                 label: "Settings…",
@@ -368,6 +386,7 @@ function buildApplicationMenu(): void {
             ],
           },
         ]),
+    fileMenu,
     shellMenu,
     { role: "editMenu" },
     viewMenu,
@@ -455,6 +474,15 @@ function consumeOsc7(tab: Tab, chunk: string): void {
   if (lastPath) emitTabCwd(tab.id, lastPath);
 }
 
+function normalizeFsPath(p: string): string {
+  try {
+    // macOS often reports Hangul as NFD; NFC matches what users expect in the UI.
+    return p.normalize("NFC");
+  } catch {
+    return p;
+  }
+}
+
 function osc7ToPath(uri: string): string | null {
   const raw = uri.trim();
   if (!raw) return null;
@@ -462,15 +490,17 @@ function osc7ToPath(uri: string): string | null {
     if (raw.startsWith("file://")) {
       const u = new URL(raw);
       const decoded = decodeURIComponent(u.pathname || "");
-      return decoded || null;
+      return decoded ? normalizeFsPath(decoded) : null;
     }
   } catch {
     /* fall through */
   }
   const withoutScheme = raw.replace(/^file:\/\//, "");
   const idx = withoutScheme.indexOf("/");
-  if (idx >= 0) return withoutScheme.slice(idx);
-  return withoutScheme.startsWith("/") ? withoutScheme : null;
+  if (idx >= 0) return normalizeFsPath(withoutScheme.slice(idx));
+  return withoutScheme.startsWith("/")
+    ? normalizeFsPath(withoutScheme)
+    : null;
 }
 
 function attachBackend(tabId: string, backend: Backend): void {
@@ -911,6 +941,159 @@ async function collectRemoteMetrics(
       hostLabel,
       error: err instanceof Error ? err.message : String(err),
     };
+  }
+}
+
+const EDITOR_MAX_BYTES = 1_500_000;
+const IMAGE_MAX_BYTES = 12_000_000;
+
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+  ".avif": "image/avif",
+  ".svg": "image/svg+xml",
+};
+
+type EditorReadResult =
+  | { path: string; kind: "text"; content: string }
+  | { path: string; kind: "image"; mime: string; dataUrl: string }
+  | { error: string };
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function imageMimeFromPath(filePath: string): string | null {
+  const ext = path.extname(filePath).toLowerCase();
+  return IMAGE_MIME_BY_EXT[ext] ?? null;
+}
+
+function looksBinary(buf: Buffer): boolean {
+  const sample = buf.subarray(0, Math.min(buf.length, 8000));
+  if (sample.includes(0)) return true;
+  let weird = 0;
+  for (const b of sample) {
+    if (b === 9 || b === 10 || b === 13) continue;
+    if (b < 32) weird += 1;
+  }
+  return weird > sample.length * 0.05;
+}
+
+function toImageResult(
+  target: string,
+  mime: string,
+  buf: Buffer
+): EditorReadResult {
+  return {
+    path: target,
+    kind: "image",
+    mime,
+    dataUrl: `data:${mime};base64,${buf.toString("base64")}`,
+  };
+}
+
+async function readLocalTextFile(
+  filePath?: string
+): Promise<EditorReadResult> {
+  const target = path.resolve((filePath || "").trim());
+  if (!target) return { error: "No path" };
+  try {
+    const st = await stat(target);
+    if (!st.isFile()) return { error: "Not a file" };
+    const mime = imageMimeFromPath(target);
+    const maxBytes = mime ? IMAGE_MAX_BYTES : EDITOR_MAX_BYTES;
+    if (st.size > maxBytes) return { error: "too_large" };
+    const buf = await readFile(target);
+    if (mime) return toImageResult(target, mime, buf);
+    if (looksBinary(buf)) return { error: "binary" };
+    return { path: target, kind: "text", content: buf.toString("utf8") };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function writeLocalTextFile(
+  filePath: string | undefined,
+  content: string
+): Promise<{ ok: true; path: string } | { error: string }> {
+  const target = path.resolve((filePath || "").trim());
+  if (!target) return { error: "No path" };
+  try {
+    const bytes = Buffer.byteLength(content, "utf8");
+    if (bytes > EDITOR_MAX_BYTES) return { error: "too_large" };
+    await writeFile(target, content, "utf8");
+    return { ok: true, path: target };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function readRemoteTextFile(
+  backend: Backend,
+  filePath?: string
+): Promise<EditorReadResult> {
+  const target = (filePath || "").trim();
+  if (!target) return { error: "No path" };
+  const q = shellSingleQuote(target);
+  const mime = imageMimeFromPath(target);
+  const maxBytes = mime ? IMAGE_MAX_BYTES : EDITOR_MAX_BYTES;
+  try {
+    // `test`/`[` do not accept `--`; a quoted path is enough.
+    const probe = await backend.exec(
+      `if [ -f ${q} ]; then wc -c < ${q}; else exit 41; fi`,
+      { timeoutMs: 12_000 }
+    );
+    if (probe.exitCode === 41) return { error: "Not a file" };
+    const size = Number((probe.stdout || "").trim());
+    if (Number.isFinite(size) && size > maxBytes) {
+      return { error: "too_large" };
+    }
+    const result = await backend.exec(`base64 < ${q}`, { timeoutMs: 30_000 });
+    if (result.timedOut) return { error: "Read timed out" };
+    if (result.exitCode != null && result.exitCode !== 0) {
+      return {
+        error: (result.stderr || "").trim() || "Read failed",
+      };
+    }
+    const buf = Buffer.from((result.stdout || "").replace(/\s+/g, ""), "base64");
+    if (mime) return toImageResult(target, mime, buf);
+    if (looksBinary(buf)) return { error: "binary" };
+    return { path: target, kind: "text", content: buf.toString("utf8") };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function writeRemoteTextFile(
+  backend: Backend,
+  filePath: string | undefined,
+  content: string
+): Promise<{ ok: true; path: string } | { error: string }> {
+  const target = (filePath || "").trim();
+  if (!target) return { error: "No path" };
+  const bytes = Buffer.byteLength(content, "utf8");
+  if (bytes > EDITOR_MAX_BYTES) return { error: "too_large" };
+  const q = shellSingleQuote(target);
+  const b64 = Buffer.from(content, "utf8").toString("base64");
+  try {
+    const result = await backend.exec(
+      `(base64 -d 2>/dev/null || base64 -D) > ${q} <<'DRIFT_B64'\n${b64}\nDRIFT_B64`,
+      { timeoutMs: 30_000 }
+    );
+    if (result.timedOut) return { error: "Write timed out" };
+    if (result.exitCode != null && result.exitCode !== 0) {
+      return {
+        error: (result.stderr || "").trim() || "Write failed",
+      };
+    }
+    return { ok: true, path: target };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -1369,6 +1552,41 @@ function registerIpc(): void {
         return listLocalDir(input.dirPath);
       }
       return listRemoteDir(tab.backend, input.dirPath);
+    }
+  );
+
+  ipcMain.handle("fs:read-file", async (_e, filePath?: string) => {
+    return readLocalTextFile(filePath);
+  });
+
+  ipcMain.handle(
+    "fs:write-file",
+    async (_e, input: { path?: string; content?: string }) => {
+      return writeLocalTextFile(input?.path, input?.content ?? "");
+    }
+  );
+
+  ipcMain.handle(
+    "fs:read-tab-file",
+    async (_e, input: { tabId: string; path?: string }) => {
+      const tab = tabs.get(input.tabId);
+      if (!tab?.backend) return { error: "No tab" };
+      if (tab.backend.target.kind === "local") {
+        return readLocalTextFile(input.path);
+      }
+      return readRemoteTextFile(tab.backend, input.path);
+    }
+  );
+
+  ipcMain.handle(
+    "fs:write-tab-file",
+    async (_e, input: { tabId: string; path?: string; content?: string }) => {
+      const tab = tabs.get(input.tabId);
+      if (!tab?.backend) return { error: "No tab" };
+      if (tab.backend.target.kind === "local") {
+        return writeLocalTextFile(input.path, input.content ?? "");
+      }
+      return writeRemoteTextFile(tab.backend, input.path, input.content ?? "");
     }
   );
 
