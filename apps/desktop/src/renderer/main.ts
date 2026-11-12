@@ -150,7 +150,7 @@ app.innerHTML = `
       <nav class="rail" aria-label="Workspace">
         <div class="rail-top">
           <div class="rail-brand" title="Drift" aria-hidden="true">
-            <img class="rail-brand-mark" src="/brand/logo-mark.png" alt="" width="22" height="13" draggable="false" />
+            <img class="rail-brand-mark" src="./brand/logo-mark.png" alt="" width="22" height="13" draggable="false" />
           </div>
           <div class="rail-group">
             <button type="button" class="rail-btn active" data-nav="sessions" data-i18n-title="nav.sessions" title="Sessions" aria-label="Sessions">${icons.server(17)}</button>
@@ -239,7 +239,7 @@ app.innerHTML = `
         <section class="nav-view hidden" data-view="settings">
           <div class="settings-panel">
             <div class="settings-brand">
-              <img class="settings-brand-icon" src="/brand/icon.png" alt="" width="36" height="36" draggable="false" />
+              <img class="settings-brand-icon" src="./brand/icon.png" alt="" width="36" height="36" draggable="false" />
               <div class="settings-brand-text">
                 <div class="settings-brand-name">Drift</div>
                 <p class="settings-lead" data-i18n="settings.lead">API key is encrypted in the OS keychain. Sessions never store secrets.</p>

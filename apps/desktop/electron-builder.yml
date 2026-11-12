@@ -1,6 +1,7 @@
 appId: app.drift.desktop
 productName: Drift
 copyright: Drift
+electronVersion: 35.7.5
 directories:
   output: release
   buildResources: resources/brand

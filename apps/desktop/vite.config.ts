@@ -4,6 +4,8 @@ import path from "node:path";
 
 export default defineConfig({
   root: path.resolve(__dirname),
+  // Electron loads the renderer via file:// — absolute /asset paths break.
+  base: "./",
   resolve: {
     alias: {
       "@drift/core": path.resolve(__dirname, "../../packages/core/src"),
