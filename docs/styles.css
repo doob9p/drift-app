@@ -62,13 +62,22 @@ a {
 .mark {
   display: inline-flex;
   align-items: center;
-  line-height: 0;
+  gap: 8px;
+  line-height: 1;
 }
 
-.mark-img {
+.mark-icon {
   display: block;
-  width: auto;
+  width: 28px;
   height: 28px;
+  border-radius: 7px;
+}
+
+.mark-text {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--ink);
 }
 
 .top-link {
@@ -98,13 +107,13 @@ a {
 }
 
 .brand {
-  margin: 0 0 22px;
+  margin: 0 0 20px;
   line-height: 0;
 }
 
 .brand-logo {
   display: block;
-  width: min(100%, 340px);
+  width: min(100%, 280px);
   height: auto;
 }
 
@@ -252,11 +261,21 @@ a {
 
 .window-bar p {
   margin: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   text-align: center;
   font-size: 12px;
   font-weight: 600;
   color: #8b95a1;
   letter-spacing: -0.02em;
+}
+
+.window-logo {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
 }
 
 .window-body {
