@@ -23,6 +23,14 @@ import {
 import { icons } from "./icons.js";
 import { createEditorPane } from "./editor-pane.js";
 import { createFilesBrowser } from "./files-tree.js";
+import {
+  createMeetingPane,
+  type MeetingPaneController,
+} from "./meeting-pane.js";
+import {
+  isApiKeyError,
+  openCursorApiKeysPage,
+} from "./cursor-api-key.js";
 import { showToast } from "./toast.js";
 
 declare global {
@@ -45,6 +53,25 @@ type TabView = {
   fitTimer?: number;
   /** Ignore fit/resize until this time so the first prompt keeps a stable COLUMNS. */
   sizeFreezeUntil?: number;
+};
+
+type MeetingMetaView = {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  durationMs: number;
+  status: "idle" | "recording" | "paused" | "done";
+  hasAudio: boolean;
+  hasTranscript: boolean;
+  hasNotes: boolean;
+  hasSummary: boolean;
+};
+
+const meetingState = {
+  list: [] as MeetingMetaView[],
+  activeId: null as string | null,
+  pane: null as MeetingPaneController | null,
 };
 
 /** Bundled MesloLGS NF — must match @font-face in styles.css. CJK fallbacks after. */
@@ -79,13 +106,14 @@ const state = {
     action: ProposedAction;
   },
   generating: false,
+  activeRunId: null as string | null,
   turnTokens: null as number | null,
   turnModel: null as string | null,
   turnCost: null as string | null,
   startedAssistant: false,
 };
 
-type NavId = "sessions" | "files" | "settings";
+type NavId = "sessions" | "files" | "meetings" | "settings";
 const tabCwds = new Map<string, string>();
 
 if (/Mac|darwin/i.test(navigator.userAgent)) {
@@ -128,20 +156,14 @@ app.innerHTML = `
           <span class="strip-bar"><span id="strip-gpu-bar"></span></span>
           <span class="strip-metric-val" id="strip-gpu-val">—</span>
         </div>
+        <div class="strip-metric hidden" id="strip-api" data-i18n-title="strip.apiTitle" title="Cursor usage remaining">
+          <span class="strip-metric-ico">${icons.sparkles(13)}</span>
+          <span class="strip-metric-label" data-i18n="strip.api">Cursor</span>
+          <span class="strip-bar"><span id="strip-api-bar"></span></span>
+          <span class="strip-metric-val" id="strip-api-val">—</span>
+        </div>
       </div>
       <div class="strip-right">
-        <span class="strip-pill" id="strip-shell">
-          <span class="strip-dot" id="strip-shell-dot"></span>
-          <span id="strip-shell-text" data-i18n="strip.shellIdle">Shell idle</span>
-        </span>
-        <span class="strip-pill" id="key-badge">
-          <span class="strip-dot warn" id="key-dot"></span>
-          <span id="key-badge-text">API key needed</span>
-        </span>
-        <button type="button" class="strip-stop hidden" id="btn-strip-stop" data-i18n-title="strip.stop" title="Stop" aria-label="Stop">
-          ${icons.stop(11)}
-          <span data-i18n="strip.stop">Stop</span>
-        </button>
         <button type="button" class="chrome-btn" id="btn-toggle-agent" data-i18n-title="chrome.toggleAgent" title="Toggle chat panel" aria-label="Toggle chat panel" aria-pressed="true">
           ${icons.panelRight(16)}
         </button>
@@ -160,6 +182,7 @@ app.innerHTML = `
           </div>
         </div>
         <div class="rail-group rail-group-bottom">
+          <button type="button" class="rail-btn" data-nav="meetings" data-i18n-title="nav.meetings" title="Meetings" aria-label="Meetings">${icons.mic(17)}</button>
           <button type="button" class="rail-btn" data-nav="settings" data-i18n-title="nav.settings" title="Settings" aria-label="Settings">${icons.settings(17)}</button>
         </div>
       </nav>
@@ -186,6 +209,18 @@ app.innerHTML = `
           <div class="section-label"><span data-i18n="sidebar.ssh">SSH sessions</span></div>
           <div class="session-empty" id="session-empty" data-i18n-html="sidebar.empty"></div>
           <ul class="session-list" id="session-list"></ul>
+        </section>
+
+        <section class="nav-view hidden" data-view="meetings">
+          <div class="sidebar-tools">
+            <button class="primary" id="btn-new-meeting">
+              ${icons.mic(14)}
+              <span data-i18n="sidebar.meeting">Start meeting</span>
+            </button>
+          </div>
+          <div class="section-label"><span data-i18n="meeting.list">Meetings</span></div>
+          <div class="meeting-list-empty" id="meeting-list-empty" data-i18n="meeting.listEmpty">No meetings yet</div>
+          <ul class="meeting-list" id="meeting-list"></ul>
         </section>
 
         <section class="nav-view hidden" data-view="files">
@@ -250,11 +285,25 @@ app.innerHTML = `
             <p class="settings-lead" data-i18n="settings.lead">API key is encrypted in the OS keychain. Sessions never store secrets.</p>
             <div class="form-grid settings-form">
               <label>
-                <span class="settings-field-head">
-                  <span data-i18n="settings.apiKey">Cursor API key</span>
-                  <button type="button" class="ghost settings-inline-btn" id="btn-clear-key" data-i18n="settings.clearKey">Clear key</button>
-                </span>
-                <input id="api-key-input" type="password" autocomplete="off" placeholder="cursor_…" />
+                <span data-i18n="settings.apiKey">Cursor API key</span>
+                <div class="settings-key-help" id="api-key-help">
+                  <ol class="settings-key-steps">
+                    <li data-i18n="settings.keyStep1">Open API Keys in the Cursor dashboard</li>
+                    <li data-i18n="settings.keyStep2">Create a key and copy it once</li>
+                    <li data-i18n="settings.keyStep3">Paste it below and save</li>
+                  </ol>
+                  <button type="button" class="settings-key-open" id="btn-open-api-keys" data-i18n="settings.openKeyPage">Open key page</button>
+                </div>
+                <div class="settings-key-row" id="api-key-unset">
+                  <input id="api-key-input" type="password" autocomplete="off" placeholder="cursor_…" />
+                  <button type="button" class="primary settings-key-save" id="btn-save-key" data-i18n="settings.save">Save</button>
+                </div>
+                <div class="settings-key-row hidden" id="api-key-set">
+                  <button type="button" class="settings-key-clear" id="btn-clear-key" data-i18n-title="settings.clearKey" title="Delete">
+                    <span class="settings-key-clear-idle" data-i18n="settings.keyConfigured">Configured</span>
+                    <span class="settings-key-clear-hover" data-i18n="settings.clearKey">Delete</span>
+                  </button>
+                </div>
               </label>
               <label>
                 <span data-i18n="settings.language">Language</span>
@@ -263,9 +312,6 @@ app.innerHTML = `
                   <option value="en">English</option>
                 </select>
               </label>
-            </div>
-            <div class="settings-actions">
-              <button type="button" class="primary" id="btn-save-key" data-i18n="settings.save">Save</button>
             </div>
           </div>
         </section>
@@ -292,6 +338,13 @@ app.innerHTML = `
               <div class="terminal-host" id="terminal-host"></div>
             </div>
           </div>
+          <div class="meeting-stage hidden" id="meeting-stage">
+            <div class="meeting-stage-empty" id="meeting-stage-empty">
+              <div class="meeting-stage-empty-ico">${icons.mic(28)}</div>
+              <p data-i18n="meeting.stageEmpty">Start a meeting from the sidebar</p>
+            </div>
+            <div class="meeting-stage-host" id="meeting-stage-host"></div>
+          </div>
         </div>
       </section>
 
@@ -305,6 +358,7 @@ app.innerHTML = `
 
       <aside class="agent" id="agent-panel">
         <div class="panel-head agent-top">
+          <span class="usage-mini hidden" id="usage-mini"></span>
           <div class="agent-tools">
             <button type="button" class="agent-tool" id="btn-new-chat" data-i18n-title="chat.new" title="Reset chat" aria-label="Reset chat">${icons.restartChat(16)}</button>
           </div>
@@ -312,7 +366,29 @@ app.innerHTML = `
         <div class="chat-thread" id="chat-thread"></div>
         <div class="agent-compose">
           <div class="composer" id="composer">
-            <textarea id="agent-input" data-i18n-placeholder="chat.placeholder" placeholder="Plan, search, build anything…"></textarea>
+            <button type="button" class="composer-context is-empty" id="composer-context" title="">
+              <span class="composer-context-ico" id="composer-context-ico" aria-hidden="true">${icons.terminal(12)}</span>
+              <span class="composer-context-kind" id="composer-context-kind"></span>
+              <span class="composer-context-sep hidden" id="composer-context-sep" aria-hidden="true">·</span>
+              <span class="composer-context-path" id="composer-context-path"></span>
+            </button>
+            <div class="composer-input-wrap is-empty" id="composer-input-wrap">
+              <div
+                class="composer-placeholder"
+                id="composer-placeholder"
+                data-i18n="chat.placeholder"
+                aria-hidden="true"
+              >Plan, search, build anything…</div>
+              <div
+                id="agent-input"
+                class="composer-editor"
+                contenteditable="true"
+                role="textbox"
+                aria-multiline="true"
+                aria-label="Plan, search, build anything…"
+              ></div>
+              <div class="mention-menu hidden" id="mention-menu" role="listbox"></div>
+            </div>
             <div class="composer-foot">
               <div class="composer-left">
                 <div class="mode-wrap">
@@ -353,7 +429,6 @@ app.innerHTML = `
                     <div class="model-list" id="model-list" role="listbox"></div>
                   </div>
                 </div>
-                <span class="usage-mini hidden" id="usage-mini"></span>
               </div>
               <div class="composer-right">
                 <button class="send-btn" id="btn-send" data-i18n-title="chat.send" title="Send" aria-label="Send">${icons.send(16)}</button>
@@ -418,13 +493,24 @@ const els = {
   tabs: document.getElementById("tabs")!,
   tabsEmpty: document.getElementById("tabs-empty")!,
   terminalHost: document.getElementById("terminal-host")!,
+  terminalStage: document.getElementById("terminal-stage")!,
+  meetingStage: document.getElementById("meeting-stage")!,
+  meetingStageHost: document.getElementById("meeting-stage-host")!,
+  meetingStageEmpty: document.getElementById("meeting-stage-empty")!,
+  meetingList: document.getElementById("meeting-list")!,
+  meetingListEmpty: document.getElementById("meeting-list-empty")!,
   chatThread: document.getElementById("chat-thread")!,
-  agentInput: document.getElementById("agent-input") as HTMLTextAreaElement,
+  agentInput: document.getElementById("agent-input") as HTMLDivElement,
+  composerInputWrap: document.getElementById("composer-input-wrap")!,
+  composerPlaceholder: document.getElementById("composer-placeholder")!,
   composer: document.getElementById("composer")!,
+  composerContext: document.getElementById("composer-context") as HTMLButtonElement,
+  composerContextIco: document.getElementById("composer-context-ico")!,
+  composerContextKind: document.getElementById("composer-context-kind")!,
+  composerContextSep: document.getElementById("composer-context-sep")!,
+  composerContextPath: document.getElementById("composer-context-path")!,
+  mentionMenu: document.getElementById("mention-menu")!,
   btnSend: document.getElementById("btn-send") as HTMLButtonElement,
-  keyBadge: document.getElementById("key-badge")!,
-  keyBadgeText: document.getElementById("key-badge-text")!,
-  keyDot: document.getElementById("key-dot")!,
   stripPath: document.getElementById("strip-path") as HTMLButtonElement,
   stripPathText: document.getElementById("strip-path-text")!,
   stripCpu: document.getElementById("strip-cpu")!,
@@ -439,10 +525,9 @@ const els = {
   stripGpu: document.getElementById("strip-gpu")!,
   stripGpuBar: document.getElementById("strip-gpu-bar")!,
   stripGpuVal: document.getElementById("strip-gpu-val")!,
-  stripShell: document.getElementById("strip-shell")!,
-  stripShellDot: document.getElementById("strip-shell-dot")!,
-  stripShellText: document.getElementById("strip-shell-text")!,
-  btnStripStop: document.getElementById("btn-strip-stop") as HTMLButtonElement,
+  stripApi: document.getElementById("strip-api")!,
+  stripApiBar: document.getElementById("strip-api-bar")!,
+  stripApiVal: document.getElementById("strip-api-val")!,
   modalSsh: document.getElementById("modal-ssh")!,
   modalUpdate: document.getElementById("modal-update")!,
   updateCurrent: document.getElementById("update-current")!,
@@ -459,6 +544,14 @@ const els = {
     "btn-update-action"
   ) as HTMLButtonElement,
   apiKeyInput: document.getElementById("api-key-input") as HTMLInputElement,
+  apiKeyUnset: document.getElementById("api-key-unset")!,
+  apiKeySet: document.getElementById("api-key-set")!,
+  apiKeyHelp: document.getElementById("api-key-help")!,
+  btnSaveKey: document.getElementById("btn-save-key") as HTMLButtonElement,
+  btnClearKey: document.getElementById("btn-clear-key") as HTMLButtonElement,
+  btnOpenApiKeys: document.getElementById(
+    "btn-open-api-keys"
+  ) as HTMLButtonElement,
   btnModel: document.getElementById("btn-model") as HTMLButtonElement,
   modelLabel: document.getElementById("model-label")!,
   modelPopover: document.getElementById("model-popover")!,
@@ -500,16 +593,20 @@ function applyUiLocale(): void {
   renderModeChip();
   setKeyBadge(state.hasKey);
   refreshStatusStrip();
-  if (!state.generating) {
+  if (state.generating) {
+    els.btnSend.innerHTML = icons.stop(16);
+    els.btnSend.title = t("strip.stop");
+    els.btnSend.setAttribute("aria-label", t("strip.stop"));
+  } else {
     els.btnSend.innerHTML = icons.send(16);
     els.btnSend.title = t("chat.send");
     els.btnSend.setAttribute("aria-label", t("chat.send"));
   }
   els.settingsLocale.value = state.locale;
-  // Refresh empty chat copy if still empty.
-  if (els.chatThread.querySelector(".chat-empty")) {
-    chat.showEmpty();
-  }
+  els.composerPlaceholder.textContent = t("chat.placeholder");
+  els.agentInput.setAttribute("aria-label", t("chat.placeholder"));
+  hideMentionMenu();
+  refreshChatEmptyIfNeeded();
   updateSessionEmpty();
   updateTabsEmpty();
 }
@@ -549,11 +646,15 @@ chat.showEmpty();
 function setGenerating(on: boolean): void {
   state.generating = on;
   els.composer.classList.toggle("generating", on);
-  els.btnSend.innerHTML = on ? icons.loading(16) : icons.send(16);
+  els.btnSend.innerHTML = on ? icons.stop(16) : icons.send(16);
   els.btnSend.classList.toggle("busy", on);
-  els.btnSend.disabled = on;
-  els.agentInput.disabled = on;
-  updateStripShell();
+  els.btnSend.classList.toggle("is-stop", on);
+  els.btnSend.disabled = false;
+  els.btnSend.title = on ? t("strip.stop") : t("chat.send");
+  els.btnSend.setAttribute("aria-label", on ? t("strip.stop") : t("chat.send"));
+  els.btnSend.dataset.i18nTitle = on ? "strip.stop" : "chat.send";
+  els.agentInput.contentEditable = on ? "false" : "true";
+  els.agentInput.classList.toggle("is-disabled", on);
 }
 
 let homeDirCache = "";
@@ -572,16 +673,30 @@ function formatBytesShort(n: number): string {
   return `${(n / 1024 ** 3).toFixed(1)} GB`;
 }
 
+function syncApiKeySettingsUi(): void {
+  const hasKey = state.hasKey;
+  els.apiKeyUnset.classList.toggle("hidden", hasKey);
+  els.apiKeySet.classList.toggle("hidden", !hasKey);
+  els.apiKeyHelp.classList.toggle("hidden", hasKey);
+  if (hasKey) els.apiKeyInput.value = "";
+}
+
 function setKeyBadge(hasKey: boolean): void {
   state.hasKey = hasKey;
-  els.keyBadgeText.textContent = hasKey ? t("status.ready") : t("status.needKey");
-  els.keyBadge.classList.toggle("ok", hasKey);
-  els.keyBadge.classList.toggle("warn", !hasKey);
-  els.keyDot.classList.toggle("ok", hasKey);
-  els.keyDot.classList.toggle("warn", !hasKey);
+  syncApiKeySettingsUi();
 }
 
 function updateStripPath(): void {
+  if (activeNav === "meetings") {
+    const title =
+      meetingState.pane?.title ||
+      meetingState.list.find((m) => m.id === meetingState.activeId)?.title ||
+      t("nav.meetings");
+    els.stripPathText.textContent = title;
+    els.stripPath.title = title;
+    updateComposerContext();
+    return;
+  }
   const active = state.activeTabId
     ? state.tabs.get(state.activeTabId)
     : undefined;
@@ -589,23 +704,487 @@ function updateStripPath(): void {
   const label = cwd ? formatStripPath(cwd) : active ? active.title : "—";
   els.stripPathText.textContent = label;
   els.stripPath.title = cwd || active?.title || "";
+  updateComposerContext();
 }
 
-function updateStripShell(): void {
-  const busy = state.generating;
-  els.stripShell.classList.toggle("busy", busy);
-  els.stripShellDot.classList.toggle("busy", busy);
-  els.stripShellDot.classList.toggle("ok", !busy);
-  els.stripShellText.textContent = busy
-    ? t("strip.shellBusy")
-    : t("strip.shellIdle");
-  els.btnStripStop.classList.toggle("hidden", !busy);
+function updateComposerContext(): void {
+  if (activeNav === "meetings") {
+    const title =
+      meetingState.pane?.title ||
+      meetingState.list.find((m) => m.id === meetingState.activeId)?.title ||
+      "";
+    const sessionLabel = t("chat.context.meeting");
+    els.composerContext.classList.toggle("is-empty", !title);
+    els.composerContext.classList.remove("is-ssh");
+    els.composerContextIco.innerHTML = icons.mic(12);
+    els.composerContextKind.textContent = title
+      ? sessionLabel
+      : t("chat.context.none");
+    if (title) {
+      els.composerContextPath.textContent = title;
+      els.composerContextSep.classList.remove("hidden");
+      els.composerContext.title = `${sessionLabel} · ${title}`;
+    } else {
+      els.composerContextPath.textContent = "";
+      els.composerContextSep.classList.add("hidden");
+      els.composerContext.title = t("chat.context.none");
+    }
+    refreshChatEmptyIfNeeded();
+    return;
+  }
+  const active = state.activeTabId
+    ? state.tabs.get(state.activeTabId)
+    : undefined;
+  if (!active) {
+    els.composerContext.classList.add("is-empty");
+    els.composerContext.classList.remove("is-ssh");
+    els.composerContextIco.innerHTML = icons.terminal(12);
+    els.composerContextKind.textContent = t("chat.context.none");
+    els.composerContextPath.textContent = "";
+    els.composerContextSep.classList.add("hidden");
+    els.composerContext.title = t("chat.context.none");
+    refreshChatEmptyIfNeeded();
+    return;
+  }
+  const cwd = tabCwds.get(active.id);
+  const pathLabel = cwd ? formatStripPath(cwd) : "";
+  const sessionLabel =
+    active.kind === "ssh"
+      ? t("chat.context.sshSession", { name: active.title })
+      : t("chat.context.localSession");
+  els.composerContext.classList.remove("is-empty");
+  els.composerContext.classList.toggle("is-ssh", active.kind === "ssh");
+  els.composerContextIco.innerHTML =
+    active.kind === "ssh" ? icons.server(12) : icons.monitor(12);
+  els.composerContextKind.textContent = sessionLabel;
+  if (pathLabel) {
+    els.composerContextPath.textContent = pathLabel;
+    els.composerContextSep.classList.remove("hidden");
+  } else {
+    els.composerContextPath.textContent = "";
+    els.composerContextSep.classList.add("hidden");
+  }
+  els.composerContext.title = cwd
+    ? `${sessionLabel} · ${cwd}`
+    : sessionLabel;
+  refreshChatEmptyIfNeeded();
+}
+
+function pathBasename(p: string): string {
+  const cleaned = p.replace(/\\/g, "/").replace(/\/+$/, "");
+  const i = cleaned.lastIndexOf("/");
+  return i >= 0 ? cleaned.slice(i + 1) : cleaned;
+}
+
+type MentionItem = { path: string; name: string; kind: "file" | "dir" };
+
+let mentionItems: MentionItem[] = [];
+let mentionIndex = 0;
+let mentionLoadToken = 0;
+let cwdMentionCache: { key: string; items: MentionItem[] } | null = null;
+
+type AtMentionState = {
+  textNode: Text;
+  atOffset: number;
+  caretOffset: number;
+  query: string;
+};
+
+function getAtMention(): AtMentionState | null {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount || !sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0);
+  if (!els.agentInput.contains(range.startContainer)) return null;
+  let textNode: Text | null = null;
+  let caretOffset = 0;
+  if (range.startContainer.nodeType === Node.TEXT_NODE) {
+    textNode = range.startContainer as Text;
+    caretOffset = range.startOffset;
+  } else {
+    return null;
+  }
+  const before = textNode.data.slice(0, caretOffset);
+  const match = before.match(/(^|[\s\n\u200b])@([^\s@]*)$/);
+  if (!match) return null;
+  const query = match[2] ?? "";
+  const atOffset = before.length - query.length - 1;
+  return { textNode, atOffset, caretOffset, query };
+}
+
+function invalidateMentionCache(): void {
+  cwdMentionCache = null;
+}
+
+async function loadCwdMentions(): Promise<MentionItem[]> {
+  const active = state.activeTabId
+    ? state.tabs.get(state.activeTabId)
+    : undefined;
+  if (!active) return [];
+  const cwd = tabCwds.get(active.id);
+  if (!cwd) return [];
+  const key = `${active.id}:${cwd}`;
+  if (cwdMentionCache?.key === key) return cwdMentionCache.items;
+  const res =
+    active.kind === "ssh"
+      ? await api.listTabDir(active.id, cwd)
+      : await api.listDir(cwd);
+  if (res.error) {
+    cwdMentionCache = { key, items: [] };
+    return [];
+  }
+  const items = res.entries
+    .map((e) => ({
+      path: e.path,
+      name: e.kind === "dir" ? `${e.name}/` : e.name,
+      kind: e.kind,
+    }))
+    .sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === "dir" ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  cwdMentionCache = { key, items };
+  return items;
+}
+
+function filterMentions(
+  items: MentionItem[],
+  query: string
+): MentionItem[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return items.slice(0, 40);
+  return items
+    .filter(
+      (f) =>
+        f.name.toLowerCase().includes(q) ||
+        f.path.toLowerCase().includes(q)
+    )
+    .slice(0, 40);
+}
+
+let activeAtMention: AtMentionState | null = null;
+
+function hideMentionMenu(): void {
+  activeAtMention = null;
+  mentionItems = [];
+  mentionIndex = 0;
+  mentionLoadToken += 1;
+  els.mentionMenu.classList.add("hidden");
+  els.mentionMenu.innerHTML = "";
+}
+
+function renderMentionMenu(loading = false): void {
+  els.mentionMenu.innerHTML = "";
+  if (!activeAtMention) {
+    els.mentionMenu.classList.add("hidden");
+    return;
+  }
+  if (loading) {
+    const empty = document.createElement("div");
+    empty.className = "mention-empty";
+    empty.textContent = t("chat.mention.loading");
+    els.mentionMenu.append(empty);
+    els.mentionMenu.classList.remove("hidden");
+    return;
+  }
+  if (!mentionItems.length) {
+    const empty = document.createElement("div");
+    empty.className = "mention-empty";
+    empty.textContent = t("chat.mention.empty");
+    els.mentionMenu.append(empty);
+    els.mentionMenu.classList.remove("hidden");
+    return;
+  }
+  mentionItems.forEach((item, i) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.role = "option";
+    btn.className = `mention-item${i === mentionIndex ? " active" : ""}`;
+    btn.innerHTML = `<span class="mention-name">${escapeHtml(item.name)}</span><span class="mention-path">${escapeHtml(formatStripPath(item.path))}</span>`;
+    btn.onmousedown = (e) => {
+      e.preventDefault();
+      applyMention(item);
+    };
+    els.mentionMenu.append(btn);
+  });
+  els.mentionMenu.classList.remove("hidden");
+}
+
+async function refreshMentionMenu(): Promise<void> {
+  const at = getAtMention();
+  if (!at) {
+    hideMentionMenu();
+    return;
+  }
+  activeAtMention = at;
+  const token = ++mentionLoadToken;
+  const cached =
+    cwdMentionCache &&
+    state.activeTabId &&
+    cwdMentionCache.key.startsWith(`${state.activeTabId}:`);
+  if (!cached) renderMentionMenu(true);
+  const items = await loadCwdMentions();
+  if (token !== mentionLoadToken) return;
+  mentionItems = filterMentions(items, at.query);
+  mentionIndex = Math.min(
+    mentionIndex,
+    Math.max(0, mentionItems.length - 1)
+  );
+  renderMentionMenu(false);
+}
+
+type AttachedRef = {
+  path: string;
+  name: string;
+  kind: "file" | "dir";
+};
+
+function normalizeEmptyComposer(): boolean {
+  // Browsers often insert <br> / ZWSP into an empty contenteditable.
+  if (els.agentInput.querySelector(".composer-inline-chip")) return false;
+  const text = (els.agentInput.textContent || "")
+    .replace(/\u200b/g, "")
+    .replace(/\u00a0/g, " ")
+    .trim();
+  if (text) return false;
+  if (els.agentInput.innerHTML !== "") {
+    els.agentInput.innerHTML = "";
+  }
+  return true;
+}
+
+function syncComposerEmpty(): void {
+  const empty = normalizeEmptyComposer();
+  els.composerInputWrap.classList.toggle("is-empty", empty);
+}
+
+function clearComposer(): void {
+  els.agentInput.innerHTML = "";
+  syncComposerEmpty();
+  autoGrowInput();
+}
+
+function readComposerChips(): AttachedRef[] {
+  return [...els.agentInput.querySelectorAll(".composer-inline-chip")].map(
+    (el) => {
+      const node = el as HTMLElement;
+      return {
+        path: node.dataset.path || "",
+        name: node.dataset.name || node.textContent?.trim() || "",
+        kind: node.dataset.kind === "dir" ? "dir" : "file",
+      };
+    }
+  );
+}
+
+function readComposer(): { text: string; refs: AttachedRef[] } {
+  const refs = readComposerChips();
+  let text = "";
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      text += (node.textContent || "").replace(/\u200b/g, "");
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const el = node as HTMLElement;
+    if (el.classList.contains("composer-inline-chip")) return;
+    if (el.tagName === "BR") {
+      text += "\n";
+      return;
+    }
+    if (el.tagName === "DIV" || el.tagName === "P") {
+      if (text && !text.endsWith("\n")) text += "\n";
+    }
+    for (const child of el.childNodes) walk(child);
+  };
+  for (const child of els.agentInput.childNodes) walk(child);
+  return { text: text.replace(/\n{3,}/g, "\n\n").trim(), refs };
+}
+
+function enrichPromptWithRefs(message: string, refs: AttachedRef[]): string {
+  if (!refs.length) return message;
+  const lines = refs.map((r) => `- ${r.kind}: ${r.path}`);
+  const block = `[Attached]\n${lines.join("\n")}`;
+  return message.trim() ? `${message}\n\n${block}` : block;
+}
+
+function createInlineChip(item: MentionItem): HTMLSpanElement {
+  const chip = document.createElement("span");
+  chip.className = "composer-inline-chip";
+  chip.contentEditable = "false";
+  chip.dataset.path = item.path;
+  chip.dataset.kind = item.kind;
+  chip.dataset.name = item.name.replace(/\/$/, "");
+  chip.title = item.path;
+  chip.innerHTML = `
+    <span class="composer-chip-ico" aria-hidden="true">${
+      item.kind === "dir" ? icons.folder(11) : icons.file(11)
+    }</span>
+    <span class="composer-chip-label">${escapeHtml(item.name.replace(/\/$/, ""))}</span>
+    <button type="button" class="composer-chip-remove" aria-label="${escapeHtml(t("chat.ref.remove"))}">${icons.close(10)}</button>
+  `;
+  chip.querySelector(".composer-chip-remove")?.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  chip.querySelector(".composer-chip-remove")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const after = chip.nextSibling;
+    chip.remove();
+    els.agentInput.focus();
+    if (after?.nodeType === Node.TEXT_NODE) {
+      const sel = window.getSelection();
+      if (sel) {
+        const range = document.createRange();
+        range.setStart(after, 0);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    } else {
+      placeCaretAtEnd(els.agentInput);
+    }
+    syncComposerEmpty();
+    autoGrowInput();
+  });
+  return chip;
+}
+
+function placeCaretAtEnd(el: HTMLElement): void {
+  const sel = window.getSelection();
+  if (!sel) return;
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  range.collapse(false);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+function applyMention(item: MentionItem): void {
+  const at = activeAtMention || getAtMention();
+  if (!at) return;
+  const { textNode, atOffset, caretOffset } = at;
+  const before = textNode.data.slice(0, atOffset);
+  const after = textNode.data.slice(caretOffset);
+  const parent = textNode.parentNode;
+  if (!parent) return;
+
+  const beforeNode = document.createTextNode(before || "\u200b");
+  const afterNode = document.createTextNode(after || "\u200b");
+  const chip = createInlineChip(item);
+  parent.insertBefore(beforeNode, textNode);
+  parent.insertBefore(chip, textNode);
+  parent.insertBefore(afterNode, textNode);
+  parent.removeChild(textNode);
+
+  hideMentionMenu();
+  els.agentInput.focus();
+  const sel = window.getSelection();
+  if (sel) {
+    const range = document.createRange();
+    range.setStart(afterNode, after ? 0 : afterNode.data.length);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  syncComposerEmpty();
+  autoGrowInput();
+}
+
+function buildChatSuggestions(): { label: string; prompt: string }[] {
+  const active = state.activeTabId
+    ? state.tabs.get(state.activeTabId)
+    : undefined;
+  if (!active) {
+    return [
+      {
+        label: t("chat.suggest.openTab"),
+        prompt: t("chat.suggest.openTab.prompt"),
+      },
+    ];
+  }
+  const cwd = tabCwds.get(active.id) || "";
+  const short = cwd ? formatStripPath(cwd) : active.title;
+  const folder = cwd ? pathBasename(cwd) : active.title;
+  if (active.kind === "ssh") {
+    return [
+      {
+        label: t("chat.suggest.remoteStatus"),
+        prompt: t("chat.suggest.remoteStatus.prompt", {
+          host: active.title,
+          path: short,
+        }),
+      },
+      {
+        label: t("chat.suggest.termTail"),
+        prompt: t("chat.suggest.termTail.prompt"),
+      },
+      {
+        label: t("chat.suggest.folder", { name: folder }),
+        prompt: t("chat.suggest.folder.prompt", { path: short }),
+      },
+    ];
+  }
+  return [
+    {
+      label: t("chat.suggest.git"),
+      prompt: t("chat.suggest.git.prompt", { path: short }),
+    },
+    {
+      label: t("chat.suggest.termTail"),
+      prompt: t("chat.suggest.termTail.prompt"),
+    },
+    {
+      label: t("chat.suggest.folder", { name: folder }),
+      prompt: t("chat.suggest.folder.prompt", { path: short }),
+    },
+  ];
+}
+
+function refreshChatEmptyIfNeeded(): void {
+  if (!els.chatThread.querySelector(".chat-empty")) return;
+  chat.showEmpty(buildChatSuggestions());
 }
 
 let metricsInFlight = false;
 
 function setMetricWarn(el: HTMLElement, hot: boolean): void {
   el.classList.toggle("hot", hot);
+}
+
+let accountUsageInFlight = false;
+
+async function refreshAccountUsage(): Promise<void> {
+  if (accountUsageInFlight) return;
+  accountUsageInFlight = true;
+  try {
+    const res = await api.getAccountUsage();
+    if (!res.ok) {
+      els.stripApi.classList.add("hidden");
+      return;
+    }
+    const { usage } = res;
+    const left = usage.remainingPercent;
+    const used = Math.max(0, Math.min(100, Math.round(usage.usedPercent)));
+    els.stripApi.classList.remove("hidden");
+    els.stripApiVal.textContent = `${left}%`;
+    els.stripApiBar.style.width = `${Math.max(4, used)}%`;
+    const reset = usage.resetAt
+      ? new Date(usage.resetAt).toLocaleDateString()
+      : "";
+    const bits = [
+      t("strip.apiTitle"),
+      t("strip.apiLeft", { n: String(left) }),
+      usage.membershipType || "",
+      reset ? t("strip.apiReset", { date: reset }) : "",
+    ].filter(Boolean);
+    els.stripApi.title = bits.join(" · ");
+    setMetricWarn(els.stripApi, used >= 85);
+  } catch {
+    els.stripApi.classList.add("hidden");
+  } finally {
+    accountUsageInFlight = false;
+  }
 }
 
 async function refreshStripMetrics(): Promise<void> {
@@ -676,7 +1255,6 @@ async function refreshStripMetrics(): Promise<void> {
 
 function refreshStatusStrip(): void {
   updateStripPath();
-  updateStripShell();
 }
 
 function formatTokens(n: number): string {
@@ -766,20 +1344,72 @@ function renderModelPicker(filter = ""): void {
   }
 }
 
+const modelPopoverHome = els.modelPopover.parentElement;
+
+function positionModelPopover(): void {
+  if (els.modelPopover.classList.contains("hidden")) return;
+  const gap = 8;
+  const margin = 8;
+  const chip = els.btnModel.getBoundingClientRect();
+  const agent = document.getElementById("agent-panel");
+  const agentRect = agent?.getBoundingClientRect();
+  const width = Math.min(320, window.innerWidth - margin * 2);
+  const maxHeight = Math.min(420, window.innerHeight * 0.6);
+
+  // Cursor-style: sit above the chip, prefer spilling left over the main pane.
+  let left = chip.right - width;
+  if (agentRect) {
+    left = Math.min(left, agentRect.right - width - 10);
+  }
+  left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
+
+  const bottom = Math.max(margin, window.innerHeight - chip.top + gap);
+  const availableUp = window.innerHeight - bottom - margin;
+
+  els.modelPopover.style.left = `${Math.round(left)}px`;
+  els.modelPopover.style.right = "auto";
+  els.modelPopover.style.bottom = `${Math.round(bottom)}px`;
+  els.modelPopover.style.top = "auto";
+  els.modelPopover.style.width = `${Math.round(width)}px`;
+  els.modelPopover.style.maxHeight = `${Math.round(Math.min(maxHeight, availableUp))}px`;
+}
+
 function closeModelPopover(): void {
   els.modelPopover.classList.add("hidden");
   els.btnModel.setAttribute("aria-expanded", "false");
   els.modelSearch.value = "";
+  els.modelPopover.style.left = "";
+  els.modelPopover.style.bottom = "";
+  els.modelPopover.style.width = "";
+  els.modelPopover.style.maxHeight = "";
+  if (modelPopoverHome && els.modelPopover.parentElement !== modelPopoverHome) {
+    modelPopoverHome.appendChild(els.modelPopover);
+  }
 }
 
 function openModelPopover(): void {
   els.modePopover.classList.add("hidden");
   els.btnMode.setAttribute("aria-expanded", "false");
   renderModelPicker();
+  if (els.modelPopover.parentElement !== document.body) {
+    document.body.appendChild(els.modelPopover);
+  }
   els.modelPopover.classList.remove("hidden");
   els.btnModel.setAttribute("aria-expanded", "true");
-  requestAnimationFrame(() => els.modelSearch.focus());
+  positionModelPopover();
+  requestAnimationFrame(() => {
+    positionModelPopover();
+    els.modelSearch.focus({ preventScroll: true });
+  });
 }
+
+window.addEventListener(
+  "resize",
+  () => {
+    if (!els.modelPopover.classList.contains("hidden")) positionModelPopover();
+  },
+  { passive: true }
+);
 
 async function refreshModels(): Promise<void> {
   state.models = await api.listModels();
@@ -898,6 +1528,7 @@ function activateTab(tabId: string): void {
       active.term.focus();
     });
   }
+  invalidateMentionCache();
   void syncFilesPanel();
   refreshStatusStrip();
   void refreshStripMetrics();
@@ -946,8 +1577,18 @@ function setNav(id: NavId): void {
   document.querySelectorAll<HTMLElement>(".nav-view[data-view]").forEach((view) => {
     view.classList.toggle("hidden", view.dataset.view !== id);
   });
+  const meetings = id === "meetings";
+  els.terminalStage.classList.toggle("hidden", meetings);
+  els.meetingStage.classList.toggle("hidden", !meetings);
+  document.getElementById("main-stage")?.classList.toggle("mode-meetings", meetings);
   if (id === "files") void syncFilesPanel(true);
-  requestAnimationFrame(() => refitTerminals());
+  if (meetings) {
+    void refreshMeetingList();
+    syncMeetingStageEmpty();
+  } else {
+    requestAnimationFrame(() => refitTerminals());
+  }
+  refreshStatusStrip();
 }
 
 function openSettings(): void {
@@ -1132,6 +1773,9 @@ function handleShortcut(payload: {
     case "find":
       if (editorPane.isOpen()) editorPane.find();
       break;
+    case "toggle-comment":
+      if (editorPane.isOpen()) editorPane.toggleComment();
+      break;
     case "clear":
       clearActiveTerminal();
       break;
@@ -1298,6 +1942,137 @@ function mountTabView(
   return view;
 }
 
+function formatMeetingWhen(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString(state.locale === "ko" ? "ko-KR" : "en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function syncMeetingStageEmpty(): void {
+  const has = Boolean(meetingState.activeId && meetingState.pane);
+  els.meetingStageEmpty.classList.toggle("hidden", has);
+  els.meetingStageHost.classList.toggle("hidden", !has);
+}
+
+function renderMeetingList(): void {
+  els.meetingList.innerHTML = "";
+  const empty = meetingState.list.length === 0;
+  els.meetingListEmpty.classList.toggle("hidden", !empty);
+  for (const item of meetingState.list) {
+    const li = document.createElement("li");
+    li.className = `meeting-list-item${item.id === meetingState.activeId ? " active" : ""}`;
+    li.innerHTML = `
+      <button type="button" class="meeting-list-main" data-id="${escapeHtml(item.id)}">
+        <span class="meeting-list-title">${escapeHtml(item.title)}</span>
+        <span class="meeting-list-meta">${escapeHtml(formatMeetingWhen(item.createdAt))}</span>
+      </button>
+      <button type="button" class="meeting-list-del icon" data-del="${escapeHtml(item.id)}" data-i18n-title="meeting.delete" title="${escapeHtml(t("meeting.delete"))}" aria-label="${escapeHtml(t("meeting.delete"))}">${icons.trash(13)}</button>
+    `;
+    els.meetingList.append(li);
+  }
+}
+
+async function refreshMeetingList(): Promise<void> {
+  try {
+    meetingState.list = await api.listMeetings();
+  } catch {
+    meetingState.list = [];
+  }
+  renderMeetingList();
+}
+
+function unloadActiveMeeting(): void {
+  meetingState.pane?.dispose();
+  meetingState.pane = null;
+  meetingState.activeId = null;
+  els.meetingStageHost.innerHTML = "";
+  syncMeetingStageEmpty();
+  renderMeetingList();
+  refreshStatusStrip();
+}
+
+async function openMeetingById(id: string): Promise<void> {
+  if (meetingState.activeId === id && meetingState.pane) {
+    syncMeetingStageEmpty();
+    renderMeetingList();
+    return;
+  }
+  const record = await api.getMeeting(id);
+  if (!record) {
+    showToast(t("meeting.notFound"), "error");
+    await refreshMeetingList();
+    return;
+  }
+  meetingState.pane?.dispose();
+  els.meetingStageHost.innerHTML = "";
+  const pane = createMeetingPane({
+    api,
+    meetingId: record.meta.id,
+    title: record.meta.title,
+    transcript: record.transcript,
+    notes: record.notes,
+    summary: record.summary,
+    durationMs: record.meta.durationMs,
+    onTitleChange: (title) => {
+      const hit = meetingState.list.find((m) => m.id === record.meta.id);
+      if (hit) hit.title = title;
+      renderMeetingList();
+      if (activeNav === "meetings") updateStripPath();
+    },
+    onNeedApiKey: () => openSettings(),
+  });
+  pane.el.style.height = "100%";
+  els.meetingStageHost.append(pane.el);
+  meetingState.pane = pane;
+  meetingState.activeId = record.meta.id;
+  syncMeetingStageEmpty();
+  renderMeetingList();
+  refreshStatusStrip();
+}
+
+async function createAndOpenMeeting(): Promise<void> {
+  try {
+    const record = await api.createMeeting();
+    await refreshMeetingList();
+    // Keep the brand-new meeting at the top of the sidebar list.
+    meetingState.list = [
+      record.meta,
+      ...meetingState.list.filter((m) => m.id !== record.meta.id),
+    ];
+    renderMeetingList();
+    els.meetingList.scrollTop = 0;
+    await openMeetingById(record.meta.id);
+  } catch (err) {
+    showToast(
+      err instanceof Error ? err.message : String(err),
+      "error"
+    );
+  }
+}
+
+async function deleteMeetingById(id: string): Promise<void> {
+  const ok = window.confirm(t("meeting.deleteConfirm"));
+  if (!ok) return;
+  try {
+    await api.deleteMeeting(id);
+    if (meetingState.activeId === id) unloadActiveMeeting();
+    await refreshMeetingList();
+  } catch (err) {
+    showToast(
+      err instanceof Error ? err.message : String(err),
+      "error"
+    );
+  }
+}
+
 async function waitFrames(n: number): Promise<void> {
   for (let i = 0; i < n; i++) {
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
@@ -1306,6 +2081,7 @@ async function waitFrames(n: number): Promise<void> {
 
 async function openLocal(): Promise<void> {
   try {
+    if (activeNav === "meetings") setNav("sessions");
     await ensureTermFont();
     const created = await api.createLocalTab();
     const view = mountTabView(created.tabId, created.title, "local");
@@ -1333,6 +2109,7 @@ async function openLocal(): Promise<void> {
 }
 
 async function openSsh(sessionId: string): Promise<void> {
+  if (activeNav === "meetings") setNav("sessions");
   await ensureTermFont();
   await waitFrames(1);
   const probeEl = document.createElement("div");
@@ -1366,10 +2143,16 @@ async function openSsh(sessionId: string): Promise<void> {
   setNav("files");
 }
 
-/** Escape a path for zsh/bash so spaces and quotes survive. */
-function shellQuote(path: string): string {
-  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(path)) return path;
-  return `'${path.replace(/'/g, `'\\''`)}'`;
+/** Escape a path for the active local shell (zsh/bash or PowerShell). */
+function shellQuote(filePath: string): string {
+  const win = /Windows/i.test(navigator.userAgent);
+  if (win) {
+    // PowerShell: single-quoted string; double embedded quotes.
+    if (/^[A-Za-z0-9_.:\\/@%+=,-]+$/.test(filePath)) return filePath;
+    return `'${filePath.replace(/'/g, "''")}'`;
+  }
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(filePath)) return filePath;
+  return `'${filePath.replace(/'/g, `'\\''`)}'`;
 }
 
 async function closeTab(tabId: string): Promise<void> {
@@ -1386,6 +2169,7 @@ async function closeTab(tabId: string): Promise<void> {
   if (next) activateTab(next);
   else {
     renderTabs();
+    refreshStatusStrip();
     void syncFilesPanel(true);
   }
 }
@@ -1461,7 +2245,6 @@ const editorPane = createEditorPane({
     api.writeTabFile(tabId, filePath, content),
   onVisibilityChange: setEditorVisible,
 });
-
 {
   let dragging = false;
   mainSplit.addEventListener("mousedown", (e) => {
@@ -1731,6 +2514,7 @@ async function applyCwdToFiles(tabId: string, cwd: string): Promise<void> {
   const tab = state.tabs.get(tabId);
   if (!tab || !cwd) return;
   tabCwds.set(tabId, cwd);
+  invalidateMentionCache();
   if (state.activeTabId === tabId) updateStripPath();
   if (tab.kind === "local") {
     const follow = resolveLocalTab();
@@ -1778,6 +2562,24 @@ async function syncFilesPanel(_force = false): Promise<void> {
 
 // Wire UI
 document.getElementById("btn-local")!.onclick = () => void openLocal();
+document.getElementById("btn-new-meeting")!.onclick = () => {
+  setNav("meetings");
+  void createAndOpenMeeting();
+};
+els.meetingList.addEventListener("click", (e) => {
+  const del = (e.target as HTMLElement).closest(
+    "[data-del]"
+  ) as HTMLElement | null;
+  if (del?.dataset.del) {
+    e.preventDefault();
+    void deleteMeetingById(del.dataset.del);
+    return;
+  }
+  const open = (e.target as HTMLElement).closest(
+    "[data-id]"
+  ) as HTMLElement | null;
+  if (open?.dataset.id) void openMeetingById(open.dataset.id);
+});
 document.getElementById("btn-add-ssh")!.onclick = () =>
   els.modalSsh.classList.remove("hidden");
 document.getElementById("btn-cancel-ssh")!.onclick = () =>
@@ -1847,11 +2649,10 @@ document.querySelectorAll<HTMLButtonElement>(".rail-btn[data-nav]").forEach((btn
 });
 
 els.stripPath.onclick = () => setNav("files");
-els.btnStripStop.onclick = () => {
-  if (!state.activeTabId) return;
-  void api.writeTerminal(state.activeTabId, "\u0003");
+els.composerContext.onclick = () => {
+  if (els.composerContext.classList.contains("is-empty")) return;
+  setNav("files");
 };
-
 api.onShortcut((payload) => handleShortcut(payload));
 
 window.addEventListener("keydown", (e) => {
@@ -1859,19 +2660,29 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
   }
 });
-document.getElementById("btn-save-key")!.onclick = async () => {
-  await api.setApiKey(els.apiKeyInput.value);
+els.btnOpenApiKeys.onclick = () => openCursorApiKeysPage(api);
+els.btnSaveKey.onclick = async () => {
+  const value = els.apiKeyInput.value.trim();
+  if (!value) return;
+  await api.setApiKey(value);
   els.apiKeyInput.value = "";
-  const status = await api.getApiKeyStatus();
-  setKeyBadge(status.hasKey);
+  setKeyBadge(true);
   chat.addSystem(t("settings.keySaved"));
   await refreshModels();
+  void refreshAccountUsage();
 };
-document.getElementById("btn-clear-key")!.onclick = async () => {
+els.btnClearKey.onclick = async () => {
   await api.clearApiKey();
   setKeyBadge(false);
   chat.addSystem(t("settings.keyCleared"));
+  void refreshAccountUsage();
 };
+els.apiKeyInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    els.btnSaveKey.click();
+  }
+});
 els.settingsLocale.onchange = () => {
   void applyLocale(normalizeLocale(els.settingsLocale.value));
 };
@@ -1992,8 +2803,11 @@ document.getElementById("btn-toggle-agent")!.onclick = () => {
 
 document.getElementById("btn-new-chat")!.onclick = () => {
   if (state.generating) return;
+  clearComposer();
+  hideMentionMenu();
   chat.clear();
   state.startedAssistant = false;
+  chat.showEmpty(buildChatSuggestions());
 };
 
 els.chatThread.addEventListener("click", (e) => {
@@ -2001,33 +2815,66 @@ els.chatThread.addEventListener("click", (e) => {
     "[data-suggest]"
   ) as HTMLElement | null;
   if (!btn?.dataset.suggest) return;
-  els.agentInput.value = btn.dataset.suggest;
+  clearComposer();
+  els.agentInput.textContent = btn.dataset.suggest;
+  syncComposerEmpty();
+  autoGrowInput();
   els.agentInput.focus();
+  placeCaretAtEnd(els.agentInput);
 });
 
 async function sendCurrentPrompt(): Promise<void> {
   if (state.generating) return;
-  if (!state.activeTabId) {
+  let tabId = state.activeTabId;
+  if (!tabId || activeNav === "meetings") {
+    try {
+      const local = await ensureActiveLocalTab();
+      tabId = local.id;
+      if (activeNav === "meetings") setNav("sessions");
+    } catch {
+      chat.addError(t("error.openTab"));
+      return;
+    }
+  }
+  if (!tabId) {
     chat.addError(t("error.openTab"));
     return;
   }
-  const message = els.agentInput.value.trim();
-  if (!message) return;
-  els.agentInput.value = "";
-  autoGrowInput();
-  chat.addUser(message);
+  const { text: message, refs } = readComposer();
+  if (!message && !refs.length) return;
+  hideMentionMenu();
+  const payload = enrichPromptWithRefs(message, refs);
+  const refsForBubble = refs.map((r) => ({
+    name: r.name.replace(/\/$/, ""),
+    kind: r.kind,
+  }));
+  clearComposer();
+  chat.addUser(message, refsForBubble);
   state.startedAssistant = false;
   state.turnTokens = null;
   state.turnModel = state.modelId;
   state.turnCost = null;
   setGenerating(true);
   chat.setThinking(true, t("thinking"));
-  const res = await api.sendAgent({ tabId: state.activeTabId, message });
+  const res = await api.sendAgent({ tabId, message: payload });
   if ("error" in res) {
+    state.activeRunId = null;
     chat.setThinking(false);
-    chat.addError(res.error);
+    if (isApiKeyError(res.error)) {
+      openSettings();
+      chat.addError(t("settings.needKeyToast"), {
+        action: {
+          label: t("settings.openKeyPage"),
+          onClick: () => openCursorApiKeysPage(api),
+        },
+      });
+    } else {
+      chat.addError(res.error);
+    }
     setGenerating(false);
+    return;
   }
+  state.activeRunId = res.runId;
 }
 
 function autoGrowInput(): void {
@@ -2036,14 +2883,119 @@ function autoGrowInput(): void {
   el.style.height = `${Math.min(180, Math.max(64, el.scrollHeight))}px`;
 }
 
-els.btnSend.onclick = () => void sendCurrentPrompt();
+function deleteChipBeforeCaret(): boolean {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount || !sel.isCollapsed) return false;
+  const range = sel.getRangeAt(0);
+  const node = range.startContainer;
+  if (node.nodeType === Node.TEXT_NODE && range.startOffset === 0) {
+    const prev = node.previousSibling as HTMLElement | null;
+    if (prev?.classList?.contains("composer-inline-chip")) {
+      prev.remove();
+      syncComposerEmpty();
+      autoGrowInput();
+      return true;
+    }
+  }
+  if (node === els.agentInput && range.startOffset > 0) {
+    const prev = els.agentInput.childNodes[range.startOffset - 1] as
+      | HTMLElement
+      | undefined;
+    if (prev?.classList?.contains("composer-inline-chip")) {
+      prev.remove();
+      syncComposerEmpty();
+      autoGrowInput();
+      return true;
+    }
+  }
+  return false;
+}
+
+function stopCurrentAgent(): void {
+  void api.stopAgent({
+    runId: state.activeRunId ?? undefined,
+    tabId: state.activeTabId ?? undefined,
+  });
+}
+
+els.btnSend.onclick = () => {
+  if (state.generating) {
+    stopCurrentAgent();
+    return;
+  }
+  void sendCurrentPrompt();
+};
 els.agentInput.addEventListener("keydown", (e) => {
+  if (state.generating) {
+    e.preventDefault();
+    return;
+  }
+  const mentionOpen = !els.mentionMenu.classList.contains("hidden");
+  if (mentionOpen) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (mentionItems.length) {
+        mentionIndex = (mentionIndex + 1) % mentionItems.length;
+        renderMentionMenu();
+      }
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (mentionItems.length) {
+        mentionIndex =
+          (mentionIndex - 1 + mentionItems.length) % mentionItems.length;
+        renderMentionMenu();
+      }
+      return;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      const item = mentionItems[mentionIndex];
+      if (item) applyMention(item);
+      else hideMentionMenu();
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      hideMentionMenu();
+      return;
+    }
+  }
+  if (e.key === "Backspace" && deleteChipBeforeCaret()) {
+    e.preventDefault();
+    return;
+  }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
+    if (state.generating) {
+      stopCurrentAgent();
+      return;
+    }
     void sendCurrentPrompt();
   }
 });
-els.agentInput.addEventListener("input", autoGrowInput);
+els.agentInput.addEventListener("focus", () => {
+  if (normalizeEmptyComposer()) {
+    els.composerInputWrap.classList.add("is-empty");
+    placeCaretAtEnd(els.agentInput);
+  }
+});
+els.agentInput.addEventListener("input", () => {
+  syncComposerEmpty();
+  autoGrowInput();
+  void refreshMentionMenu();
+});
+els.agentInput.addEventListener("keyup", () => {
+  void refreshMentionMenu();
+});
+els.agentInput.addEventListener("click", () => {
+  void refreshMentionMenu();
+});
+els.agentInput.addEventListener("blur", () => {
+  syncComposerEmpty();
+  window.setTimeout(() => hideMentionMenu(), 120);
+});
 
 api.onTerminalData(({ tabId, data }) => {
   state.tabs.get(tabId)?.term.write(data);
@@ -2053,9 +3005,34 @@ api.onTerminalCwd(({ tabId, cwd }) => {
   void applyCwdToFiles(tabId, cwd);
 });
 
+function localizeProgressTitle(title: string): string {
+  const map: Record<string, string> = {
+    Working: t("progress.working"),
+    Thinking: t("progress.thinking"),
+    Replying: t("progress.replying"),
+    Searching: t("progress.searching"),
+    Searched: t("progress.searched"),
+    Editing: t("progress.editing"),
+    Edited: t("progress.edited"),
+    Reading: t("progress.reading"),
+    Read: t("progress.read"),
+    "Running command": t("progress.runningCommand"),
+    "Ran command": t("progress.ranCommand"),
+    "Starting…": t("progress.starting"),
+  };
+  return map[title] || title;
+}
+
 api.onAgentEvent(({ event }) => {
+  if (event.type === "progress") {
+    chat.setActivity({
+      title: localizeProgressTitle(event.title),
+      detail: event.detail,
+      summary: event.summary,
+      done: event.done,
+    });
+  }
   if (event.type === "text") {
-    chat.setThinking(false);
     if (!state.startedAssistant) {
       chat.beginAssistant();
       state.startedAssistant = true;
@@ -2077,15 +3054,44 @@ api.onAgentEvent(({ event }) => {
       chat.setThinking(true, t("thinking.approval"));
     }
     if (event.status === "error") {
+      const detail = event.detail || "unknown error";
+      const missingKey = isApiKeyError(detail);
+      state.activeRunId = null;
+      state.pendingApproval = null;
       chat.setThinking(false);
       if (state.startedAssistant) {
         chat.finishAssistant();
         state.startedAssistant = false;
       }
-      chat.addError(event.detail || "unknown error");
+      if (missingKey) {
+        openSettings();
+        chat.addError(t("settings.needKeyToast"), {
+          action: {
+            label: t("settings.openKeyPage"),
+            onClick: () => openCursorApiKeysPage(api),
+          },
+        });
+      } else {
+        chat.addError(detail);
+      }
+      setGenerating(false);
+    }
+    if (event.status === "cancelled") {
+      state.activeRunId = null;
+      if (state.pendingApproval) {
+        state.pendingApproval = null;
+        chat.resolveApprovalCard("deny");
+      }
+      chat.setThinking(false);
+      if (state.startedAssistant) {
+        chat.finishAssistant();
+        state.startedAssistant = false;
+      }
+      chat.addSystem(event.detail || t("chat.stopped"));
       setGenerating(false);
     }
     if (event.status === "done") {
+      state.activeRunId = null;
       chat.setThinking(false);
       if (state.startedAssistant) {
         chat.finishAssistant({
@@ -2096,6 +3102,7 @@ api.onAgentEvent(({ event }) => {
         state.startedAssistant = false;
       }
       setGenerating(false);
+      void refreshAccountUsage();
     }
     if (event.status === "running") {
       chat.setThinking(true, t("thinking"));
@@ -2148,5 +3155,7 @@ void (async () => {
   await openLocal();
   refreshStatusStrip();
   void refreshStripMetrics();
+  void refreshAccountUsage();
   window.setInterval(() => void refreshStripMetrics(), 2500);
+  window.setInterval(() => void refreshAccountUsage(), 5 * 60_000);
 })();

@@ -77,6 +77,21 @@ export type DesktopApi = {
 
   getSessionUsage: () => Promise<SessionUsageView>;
   resetSessionUsage: () => Promise<SessionUsageView>;
+  getAccountUsage: () => Promise<
+    | {
+        ok: true;
+        usage: {
+          usedPercent: number;
+          remainingPercent: number;
+          apiPercentUsed: number | null;
+          totalPercentUsed: number | null;
+          membershipType: string | null;
+          resetAt: string | null;
+          displayMessage: string | null;
+        };
+      }
+    | { ok: false }
+  >;
   onUsageUpdated: (
     cb: (payload: {
       last: Extract<AgentEvent, { type: "usage" }>;
@@ -88,6 +103,10 @@ export type DesktopApi = {
     tabId: string;
     message: string;
   }) => Promise<{ runId: string } | { error: string }>;
+  stopAgent: (input?: {
+    runId?: string;
+    tabId?: string;
+  }) => Promise<{ ok: true; stopped: string[] }>;
   onAgentEvent: (
     cb: (payload: {
       runId: string;
@@ -272,6 +291,139 @@ export type DesktopApi = {
     cb: (payload: { version: string; currentVersion: string }) => void
   ) => () => void;
   onUpdateError: (cb: (payload: { message: string }) => void) => () => void;
+
+  listMeetings: () => Promise<
+    Array<{
+      id: string;
+      title: string;
+      createdAt: string;
+      updatedAt: string;
+      durationMs: number;
+      status: "idle" | "recording" | "paused" | "done";
+      hasAudio: boolean;
+      hasTranscript: boolean;
+      hasNotes: boolean;
+      hasSummary: boolean;
+    }>
+  >;
+  createMeeting: (title?: string) => Promise<{
+    meta: {
+      id: string;
+      title: string;
+      createdAt: string;
+      updatedAt: string;
+      durationMs: number;
+      status: "idle" | "recording" | "paused" | "done";
+      hasAudio: boolean;
+      hasTranscript: boolean;
+      hasNotes: boolean;
+      hasSummary: boolean;
+    };
+    transcript: string;
+    notes: string;
+    summary: string;
+    audioPath: string | null;
+  }>;
+  getMeeting: (id: string) => Promise<{
+    meta: {
+      id: string;
+      title: string;
+      createdAt: string;
+      updatedAt: string;
+      durationMs: number;
+      status: "idle" | "recording" | "paused" | "done";
+      hasAudio: boolean;
+      hasTranscript: boolean;
+      hasNotes: boolean;
+      hasSummary: boolean;
+    };
+    transcript: string;
+    notes: string;
+    summary: string;
+    audioPath: string | null;
+  } | null>;
+  saveMeeting: (input: {
+    id: string;
+    title?: string;
+    durationMs?: number;
+    status?: "idle" | "recording" | "paused" | "done";
+    transcript?: string;
+    notes?: string;
+    summary?: string;
+  }) => Promise<{
+    meta: {
+      id: string;
+      title: string;
+      createdAt: string;
+      updatedAt: string;
+      durationMs: number;
+      status: "idle" | "recording" | "paused" | "done";
+      hasAudio: boolean;
+      hasTranscript: boolean;
+      hasNotes: boolean;
+      hasSummary: boolean;
+    };
+    transcript: string;
+    notes: string;
+    summary: string;
+    audioPath: string | null;
+  } | null>;
+  saveMeetingAudio: (
+    id: string,
+    data: ArrayBuffer | Uint8Array
+  ) => Promise<{
+    meta: {
+      id: string;
+      title: string;
+      createdAt: string;
+      updatedAt: string;
+      durationMs: number;
+      status: "idle" | "recording" | "paused" | "done";
+      hasAudio: boolean;
+      hasTranscript: boolean;
+      hasNotes: boolean;
+      hasSummary: boolean;
+    };
+    transcript: string;
+    notes: string;
+    summary: string;
+    audioPath: string | null;
+  } | null>;
+  deleteMeeting: (id: string) => Promise<{ ok: true }>;
+  exportMeeting: (
+    id: string
+  ) => Promise<
+    | { ok: true; path: string }
+    | { ok: false; canceled?: boolean; error?: string }
+  >;
+  summarizeMeeting: (
+    id: string
+  ) => Promise<
+    | {
+        ok: true;
+        summary: string;
+        meeting: {
+          meta: {
+            id: string;
+            title: string;
+            createdAt: string;
+            updatedAt: string;
+            durationMs: number;
+            status: "idle" | "recording" | "paused" | "done";
+            hasAudio: boolean;
+            hasTranscript: boolean;
+            hasNotes: boolean;
+            hasSummary: boolean;
+          };
+          transcript: string;
+          notes: string;
+          summary: string;
+          audioPath: string | null;
+        } | null;
+        runId: string;
+      }
+    | { error: string; runId?: string }
+  >;
 };
 
 const api: DesktopApi = {
@@ -321,6 +473,7 @@ const api: DesktopApi = {
 
   getSessionUsage: () => ipcRenderer.invoke("usage:get-session"),
   resetSessionUsage: () => ipcRenderer.invoke("usage:reset-session"),
+  getAccountUsage: () => ipcRenderer.invoke("usage:get-account"),
   onUsageUpdated: (cb) => {
     const listener = (
       _e: Electron.IpcRendererEvent,
@@ -334,6 +487,7 @@ const api: DesktopApi = {
   },
 
   sendAgent: (input) => ipcRenderer.invoke("agent:send", input),
+  stopAgent: (input) => ipcRenderer.invoke("agent:stop", input),
   onAgentEvent: (cb) => {
     const listener = (
       _e: Electron.IpcRendererEvent,
@@ -478,6 +632,16 @@ const api: DesktopApi = {
     ipcRenderer.on("updater:error", listener);
     return () => ipcRenderer.removeListener("updater:error", listener);
   },
+
+  listMeetings: () => ipcRenderer.invoke("meeting:list"),
+  createMeeting: (title) => ipcRenderer.invoke("meeting:create", title),
+  getMeeting: (id) => ipcRenderer.invoke("meeting:get", id),
+  saveMeeting: (input) => ipcRenderer.invoke("meeting:save", input),
+  saveMeetingAudio: (id, data) =>
+    ipcRenderer.invoke("meeting:save-audio", { id, data }),
+  deleteMeeting: (id) => ipcRenderer.invoke("meeting:delete", id),
+  exportMeeting: (id) => ipcRenderer.invoke("meeting:export", id),
+  summarizeMeeting: (id) => ipcRenderer.invoke("meeting:summarize", id),
 };
 
 contextBridge.exposeInMainWorld("cursorTerm", api);

@@ -19,6 +19,12 @@ export interface AgentSendInput {
   chatMode?: ChatMode;
   locale?: AppLocale;
   context?: { terminalTail?: string; notes?: string };
+  /** When aborted, cancel the in-flight Cursor run (if any) and stop yielding. */
+  signal?: AbortSignal;
+}
+
+function isAborted(signal?: AbortSignal): boolean {
+  return Boolean(signal?.aborted);
 }
 
 const DEFAULT_MODEL = "composer-2.5";
@@ -53,6 +59,10 @@ function fallbackModels(): ModelOption[] {
 export async function* sendAgent(
   input: AgentSendInput
 ): AsyncGenerator<AgentEvent> {
+  if (isAborted(input.signal)) {
+    yield { type: "status", status: "cancelled", detail: "Stopped" };
+    return;
+  }
   yield { type: "status", status: "running" };
 
   if (!input.apiKey.trim()) {
@@ -71,12 +81,20 @@ export async function* sendAgent(
       return;
     }
   } catch (err) {
+    if (isAborted(input.signal) || (err instanceof Error && err.name === "AbortError")) {
+      yield { type: "status", status: "cancelled", detail: "Stopped" };
+      return;
+    }
     yield {
       type: "text",
       text: `Cursor SDK call failed: ${err instanceof Error ? err.message : String(err)}\nFalling back to local proposer.\n`,
     };
   }
 
+  if (isAborted(input.signal)) {
+    yield { type: "status", status: "cancelled", detail: "Stopped" };
+    return;
+  }
   yield* runLocalProposer(input);
 }
 
@@ -117,8 +135,9 @@ function buildPrompt(input: AgentSendInput): string {
     languageLine,
     ...modeBlock,
     `Active target: ${JSON.stringify(input.target)}`,
+    input.context?.notes ? `Context notes: ${input.context.notes}` : "",
     input.context?.terminalTail
-      ? `Recent terminal output:\n${input.context.terminalTail}`
+      ? `Recent terminal output (scrollback tail):\n\`\`\`\n${input.context.terminalTail}\n\`\`\``
       : "",
     "",
     `User: ${input.message}`,
@@ -146,11 +165,20 @@ async function* runWithCursorSdk(
   sdk: typeof import("@cursor/sdk"),
   input: AgentSendInput
 ): AsyncGenerator<AgentEvent> {
+  // Cursor SDK local.cwd is a workspace root on this machine. For SSH tabs the
+  // remote cwd lives in the prompt/target; keep a harmless local fallback.
   const cwd =
-    input.target.kind === "local" ? input.target.cwd : process.cwd();
+    input.target.kind === "local" && input.target.cwd.startsWith("/")
+      ? input.target.cwd
+      : process.cwd();
   const modelId = input.modelId?.trim() || DEFAULT_MODEL;
   const chatMode = input.chatMode ?? "agent";
   const prompt = buildPrompt(input);
+
+  if (isAborted(input.signal)) {
+    yield { type: "status", status: "cancelled", detail: "Stopped" };
+    return;
+  }
 
   const agent = await sdk.Agent.create({
     apiKey: input.apiKey,
@@ -159,17 +187,130 @@ async function* runWithCursorSdk(
     local: { cwd },
   });
 
+  let run: Awaited<ReturnType<typeof agent.send>> | null = null;
+  const cancelRun = () => {
+    if (!run) return;
+    void run.cancel().catch(() => {
+      /* ignore */
+    });
+  };
+
   try {
-    const run = await agent.send(prompt);
+    if (isAborted(input.signal)) {
+      yield { type: "status", status: "cancelled", detail: "Stopped" };
+      return;
+    }
+    run = await agent.send(prompt);
+    input.signal?.addEventListener("abort", cancelRun, { once: true });
+    if (isAborted(input.signal)) {
+      cancelRun();
+      yield { type: "status", status: "cancelled", detail: "Stopped" };
+      return;
+    }
+
     let text = "";
     let lastUsage: TokenUsageSnapshot | undefined;
+    let toolRuns = 0;
+    let toolDone = 0;
+    let searches = 0;
+    let edits = 0;
+    let commands = 0;
+
+    const summaryLine = (): string | undefined => {
+      const bits: string[] = [];
+      if (toolDone > 0) bits.push(`${toolDone} tools`);
+      if (searches > 0) bits.push(`${searches} searches`);
+      if (edits > 0) bits.push(`${edits} edits`);
+      if (commands > 0) bits.push(`${commands} commands`);
+      return bits.length ? bits.join(" · ") : undefined;
+    };
+
+    yield {
+      type: "progress",
+      phase: "status",
+      title: "Working",
+      detail: "Starting…",
+    };
 
     for await (const event of run.stream()) {
+      if (isAborted(input.signal)) break;
+
+      if (event.type === "thinking") {
+        const snippet = event.text.trim().replace(/\s+/g, " ").slice(0, 140);
+        yield {
+          type: "progress",
+          phase: "thinking",
+          title: "Thinking",
+          detail: snippet || undefined,
+          summary: summaryLine(),
+          done: Boolean(event.thinking_duration_ms),
+        };
+      }
+
+      if (event.type === "task" && (event.text || event.status)) {
+        yield {
+          type: "progress",
+          phase: "task",
+          title: event.status?.trim() || "Working",
+          detail: event.text?.trim().slice(0, 160) || undefined,
+          summary: summaryLine(),
+        };
+      }
+
+      if (event.type === "tool_call") {
+        if (event.status === "running") toolRuns += 1;
+        if (event.status === "completed" || event.status === "error") {
+          toolDone += 1;
+        }
+        const kind = classifyToolName(event.name);
+        if (event.status === "running") {
+          if (kind === "search") searches += 1;
+          if (kind === "edit") edits += 1;
+          if (kind === "command") commands += 1;
+        }
+        yield {
+          type: "progress",
+          phase: "tool",
+          title: toolTitle(kind, event.name, event.status),
+          detail: toolDetail(event.args) || event.name,
+          summary: summaryLine(),
+          done: event.status !== "running",
+        };
+      }
+
+      if (event.type === "status" && event.message) {
+        yield {
+          type: "progress",
+          phase: "status",
+          title: event.status.toLowerCase(),
+          detail: event.message.slice(0, 160),
+          summary: summaryLine(),
+        };
+      }
+
       if (event.type === "assistant") {
         for (const block of event.message.content) {
           if (block.type === "text" && "text" in block) {
+            if (!text) {
+              yield {
+                type: "progress",
+                phase: "replying",
+                title: "Replying",
+                summary: summaryLine(),
+              };
+            }
             text += block.text;
             yield { type: "text", text: block.text };
+          }
+          if (block.type === "tool_use") {
+            const kind = classifyToolName(block.name);
+            yield {
+              type: "progress",
+              phase: "tool",
+              title: toolTitle(kind, block.name, "running"),
+              detail: toolDetail(block.input) || block.name,
+              summary: summaryLine(),
+            };
           }
         }
       }
@@ -182,7 +323,17 @@ async function* runWithCursorSdk(
       }
     }
 
+    if (isAborted(input.signal) || run.status === "cancelled") {
+      yield { type: "status", status: "cancelled", detail: "Stopped" };
+      return;
+    }
+
     const result = await run.wait();
+    if (isAborted(input.signal) || result.status === "cancelled") {
+      yield { type: "status", status: "cancelled", detail: "Stopped" };
+      return;
+    }
+
     const usageFromResult = normalizeUsage(result.usage ?? run.usage ?? lastUsage);
     let cost: UsageCostSnapshot | undefined;
 
@@ -224,12 +375,17 @@ async function* runWithCursorSdk(
     } else if (chatMode === "agent") {
       const proposed = extractPropose(text, input.target);
       if (proposed) {
+        if (isAborted(input.signal)) {
+          yield { type: "status", status: "cancelled", detail: "Stopped" };
+          return;
+        }
         yield { type: "status", status: "waiting-approval" };
         yield { type: "propose", action: proposed };
       }
     }
     yield { type: "status", status: "done" };
   } finally {
+    input.signal?.removeEventListener("abort", cancelRun);
     agent.close();
   }
 }
@@ -260,6 +416,10 @@ function normalizeUsage(
 async function* runLocalProposer(
   input: AgentSendInput
 ): AsyncGenerator<AgentEvent> {
+  if (isAborted(input.signal)) {
+    yield { type: "status", status: "cancelled", detail: "Stopped" };
+    return;
+  }
   const mode = input.chatMode ?? "agent";
   if (mode === "ask") {
     yield {
@@ -333,4 +493,76 @@ function guessReadonlyCommand(message: string): string {
   if (m.includes("process") || m.includes("cpu")) return "ps aux | head -n 30";
   if (m.includes("git")) return "git status -sb";
   return "pwd && ls -la";
+}
+
+type ToolKind = "search" | "edit" | "command" | "read" | "other";
+
+function classifyToolName(name: string): ToolKind {
+  const n = name.toLowerCase();
+  if (
+    n.includes("grep") ||
+    n.includes("search") ||
+    n.includes("find") ||
+    n.includes("glob")
+  ) {
+    return "search";
+  }
+  if (
+    n.includes("edit") ||
+    n.includes("write") ||
+    n.includes("apply") ||
+    n.includes("patch") ||
+    n.includes("strreplace")
+  ) {
+    return "edit";
+  }
+  if (
+    n.includes("shell") ||
+    n.includes("bash") ||
+    n.includes("exec") ||
+    n.includes("terminal") ||
+    n.includes("command")
+  ) {
+    return "command";
+  }
+  if (n.includes("read") || n.includes("cat") || n.includes("open")) {
+    return "read";
+  }
+  return "other";
+}
+
+function toolTitle(kind: ToolKind, name: string, status: string): string {
+  const running = status === "running";
+  switch (kind) {
+    case "search":
+      return running ? "Searching" : "Searched";
+    case "edit":
+      return running ? "Editing" : "Edited";
+    case "command":
+      return running ? "Running command" : "Ran command";
+    case "read":
+      return running ? "Reading" : "Read";
+    default:
+      return running ? name : `${name} done`;
+  }
+}
+
+function toolDetail(args: unknown): string | undefined {
+  if (!args || typeof args !== "object") return undefined;
+  const o = args as Record<string, unknown>;
+  for (const key of [
+    "command",
+    "cmd",
+    "query",
+    "pattern",
+    "path",
+    "file_path",
+    "filePath",
+    "target_file",
+    "relative_workspace_path",
+  ]) {
+    const v = o[key];
+    if (typeof v === "string" && v.trim()) return v.trim().slice(0, 140);
+  }
+  return undefined;
 }

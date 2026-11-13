@@ -1,6 +1,6 @@
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { spawn } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { readlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -81,12 +81,29 @@ function cleanEnv(): Record<string, string> {
 
 function defaultShell(): string {
   if (isWin()) {
-    // Prefer PowerShell for interactive local terminals (not cmd via COMSPEC).
-    return (
-      process.env.DRIFT_SHELL ||
-      process.env.SHELL ||
-      "powershell.exe"
-    );
+    // Prefer a resolved PowerShell path so PATH-less Electron spawns still work.
+    const systemRoot = process.env.SystemRoot || "C:\\Windows";
+    const candidates = [
+      process.env.DRIFT_SHELL,
+      process.env.SHELL,
+      path.join(
+        systemRoot,
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe"
+      ),
+      path.join(systemRoot, "System32", "cmd.exe"),
+      "powershell.exe",
+    ].filter((c): c is string => Boolean(c));
+    for (const c of candidates) {
+      if (c.includes("\\") || c.includes("/")) {
+        if (existsSync(c)) return c;
+      } else {
+        return c;
+      }
+    }
+    return "powershell.exe";
   }
   const candidates = [process.env.SHELL, "/bin/zsh", "/bin/bash", "/bin/sh"];
   for (const c of candidates) {
@@ -183,7 +200,11 @@ export function createLocalPty(opts?: {
   rows?: number;
 }): LocalPtyBackend {
   const shell = defaultShell();
-  const cwd = opts?.cwd ?? process.env.HOME ?? os.homedir();
+  const cwd =
+    opts?.cwd ??
+    (isWin()
+      ? process.env.USERPROFILE || os.homedir()
+      : process.env.HOME || os.homedir());
   const id = newId();
   const env = cleanEnv();
 

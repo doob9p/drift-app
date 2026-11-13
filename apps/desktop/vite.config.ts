@@ -36,6 +36,8 @@ export default defineConfig({
                 "electron-updater",
                 "node-pty",
                 "@cursor/sdk",
+                "node:sqlite",
+                /^node:/,
               ],
             },
           },

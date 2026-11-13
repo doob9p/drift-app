@@ -271,9 +271,12 @@ export function createEditorPane(opts: {
   openRemote: (tabId: string, path: string) => Promise<void>;
   isOpen: () => boolean;
   isFocused: () => boolean;
+  getActivePath: () => string | null;
+  listOpenPaths: () => { path: string; name: string }[];
   closeActive: () => Promise<boolean>;
   saveActive: () => Promise<boolean>;
   find: () => boolean;
+  toggleComment: () => boolean;
 } {
   const root = opts.root;
   root.innerHTML = `
@@ -584,6 +587,17 @@ export function createEditorPane(opts: {
         }),
         languageCompartment.of([]),
         readOnlyCompartment.of(EditorState.readOnly.of(true)),
+        // Fallback when no language module supplies commentTokens (e.g. unknown ext).
+        Prec.lowest(
+          EditorState.languageData.of(() => [
+            {
+              commentTokens: {
+                line: "//",
+                block: { open: "/*", close: "*/" },
+              },
+            },
+          ])
+        ),
         Prec.highest(
           keymap.of([
             indentWithTab,
@@ -669,6 +683,8 @@ export function createEditorPane(opts: {
       const active = document.activeElement;
       return !!active && root.contains(active);
     },
+    getActivePath: () => activeDoc()?.path ?? null,
+    listOpenPaths: () => docs.map((d) => ({ path: d.path, name: d.name })),
     closeActive: async () => {
       const doc = activeDoc();
       if (!doc) return false;
@@ -677,5 +693,11 @@ export function createEditorPane(opts: {
     },
     saveActive: () => saveActive(),
     find: () => openFind(),
+    toggleComment: () => {
+      const doc = activeDoc();
+      if (!doc || doc.kind !== "text" || doc.readonly) return false;
+      if (!view.hasFocus) view.focus();
+      return toggleComment(view);
+    },
   };
 }

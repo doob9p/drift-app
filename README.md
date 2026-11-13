@@ -74,11 +74,17 @@ Workflow: [`.github/workflows/release-windows.yml`](.github/workflows/release-wi
 On a Windows machine locally:
 
 ```bash
-export GH_TOKEN=ghp_...   # or set in the environment
-npm run rebuild:native
-npm run dist:win          # no upload
-npm run release:win       # publish to GitHub Releases
+# PowerShell / cmd — GH_TOKEN only needed for release:win
+npm ci
+npm run dist:win          # rebuilds node-pty, then builds NSIS + zip
+npm run release:win       # publish to GitHub Releases (needs GH_TOKEN)
 ```
+
+Windows notes:
+
+- Local shell defaults to PowerShell (with OSC 7 cwd tracking).
+- Meeting mic + live transcript use Chromium APIs; transcript may need network and can fall back to notes-only.
+- Cursor usage can read the desktop login DB via built-in `node:sqlite` (no `sqlite3.exe` required).
 
 Windows artifacts:
 

@@ -6,6 +6,7 @@ import {
   nativeImage,
   safeStorage,
   dialog,
+  session,
   shell,
   type MenuItemConstructorOptions,
   type NativeImage,
@@ -48,6 +49,17 @@ import type {
   TokenUsageSnapshot,
   UsageCostSnapshot,
 } from "@drift/core";
+import { fetchCursorAccountUsage } from "./cursor-usage";
+import {
+  createMeeting,
+  deleteMeeting,
+  exportMeeting,
+  getMeeting,
+  listMeetings,
+  saveMeeting,
+  saveMeetingAudio,
+  type MeetingStatus,
+} from "./meetings";
 import { initAutoUpdater } from "./updater";
 
 type Backend = LocalPtyBackend | SshPtyBackend;
@@ -58,6 +70,8 @@ type Tab = {
   backend: Backend | null;
   ready: boolean;
   buffer: string[];
+  /** Rolling raw PTY output for agent context (ANSI stripped on read). */
+  scrollback: string;
   lastCwd?: string;
   lastCols?: number;
   lastRows?: number;
@@ -65,6 +79,33 @@ type Tab = {
   unsub?: () => void;
   unsubExit?: () => void;
 };
+
+const SCROLLBACK_MAX_CHARS = 48_000;
+const AGENT_TAIL_MAX_CHARS = 8_000;
+
+function stripAnsi(s: string): string {
+  return s
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b[PX^_][\s\S]*?\x1b\\/g, "")
+    .replace(/\x1b./g, "");
+}
+
+function appendScrollback(tab: Tab, data: string): void {
+  tab.scrollback += data;
+  if (tab.scrollback.length > SCROLLBACK_MAX_CHARS) {
+    tab.scrollback = tab.scrollback.slice(-SCROLLBACK_MAX_CHARS);
+  }
+}
+
+function terminalTailForAgent(tab: Tab): string {
+  const plain = stripAnsi(tab.scrollback).replace(/\r/g, "");
+  if (plain.length <= AGENT_TAIL_MAX_CHARS) return plain.trimEnd();
+  return plain
+    .slice(-AGENT_TAIL_MAX_CHARS)
+    .replace(/^[^\n]*\n/, "")
+    .trimEnd();
+}
 
 let cwdPollTimer: NodeJS.Timeout | null = null;
 
@@ -86,11 +127,29 @@ const pendingApprovals = new Map<
     tabId: string;
   }
 >();
+/** In-flight agent turns keyed by Drift runId. */
+const activeAgentRuns = new Map<string, AbortController>();
 let appSettings: AppSettings = {
   modelId: "composer-2.5",
   chatMode: "agent",
   locale: "ko",
 };
+
+function stopAgentRuns(runId?: string): { stopped: string[] } {
+  const stopped: string[] = [];
+  for (const [id, pending] of [...pendingApprovals.entries()]) {
+    if (runId && id !== runId) continue;
+    pendingApprovals.delete(id);
+    pending.resolve({ type: "deny", feedback: "Stopped by user" });
+    if (!stopped.includes(id)) stopped.push(id);
+  }
+  for (const [id, controller] of [...activeAgentRuns.entries()]) {
+    if (runId && id !== runId) continue;
+    if (!controller.signal.aborted) controller.abort();
+    if (!stopped.includes(id)) stopped.push(id);
+  }
+  return { stopped };
+}
 
 function applyChatModeToPolicy(mode: ChatMode): void {
   policy.mode = mode === "ask" ? "read-only" : "ask";
@@ -292,6 +351,27 @@ function buildApplicationMenu(): void {
     ],
   };
 
+  const editMenu: MenuItemConstructorOptions = {
+    label: "Edit",
+    submenu: [
+      { role: "undo" },
+      { role: "redo" },
+      { type: "separator" },
+      { role: "cut" },
+      { role: "copy" },
+      { role: "paste" },
+      ...(isMac ? [{ role: "pasteAndMatchStyle" as const }] : []),
+      { role: "delete" },
+      { role: "selectAll" },
+      { type: "separator" },
+      {
+        label: "Toggle Line Comment",
+        accelerator: "CmdOrCtrl+/",
+        click: () => sendShortcut("toggle-comment"),
+      },
+    ],
+  };
+
   const shellMenu: MenuItemConstructorOptions = {
     label: "Shell",
     submenu: [
@@ -387,8 +467,8 @@ function buildApplicationMenu(): void {
           },
         ]),
     fileMenu,
+    editMenu,
     shellMenu,
-    { role: "editMenu" },
     viewMenu,
     {
       label: "Window",
@@ -428,6 +508,16 @@ function createWindow(): void {
       sandbox: false,
     },
   });
+
+  // Allow mic for meeting recording (getUserMedia + SpeechRecognition).
+  session.defaultSession.setPermissionRequestHandler(
+    (_wc, permission, callback) => {
+      callback(permission === "media");
+    }
+  );
+  session.defaultSession.setPermissionCheckHandler(
+    (_wc, permission) => permission === "media"
+  );
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
@@ -509,6 +599,7 @@ function attachBackend(tabId: string, backend: Backend): void {
 
   const unsub = backend.onData((data) => {
     consumeOsc7(tab, data);
+    appendScrollback(tab, data);
     // Renderer mounts xterm after open returns; buffer early banner/password prompts.
     if (!tab.ready) {
       tab.buffer.push(data);
@@ -524,6 +615,7 @@ function attachBackend(tabId: string, backend: Backend): void {
       `\r\n\x1b[90m[session ended: exit ${exitCode}` +
       (signal != null ? `, signal ${signal}` : "") +
       `]\x1b[0m\r\n`;
+    appendScrollback(tab, msg);
     if (!tab.ready) {
       tab.buffer.push(msg);
       return;
@@ -1299,6 +1391,7 @@ function registerIpc(): void {
       backend: null,
       ready: false,
       buffer: [],
+      scrollback: "",
     });
     return { tabId, title };
   });
@@ -1345,6 +1438,7 @@ function registerIpc(): void {
           backend,
           ready: false,
           buffer: [],
+          scrollback: "",
           lastCols: cols,
           lastRows: rows,
         });
@@ -1379,6 +1473,7 @@ function registerIpc(): void {
           backend,
           ready: false,
           buffer: [],
+          scrollback: "",
           lastCols: cols,
           lastRows: rows,
         });
@@ -1514,6 +1609,12 @@ function registerIpc(): void {
   ipcMain.handle("usage:reset-session", async () => {
     sessionUsage = emptySessionUsage();
     return sessionUsage;
+  });
+
+  ipcMain.handle("usage:get-account", async () => {
+    const apiKey = await loadApiKey();
+    const usage = await fetchCursorAccountUsage(apiKey);
+    return usage ? { ok: true as const, usage } : { ok: false as const };
   });
 
   ipcMain.handle("shell:open-external", async (_e, url: string) => {
@@ -1822,18 +1923,54 @@ function registerIpc(): void {
       const backend = tab.backend;
       const apiKey = await loadApiKey();
       const runId = newId();
+      const abort = new AbortController();
+      activeAgentRuns.set(runId, abort);
       let countedUsage = false;
+      let sawTerminalStatus = false;
 
       void (async () => {
         try {
+          // Refresh cwd so the agent sees the path the user is actually in.
+          if (backend.target.kind === "local") {
+            await pollTabCwd(input.tabId);
+          } else if (
+            tab.lastCwd &&
+            backend.target.kind === "ssh" &&
+            "setCwd" in backend
+          ) {
+            backend.setCwd(tab.lastCwd);
+          }
+          const target = backend.target;
+          const terminalTail = terminalTailForAgent(tab);
+          const notes =
+            target.kind === "ssh"
+              ? `Active session is SSH (${target.hostLabel}). Remote working directory: ${target.cwd}. Shell proposes run on that remote host.`
+              : `Active session is local. Working directory: ${target.cwd}.`;
+
           for await (const event of sendAgent({
             message: input.message,
-            target: backend.target,
+            target,
             apiKey,
             modelId: appSettings.modelId,
             chatMode: appSettings.chatMode,
             locale: appSettings.locale,
+            signal: abort.signal,
+            context: {
+              notes,
+              ...(terminalTail ? { terminalTail } : {}),
+            },
           })) {
+            if (abort.signal.aborted) break;
+
+            if (
+              event.type === "status" &&
+              (event.status === "done" ||
+                event.status === "error" ||
+                event.status === "cancelled")
+            ) {
+              sawTerminalStatus = true;
+            }
+
             if (event.type === "usage" && !countedUsage) {
               countedUsage = true;
               const totals = addUsage(event.usage, event.cost);
@@ -1854,12 +1991,14 @@ function registerIpc(): void {
               if (appSettings.chatMode !== "agent") {
                 continue;
               }
+              if (abort.signal.aborted) break;
 
               const decision = await requestApproval(
                 runId,
                 input.tabId,
                 event.action
               );
+              if (abort.signal.aborted) break;
               policy.remember(event.action, decision);
 
               if (decision.type === "deny") {
@@ -1878,10 +2017,12 @@ function registerIpc(): void {
               if (policy.mode === "read-only" && event.action.effect !== "read") {
                 continue;
               }
+              if (abort.signal.aborted) break;
 
               // Echo into the visible terminal then also capture via exec for result card.
               backend.write(`\n# agent: ${event.action.command}\n`);
               const result = await backend.exec(event.action.command);
+              if (abort.signal.aborted) break;
               const out = [
                 result.stdout,
                 result.stderr,
@@ -1898,20 +2039,53 @@ function registerIpc(): void {
               });
             }
           }
+
+          if (abort.signal.aborted && !sawTerminalStatus) {
+            mainWindow?.webContents.send("agent:event", {
+              runId,
+              tabId: input.tabId,
+              event: {
+                type: "status",
+                status: "cancelled",
+                detail: "Stopped",
+              },
+            });
+          }
         } catch (err) {
+          const cancelled =
+            abort.signal.aborted ||
+            (err instanceof Error && err.name === "AbortError");
           mainWindow?.webContents.send("agent:event", {
             runId,
             tabId: input.tabId,
-            event: {
-              type: "status",
-              status: "error",
-              detail: err instanceof Error ? err.message : String(err),
-            },
+            event: cancelled
+              ? {
+                  type: "status",
+                  status: "cancelled",
+                  detail: "Stopped",
+                }
+              : {
+                  type: "status",
+                  status: "error",
+                  detail: err instanceof Error ? err.message : String(err),
+                },
           });
+        } finally {
+          activeAgentRuns.delete(runId);
         }
       })();
 
       return { runId };
+    }
+  );
+
+  ipcMain.handle(
+    "agent:stop",
+    async (_e, input?: { runId?: string; tabId?: string }) => {
+      // Agent shell work uses detached exec, not the interactive PTY.
+      // Do not write Ctrl+C here — on an idle prompt it only prints ^C / a new line.
+      const result = stopAgentRuns(input?.runId);
+      return { ok: true as const, ...result };
     }
   );
 
@@ -1927,6 +2101,167 @@ function registerIpc(): void {
       pending.resolve(input.decision);
     }
   );
+
+  ipcMain.handle("meeting:list", async () => listMeetings());
+
+  ipcMain.handle("meeting:create", async (_e, title?: string) =>
+    createMeeting(title)
+  );
+
+  ipcMain.handle("meeting:get", async (_e, id: string) => getMeeting(id));
+
+  ipcMain.handle(
+    "meeting:save",
+    async (
+      _e,
+      input: {
+        id: string;
+        title?: string;
+        durationMs?: number;
+        status?: MeetingStatus;
+        transcript?: string;
+        notes?: string;
+        summary?: string;
+      }
+    ) => {
+      const { id, ...patch } = input;
+      return saveMeeting(id, patch);
+    }
+  );
+
+  ipcMain.handle(
+    "meeting:save-audio",
+    async (_e, input: { id: string; data: Uint8Array | ArrayBuffer }) => {
+      const bytes =
+        input.data instanceof Uint8Array
+          ? input.data
+          : new Uint8Array(input.data);
+      return saveMeetingAudio(input.id, bytes);
+    }
+  );
+
+  ipcMain.handle("meeting:delete", async (_e, id: string) =>
+    deleteMeeting(id)
+  );
+
+  ipcMain.handle("meeting:export", async (_e, id: string) =>
+    exportMeeting(id, mainWindow)
+  );
+
+  ipcMain.handle("meeting:summarize", async (_e, id: string) => {
+    const meeting = await getMeeting(id);
+    if (!meeting) return { error: "not_found" };
+    const apiKey = await loadApiKey();
+    if (!apiKey.trim()) {
+      return { error: "no_api_key" };
+    }
+    const transcript = meeting.transcript.trim();
+    const notes = meeting.notes.trim();
+    if (!transcript && !notes) {
+      return { error: "no_content" };
+    }
+    const locale = appSettings.locale;
+    const prompt =
+      locale === "ko"
+        ? [
+            "아래 회의 받아쓰기와 메모를 한국어로 요약하세요.",
+            "마크다운만 출력하세요. 셸 명령은 실행하지 마세요.",
+            "",
+            "## 받아쓰기",
+            transcript || "(없음)",
+            "",
+            "## 메모",
+            notes || "(없음)",
+            "",
+            "포함할 내용:",
+            "- 한 줄 개요",
+            "- 핵심 결정",
+            "- 액션 아이템 (담당/기한 있으면 포함)",
+            "- 미결 질문",
+          ].join("\n")
+        : [
+            "Summarize the meeting transcript and notes below.",
+            "Reply with markdown only. Do not run shell commands.",
+            "",
+            "## Transcript",
+            transcript || "(none)",
+            "",
+            "## Notes",
+            notes || "(none)",
+            "",
+            "Include:",
+            "- One-line overview",
+            "- Key decisions",
+            "- Action items (owner/due if present)",
+            "- Open questions",
+          ].join("\n");
+
+    const runId = newId();
+    const abort = new AbortController();
+    activeAgentRuns.set(runId, abort);
+    const parts: string[] = [];
+    let countedUsage = false;
+    let errorDetail: string | null = null;
+
+    try {
+      for await (const event of sendAgent({
+        message: prompt,
+        target: { kind: "local", cwd: os.homedir() },
+        apiKey,
+        modelId: appSettings.modelId,
+        chatMode: "ask",
+        locale: appSettings.locale,
+        signal: abort.signal,
+        context: {
+          notes:
+            "Meeting summarization only. Do not propose or run shell commands.",
+        },
+      })) {
+        if (abort.signal.aborted) break;
+        if (event.type === "text") parts.push(event.text);
+        if (event.type === "usage" && !countedUsage) {
+          countedUsage = true;
+          const totals = addUsage(event.usage, event.cost);
+          mainWindow?.webContents.send("usage:updated", {
+            last: event,
+            session: totals,
+          });
+        }
+        if (event.type === "status" && event.status === "error") {
+          errorDetail = event.detail || "failed";
+        }
+        if (
+          event.type === "status" &&
+          event.status === "cancelled"
+        ) {
+          return { error: "cancelled", runId };
+        }
+      }
+    } catch (err) {
+      activeAgentRuns.delete(runId);
+      return {
+        error: err instanceof Error ? err.message : String(err),
+        runId,
+      };
+    } finally {
+      activeAgentRuns.delete(runId);
+    }
+
+    if (errorDetail) {
+      // Prefer stable codes for known agent-key messages; keep detail otherwise.
+      const keyMissing =
+        /api key is not set|api key/i.test(errorDetail) &&
+        /not set|settings/i.test(errorDetail);
+      return {
+        error: keyMissing ? "no_api_key" : errorDetail,
+        runId,
+      };
+    }
+    const summary = parts.join("").trim();
+    if (!summary) return { error: "empty", runId };
+    const saved = await saveMeeting(id, { summary, status: "done" });
+    return { ok: true as const, summary, meeting: saved, runId };
+  });
 }
 
 function requestApproval(
@@ -1944,6 +2279,10 @@ function requestApproval(
 }
 
 app.setName("Drift");
+if (process.platform === "win32") {
+  // Needed for correct taskbar grouping / notifications on Windows.
+  app.setAppUserModelId("app.drift.desktop");
+}
 
 app.whenReady().then(async () => {
   const icon = loadAppIcon();

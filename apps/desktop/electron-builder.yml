@@ -23,12 +23,15 @@ mac:
   identity: null
   hardenedRuntime: false
   gatekeeperAssess: false
+  extendInfo:
+    NSMicrophoneUsageDescription: "Drift records meeting audio from your microphone for local transcripts and summaries."
 dmg:
   artifactName: "${productName}-${version}-mac-${arch}.${ext}"
 win:
   icon: resources/brand/icon.ico
   # Unsigned builds (no Authenticode cert yet).
   signAndEditExecutable: false
+  # Keep native modules unpackaged for node-pty on Windows.
   target:
     - target: nsis
       arch:

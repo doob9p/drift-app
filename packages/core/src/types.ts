@@ -79,6 +79,13 @@ export interface UsageCostSnapshot {
   chargedCents: number;
 }
 
+export type AgentProgressPhase =
+  | "thinking"
+  | "tool"
+  | "task"
+  | "status"
+  | "replying";
+
 export type AgentEvent =
   | { type: "text"; text: string }
   | { type: "plan"; steps: string[] }
@@ -91,8 +98,19 @@ export type AgentEvent =
     }
   | {
       type: "status";
-      status: "running" | "waiting-approval" | "done" | "error";
+      status: "running" | "waiting-approval" | "done" | "error" | "cancelled";
       detail?: string;
+    }
+  | {
+      type: "progress";
+      phase: AgentProgressPhase;
+      /** Short headline, e.g. Thinking / Searching / Editing */
+      title: string;
+      /** Optional one-line detail (command, path, thought snippet). */
+      detail?: string;
+      /** Soft counters for a Cursor-like summary line. */
+      summary?: string;
+      done?: boolean;
     };
 
 export interface ModelOption {

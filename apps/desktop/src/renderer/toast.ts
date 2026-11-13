@@ -27,16 +27,40 @@ function escapeHtml(s: string): string {
 export function showToast(
   message: string,
   kind: ToastKind = "info",
-  opts?: { detail?: string; ms?: number }
+  opts?: {
+    detail?: string;
+    ms?: number;
+    action?: { label: string; onClick: () => void };
+  }
 ): void {
   const root = ensureHost();
   const el = document.createElement("div");
   el.className = `toast toast-${kind}`;
   el.setAttribute("role", kind === "error" ? "alert" : "status");
   const detail = opts?.detail?.trim();
-  el.innerHTML = detail
-    ? `<div class="toast-title">${escapeHtml(message)}</div><div class="toast-detail">${escapeHtml(detail)}</div>`
-    : `<div class="toast-title">${escapeHtml(message)}</div>`;
+  const parts = [
+    `<div class="toast-title">${escapeHtml(message)}</div>`,
+  ];
+  if (detail) {
+    parts.push(
+      `<div class="toast-detail">${escapeHtml(detail)}</div>`
+    );
+  }
+  if (opts?.action) {
+    parts.push(
+      `<button type="button" class="toast-action">${escapeHtml(opts.action.label)}</button>`
+    );
+  }
+  el.innerHTML = parts.join("");
+  const actionBtn = el.querySelector(".toast-action") as HTMLButtonElement | null;
+  if (actionBtn && opts?.action) {
+    actionBtn.onclick = (e) => {
+      e.stopPropagation();
+      opts.action?.onClick();
+      el.classList.remove("show");
+      window.setTimeout(() => el.remove(), 220);
+    };
+  }
   root.append(el);
   requestAnimationFrame(() => el.classList.add("show"));
   const ms = opts?.ms ?? (kind === "error" ? 5200 : 2600);
