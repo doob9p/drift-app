@@ -105,20 +105,9 @@ a {
   animation: rise 0.7s ease both;
 }
 
-.brand {
-  margin: 0 0 20px;
-  line-height: 0;
-}
-
-.brand-logo {
-  display: block;
-  width: min(100%, 320px);
-  height: auto;
-}
-
 .hero h1 {
   margin: 0;
-  font-size: clamp(28px, 4.2vw, 40px);
+  font-size: clamp(32px, 4.6vw, 44px);
   font-weight: 700;
   letter-spacing: -0.04em;
   line-height: 1.25;
