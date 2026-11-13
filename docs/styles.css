@@ -63,7 +63,7 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  line-height: 1;
+  line-height: 0;
 }
 
 .mark-icon {
@@ -73,11 +73,10 @@ a {
   border-radius: 7px;
 }
 
-.mark-text {
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  color: var(--ink);
+.mark-type {
+  display: block;
+  width: auto;
+  height: 18px;
 }
 
 .top-link {
@@ -113,7 +112,7 @@ a {
 
 .brand-logo {
   display: block;
-  width: min(100%, 280px);
+  width: min(100%, 320px);
   height: auto;
 }
 
