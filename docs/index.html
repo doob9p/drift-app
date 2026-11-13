@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Drift — 터미널과 Cursor 에이전트</title>
+    <meta
+      name="description"
+      content="SSH 세션, Cursor 에이전트, 회의 기록을 한곳에서. Drift를 다운로드하세요."
+    />
+    <meta property="og:title" content="Drift" />
+    <meta
+      property="og:description"
+      content="터미널과 Cursor 에이전트가 함께 있는 데스크톱 앱"
+    />
+    <meta property="og:type" content="website" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="bg" aria-hidden="true"></div>
+
+    <header class="top">
+      <a class="mark" href="./">Drift</a>
+      <a
+        class="top-link"
+        href="https://github.com/doob9p/drift-app"
+        target="_blank"
+        rel="noopener noreferrer"
+        >GitHub</a
+      >
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="brand">Drift</p>
+          <h1>터미널 위에서<br />에이전트가 같이 일합니다</h1>
+          <p class="lede">
+            SSH 세션을 저장하고, Cursor 에이전트와 명령을 검토한 뒤 실행하세요.
+          </p>
+          <div class="cta">
+            <a
+              id="btn-primary"
+              class="btn btn-primary"
+              href="https://github.com/doob9p/drift-app/releases/latest"
+              >다운로드</a
+            >
+            <a
+              id="btn-secondary"
+              class="btn btn-secondary"
+              href="https://github.com/doob9p/drift-app/releases/latest"
+              >다른 버전</a
+            >
+          </div>
+          <p id="meta" class="meta">최신 릴리스를 확인하는 중…</p>
+        </div>
+
+        <div class="hero-visual" aria-hidden="true">
+          <div class="stage">
+            <div class="window">
+              <div class="window-bar">
+                <span></span><span></span><span></span>
+                <p>Drift</p>
+              </div>
+              <div class="window-body">
+                <aside class="rail">
+                  <i class="dot on"></i>
+                  <i class="dot"></i>
+                  <i class="dot"></i>
+                </aside>
+                <div class="term">
+                  <p><span class="prompt">~/proj</span> npm run dev</p>
+                  <p class="dim">Local: http://127.0.0.1:5173</p>
+                  <p><span class="prompt">ssh · prod</span> uptime</p>
+                  <p class="ok">14:02 up 42 days</p>
+                  <p class="cursor-line"><span class="blink"></span></p>
+                </div>
+                <div class="agent">
+                  <p class="agent-label">Agent</p>
+                  <p class="agent-msg">배포 전 상태를 확인했어요. 아래 명령을 실행할까요?</p>
+                  <div class="cmd">uptime && df -h /</div>
+                  <div class="agent-actions">
+                    <span class="chip">승인</span>
+                    <span class="chip ghost">수정</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="features">
+        <h2>필요한 것만, 바로</h2>
+        <p class="features-lede">설치하고 키만 넣으면 시작할 수 있습니다.</p>
+        <ul class="feature-list">
+          <li>
+            <strong>로컬 · SSH 터미널</strong>
+            <span>세션을 저장해 두고 호스트를 바로 전환합니다.</span>
+          </li>
+          <li>
+            <strong>Cursor 에이전트</strong>
+            <span>제안된 명령을 보고 승인한 뒤 현재 호스트에서 실행합니다.</span>
+          </li>
+          <li>
+            <strong>회의 기록</strong>
+            <span>마이크 녹음, 실시간 받아쓰기, 요약까지 한 화면에서.</span>
+          </li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <p>macOS (Apple Silicon) · Windows x64</p>
+      <p class="foot-note">
+        서명되지 않은 빌드라 macOS Gatekeeper / Windows SmartScreen 안내가 보일 수
+        있습니다. 시스템 설정에서 허용하면 실행됩니다.
+      </p>
+    </footer>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

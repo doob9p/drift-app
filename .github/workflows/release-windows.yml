@@ -42,4 +42,12 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME}"
           TITLE="${TAG#v}"
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE"
+          CURRENT="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json name -q .name 2>/dev/null || true)"
+          if [ "$CURRENT" = "$TITLE" ]; then
+            echo "Release title already set to ${TITLE}"
+            exit 0
+          fi
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE" || {
+            echo "Title edit skipped (release may already be finalized)"
+            exit 0
+          }
