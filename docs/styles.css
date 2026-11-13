@@ -60,9 +60,15 @@ a {
 }
 
 .mark {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.03em;
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+}
+
+.mark-img {
+  display: block;
+  width: auto;
+  height: 28px;
 }
 
 .top-link {
@@ -92,12 +98,14 @@ a {
 }
 
 .brand {
-  margin: 0 0 18px;
-  font-size: clamp(42px, 7vw, 72px);
-  font-weight: 800;
-  letter-spacing: -0.06em;
-  line-height: 1;
-  color: var(--ink);
+  margin: 0 0 22px;
+  line-height: 0;
+}
+
+.brand-logo {
+  display: block;
+  width: min(100%, 340px);
+  height: auto;
 }
 
 .hero h1 {
