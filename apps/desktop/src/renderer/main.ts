@@ -477,9 +477,9 @@ app.innerHTML = `
       <details class="ssh-advanced" id="ssh-advanced">
         <summary data-i18n="ssh.advanced">Advanced (optional)</summary>
         <div class="form-grid ssh-advanced-body">
+          <label><span data-i18n="ssh.dir">Start dir</span> <input id="ssh-dir" placeholder="/home/ubuntu" /></label>
           <label><span data-i18n="ssh.identity">Identity file</span> <input id="ssh-identity" placeholder="~/.ssh/id_ed25519" /></label>
           <label><span data-i18n="ssh.jump">ProxyJump</span> <input id="ssh-jump" placeholder="bastion" /></label>
-          <label><span data-i18n="ssh.dir">Start dir</span> <input id="ssh-dir" placeholder="/home/ubuntu" /></label>
         </div>
       </details>
       <div class="actions">
