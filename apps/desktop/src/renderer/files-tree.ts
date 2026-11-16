@@ -309,7 +309,7 @@ function askFsText(opts: {
   });
 }
 
-function askFsConfirm(opts: {
+export function askFsConfirm(opts: {
   title: string;
   body: string;
   okLabel: string;
@@ -1370,10 +1370,12 @@ export function createFilesBrowser(opts: {
       server.setSessionKey(tabId);
     },
     setLocalRoot: async (path) => {
+      opts.root.classList.toggle("has-local", true);
       local.setEnabled(true);
       await local.setRoot(path);
     },
     setLocal: async ({ enabled, rootPath, message }) => {
+      opts.root.classList.toggle("has-local", enabled);
       if (!enabled) {
         local.setEnabled(false, message ?? t("files.noTerminal"));
         return;

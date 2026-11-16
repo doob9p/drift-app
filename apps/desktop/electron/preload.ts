@@ -144,6 +144,49 @@ export type DesktopApi = {
   ) => () => void;
   getPathForFile: (file: File) => string;
   getHomeDir: () => Promise<string>;
+  listSshIdentities: () => Promise<
+    Array<{ path: string; label: string; hasPublicKey: boolean }>
+  >;
+  defaultSshIdentity: () => Promise<string | null>;
+  pickSshIdentity: () => Promise<string | null>;
+  readSshPublicKey: (
+    identityPath: string
+  ) => Promise<
+    { ok: true; content: string; path: string } | { ok: false; reason: string }
+  >;
+  copySshPublicKey: (
+    identityPath: string
+  ) => Promise<
+    | { ok: true; path: string }
+    | { ok: false; reason: string }
+  >;
+  writeClipboardText: (text: string) => Promise<{ ok: boolean }>;
+  generateSshIdentity: (nameHint?: string) => Promise<
+    | { ok: true; path: string; publicKeyPath: string }
+    | { ok: false; reason: string; detail?: string }
+  >;
+  getSshPasswordStatus: (
+    sessionId: string
+  ) => Promise<{ hasPassword: boolean }>;
+  setSshPassword: (
+    sessionId: string,
+    password: string
+  ) => Promise<{ ok: true } | { ok: false; reason: string }>;
+  clearSshPassword: (sessionId: string) => Promise<{ ok: true }>;
+  installSshPublicKey: (input: {
+    sessionId?: string;
+    identityPath: string;
+    password?: string;
+    session?: {
+      name?: string;
+      host: string;
+      user: string;
+      port?: number;
+      proxyJump?: string;
+    };
+  }) => Promise<
+    { ok: true } | { ok: false; reason: string; detail?: string }
+  >;
   getLocalMetrics: () => Promise<{
     source: "local" | "ssh";
     cpuPct: number;
@@ -549,6 +592,25 @@ const api: DesktopApi = {
     }
   },
   getHomeDir: () => ipcRenderer.invoke("fs:home"),
+  listSshIdentities: () => ipcRenderer.invoke("ssh:list-identities"),
+  defaultSshIdentity: () => ipcRenderer.invoke("ssh:default-identity"),
+  pickSshIdentity: () => ipcRenderer.invoke("ssh:pick-identity"),
+  readSshPublicKey: (identityPath) =>
+    ipcRenderer.invoke("ssh:read-public-key", identityPath),
+  copySshPublicKey: (identityPath) =>
+    ipcRenderer.invoke("ssh:copy-public-key", identityPath),
+  writeClipboardText: (text) =>
+    ipcRenderer.invoke("clipboard:write-text", text),
+  generateSshIdentity: (nameHint) =>
+    ipcRenderer.invoke("ssh:generate-identity", nameHint),
+  getSshPasswordStatus: (sessionId) =>
+    ipcRenderer.invoke("ssh:password-status", sessionId),
+  setSshPassword: (sessionId, password) =>
+    ipcRenderer.invoke("ssh:set-password", { sessionId, password }),
+  clearSshPassword: (sessionId) =>
+    ipcRenderer.invoke("ssh:clear-password", sessionId),
+  installSshPublicKey: (input) =>
+    ipcRenderer.invoke("ssh:install-public-key", input),
   getLocalMetrics: () => ipcRenderer.invoke("metrics:local"),
   getTabMetrics: (tabId) => ipcRenderer.invoke("metrics:tab", tabId),
   listDir: (dirPath) => ipcRenderer.invoke("fs:list", dirPath),

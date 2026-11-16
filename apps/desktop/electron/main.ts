@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   ipcMain,
   Menu,
   nativeImage,
@@ -67,6 +68,20 @@ import {
   type MeetingStatus,
 } from "./meetings";
 import { initAutoUpdater } from "./updater";
+import {
+  defaultSshIdentity,
+  generateSshIdentity,
+  installSshPublicKey,
+  listSshIdentities,
+  pickSshIdentity,
+  readSshPublicKey,
+} from "./ssh-identity";
+import {
+  clearSshPassword,
+  hasSshPassword,
+  loadSshPassword,
+  saveSshPassword,
+} from "./ssh-secrets";
 
 type Backend = LocalPtyBackend | SshPtyBackend;
 
@@ -1367,9 +1382,11 @@ function registerIpc(): void {
     ) => sessionStore.upsert(input)
   );
 
-  ipcMain.handle("sessions:delete", async (_e, id: string) =>
-    sessionStore.remove(id)
-  );
+  ipcMain.handle("sessions:delete", async (_e, id: string) => {
+    const ok = await sessionStore.remove(id);
+    if (ok && typeof id === "string") await clearSshPassword(id);
+    return ok;
+  });
 
   ipcMain.handle("sessions:import-ssh-config", async () => {
     const configPath = path.join(os.homedir(), ".ssh", "config");
@@ -1498,7 +1515,14 @@ function registerIpc(): void {
       try {
         const cols = Math.max(2, Math.floor(size?.cols ?? 120));
         const rows = Math.max(1, Math.floor(size?.rows ?? 30));
-        const backend = createSshPty(session, { cols, rows });
+        const password = session.identityFile?.trim()
+          ? ""
+          : await loadSshPassword(session.id);
+        const backend = createSshPty(session, {
+          cols,
+          rows,
+          password: password || undefined,
+        });
         const tabId = newId();
         const title = session.name;
         tabs.set(tabId, {
@@ -1703,6 +1727,128 @@ function registerIpc(): void {
   });
 
   ipcMain.handle("fs:home", async () => os.homedir());
+
+  ipcMain.handle("ssh:list-identities", async () => listSshIdentities());
+
+  ipcMain.handle("ssh:default-identity", async () => defaultSshIdentity());
+
+  ipcMain.handle("ssh:pick-identity", async () =>
+    pickSshIdentity(mainWindow)
+  );
+
+  ipcMain.handle("ssh:read-public-key", async (_e, identityPath?: string) => {
+    if (typeof identityPath !== "string") {
+      return { ok: false as const, reason: "empty" };
+    }
+    return readSshPublicKey(identityPath);
+  });
+
+  ipcMain.handle("ssh:copy-public-key", async (_e, identityPath?: string) => {
+    if (typeof identityPath !== "string") {
+      return { ok: false as const, reason: "empty" };
+    }
+    const pub = await readSshPublicKey(identityPath);
+    if (!pub.ok) return pub;
+    try {
+      clipboard.writeText(pub.content);
+      return { ok: true as const, path: pub.path };
+    } catch {
+      return { ok: false as const, reason: "clipboard_failed" };
+    }
+  });
+
+  ipcMain.handle("clipboard:write-text", async (_e, text?: string) => {
+    if (typeof text !== "string" || !text) {
+      return { ok: false as const };
+    }
+    try {
+      clipboard.writeText(text);
+      return { ok: true as const };
+    } catch {
+      return { ok: false as const };
+    }
+  });
+
+  ipcMain.handle("ssh:generate-identity", async (_e, nameHint?: string) =>
+    generateSshIdentity(typeof nameHint === "string" ? nameHint : undefined)
+  );
+
+  ipcMain.handle(
+    "ssh:password-status",
+    async (_e, sessionId?: string) => {
+      if (typeof sessionId !== "string" || !sessionId.trim()) {
+        return { hasPassword: false };
+      }
+      return { hasPassword: await hasSshPassword(sessionId) };
+    }
+  );
+
+  ipcMain.handle(
+    "ssh:set-password",
+    async (_e, input?: { sessionId?: string; password?: string }) => {
+      const sessionId =
+        typeof input?.sessionId === "string" ? input.sessionId.trim() : "";
+      if (!sessionId) return { ok: false as const, reason: "missing_session" };
+      const password =
+        typeof input?.password === "string" ? input.password : "";
+      await saveSshPassword(sessionId, password);
+      return { ok: true as const };
+    }
+  );
+
+  ipcMain.handle("ssh:clear-password", async (_e, sessionId?: string) => {
+    if (typeof sessionId === "string") await clearSshPassword(sessionId);
+    return { ok: true as const };
+  });
+
+  ipcMain.handle(
+    "ssh:install-public-key",
+    async (
+      _e,
+      input?: {
+        sessionId?: string;
+        identityPath?: string;
+        password?: string;
+        session?: Partial<SavedSession>;
+      }
+    ) => {
+      const identityPath =
+        typeof input?.identityPath === "string" ? input.identityPath.trim() : "";
+      if (!identityPath) {
+        return { ok: false as const, reason: "empty" };
+      }
+
+      let password =
+        typeof input?.password === "string" ? input.password.trim() : "";
+      const sessionId =
+        typeof input?.sessionId === "string" ? input.sessionId.trim() : "";
+
+      let session = sessionId ? sessionStore.get(sessionId) : undefined;
+      if (!session && input?.session?.host && input.session.user) {
+        session = {
+          id: sessionId || "draft",
+          name: input.session.name || input.session.host,
+          host: input.session.host,
+          user: input.session.user,
+          port: input.session.port,
+          proxyJump: input.session.proxyJump,
+          identityFile: undefined,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      if (!session) {
+        return { ok: false as const, reason: "missing_session" };
+      }
+      if (!password && sessionId) {
+        password = await loadSshPassword(sessionId);
+      }
+      if (!password) {
+        return { ok: false as const, reason: "empty_password" };
+      }
+      return installSshPublicKey({ session, identityPath, password });
+    }
+  );
 
   ipcMain.handle("metrics:local", async () => collectLocalMetrics());
 

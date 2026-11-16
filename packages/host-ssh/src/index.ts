@@ -1,6 +1,13 @@
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -56,6 +63,56 @@ function cleanEnv(): Record<string, string> {
   if (!env.TERM) env.TERM = "xterm-256color";
   if (!env.HOME) env.HOME = homeDir();
   return env;
+}
+
+type AskpassHandle = {
+  env: Record<string, string>;
+  cleanup: () => void;
+};
+
+/** Temporary SSH_ASKPASS helper that prints a one-time password. */
+function createAskpassHandle(password: string): AskpassHandle {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "drift-askpass-"));
+  const pwFile = path.join(dir, "pw");
+  writeFileSync(pwFile, password, { encoding: "utf8", mode: 0o600 });
+  let script: string;
+  if (process.platform === "win32") {
+    script = path.join(dir, "askpass.cmd");
+    writeFileSync(
+      script,
+      `@echo off\r\ntype "${pwFile.replace(/"/g, "")}"\r\n`,
+      "utf8"
+    );
+  } else {
+    script = path.join(dir, "askpass.sh");
+    writeFileSync(script, `#!/bin/sh\nexec cat ${JSON.stringify(pwFile)}\n`, {
+      encoding: "utf8",
+      mode: 0o700,
+    });
+    try {
+      chmodSync(script, 0o700);
+    } catch {
+      /* ignore */
+    }
+  }
+  return {
+    env: {
+      SSH_ASKPASS: script,
+      SSH_ASKPASS_REQUIRE: "force",
+      DISPLAY: process.env.DISPLAY || ":0",
+    },
+    cleanup: () => {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    },
+  };
+}
+
+function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
 }
 
 function systemOpenSshDir(): string | null {
@@ -214,13 +271,24 @@ export function buildRemoteShellCommand(startDir?: string): string {
 
 export function createSshPty(
   session: SavedSession,
-  opts?: { cols?: number; rows?: number }
+  opts?: { cols?: number; rows?: number; password?: string }
 ): SshPtyBackend {
   const id = newId();
   const args = buildSshArgs(session, { tty: true });
+  // Prefer key auth when an identity is set; password is for password-only sessions.
+  const password =
+    !session.identityFile?.trim() && opts?.password?.trim()
+      ? opts.password.trim()
+      : "";
+  if (password) {
+    // Avoid hanging on host key prompts when automating password login.
+    args.push("-o", "NumberOfPasswordPrompts=1");
+  }
   args.push(buildRemoteShellCommand(session.startDir));
 
   const bin = sshBinary();
+  const askpass = password ? createAskpassHandle(password) : null;
+  const env = { ...cleanEnv(), ...(askpass?.env ?? {}) };
   let pty: IPty;
   try {
     pty = ptySpawn(bin, args, {
@@ -228,9 +296,10 @@ export function createSshPty(
       cols: opts?.cols ?? 120,
       rows: opts?.rows ?? 30,
       cwd: homeDir(),
-      env: cleanEnv(),
+      env,
     });
   } catch (err) {
+    askpass?.cleanup();
     const detail = err instanceof Error ? err.message : String(err);
     throw new Error(
       `Could not start SSH client (${bin}): ${detail}` +
@@ -242,13 +311,26 @@ export function createSshPty(
 
   let disposed = false;
   let cwdGuess = session.startDir || "~";
+  let passwordInjected = false;
   const listeners = new Set<(chunk: string) => void>();
   const exitListeners = new Set<(info: { exitCode: number; signal?: number }) => void>();
 
   pty.onData((data) => {
+    if (password && !passwordInjected) {
+      const plain = stripAnsi(data);
+      if (/password:\s*$/im.test(plain)) {
+        passwordInjected = true;
+        try {
+          pty.write(`${password}\r`);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
     for (const cb of listeners) cb(data);
   });
   pty.onExit(({ exitCode, signal }) => {
+    askpass?.cleanup();
     for (const cb of exitListeners) {
       cb({ exitCode, signal: signal ?? undefined });
     }
@@ -261,8 +343,7 @@ export function createSshPty(
       return {
         kind: "ssh",
         sessionId: session.id,
-        hostLabel: session.name || `${session.user}@${session.host}`,
-        cwd: cwdGuess,
+        hostLabel: session.name || `${session.user}@${session.host}`,        cwd: cwdGuess,
       };
     },
     onData(cb) {
@@ -298,6 +379,7 @@ export function createSshPty(
       disposed = true;
       listeners.clear();
       exitListeners.clear();
+      askpass?.cleanup();
       try {
         pty.kill();
       } catch {
@@ -305,6 +387,90 @@ export function createSshPty(
       }
     },
   };
+}
+
+/**
+ * One-shot SSH command with password via askpass (no ControlMaster / BatchMode).
+ * Used to install a public key into the remote authorized_keys.
+ */
+export async function installAuthorizedKey(
+  session: SavedSession,
+  publicKeyLine: string,
+  password: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const key = publicKeyLine.trim();
+  const pw = password.trim();
+  if (!key) return { ok: false, message: "empty_key" };
+  if (!pw) return { ok: false, message: "empty_password" };
+
+  const remote =
+    `mkdir -p ~/.ssh && chmod 700 ~/.ssh && ` +
+    `touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && ` +
+    `KEY=${shellQuote(key)}; ` +
+    `grep -qxF "$KEY" ~/.ssh/authorized_keys 2>/dev/null || printf '%s\\n' "$KEY" >> ~/.ssh/authorized_keys`;
+
+  const args = buildSshArgs(
+    { ...session, identityFile: undefined, startDir: undefined },
+    { tty: false, batch: false }
+  );
+  args.push("-o", "NumberOfPasswordPrompts=1");
+  args.push("-o", "PreferredAuthentications=password,keyboard-interactive");
+  args.push(remote);
+
+  const askpass = createAskpassHandle(pw);
+  const env = { ...cleanEnv(), ...askpass.env };
+
+  try {
+    const result = await new Promise<ExecResult>((resolve) => {
+      const child = spawn(sshBinary(), args, {
+        env,
+        windowsHide: true,
+      });
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        child.kill("SIGKILL");
+        resolve({ stdout, stderr, exitCode: null, timedOut: true });
+      }, 45_000);
+      child.stdout.on("data", (d: Buffer) => {
+        stdout += d.toString("utf8");
+      });
+      child.stderr.on("data", (d: Buffer) => {
+        stderr += d.toString("utf8");
+      });
+      child.on("error", (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({
+          stdout,
+          stderr: stderr || err.message,
+          exitCode: 1,
+        });
+      });
+      child.on("close", (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr, exitCode: code });
+      });
+    });
+
+    if (result.timedOut) {
+      return { ok: false, message: "timed_out" };
+    }
+    if (result.exitCode === 0) return { ok: true };
+    const detail = (result.stderr || result.stdout || "").trim();
+    return {
+      ok: false,
+      message: detail.slice(0, 400) || `exit_${result.exitCode ?? "null"}`,
+    };
+  } finally {
+    askpass.cleanup();
+  }
 }
 
 function shellQuote(s: string): string {

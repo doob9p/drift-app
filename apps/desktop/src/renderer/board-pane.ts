@@ -152,9 +152,6 @@ export function createBoardPane(
       <div class="board-surface" id="board-surface">
         <svg class="board-links" id="board-links" aria-hidden="true"></svg>
       </div>
-      <div class="board-empty" id="board-empty">
-        <p data-i18n="board.empty">Open a local or SSH session from the sidebar</p>
-      </div>
       <div class="board-chrome" id="board-chrome">
         <aside class="board-minimap" id="board-minimap" aria-label="${t("board.minimap")}">
           <header class="board-minimap-head">
@@ -185,7 +182,6 @@ export function createBoardPane(
   const grid = root.querySelector("#board-grid") as HTMLElement;
   const surface = root.querySelector("#board-surface") as HTMLElement;
   const linksSvg = root.querySelector("#board-links") as SVGSVGElement;
-  const emptyEl = root.querySelector("#board-empty") as HTMLElement;
   const zoomLabel = root.querySelector(
     "#btn-board-zoom-reset"
   ) as HTMLButtonElement;
@@ -204,9 +200,7 @@ export function createBoardPane(
     return zCounter;
   }
 
-  function syncEmpty(): void {
-    emptyEl.classList.toggle("hidden", cards.length > 0);
-  }
+  function syncEmpty(): void {}
 
   function cardRect(card: BoardCard): {
     x: number;
@@ -1200,8 +1194,7 @@ export function createBoardPane(
     true
   );
 
-  // Capture so terminal/prompt don't swallow wheel before the board pans.
-  // Shift+wheel keeps native scroll inside thread / terminal scrollback.
+  // Capture for board pan/zoom. Native scroll only inside the focused card.
   viewport.addEventListener(
     "wheel",
     (e) => {
@@ -1214,7 +1207,15 @@ export function createBoardPane(
         zoomAt(camera.zoom * Math.exp(-dy * intensity), e.clientX, e.clientY);
         return;
       }
-      if (e.shiftKey) return;
+      const target = e.target;
+      if (target instanceof Element && focus) {
+        const cardEl = cardEls.get(focus.cardId);
+        const inFocusedCard = Boolean(cardEl?.contains(target));
+        const inScrollSurface = Boolean(
+          target.closest(".board-prompt-thread, .xterm-viewport, .xterm-screen")
+        );
+        if (inFocusedCard && inScrollSurface) return;
+      }
 
       e.preventDefault();
       e.stopPropagation();
@@ -1441,13 +1442,10 @@ export function createBoardPane(
         .map((c) => c.id);
       cards = cards.filter((c) => c.tabId !== tabId);
       for (const id of removeIds) removeCardEl(id);
+      // Closing the focused terminal clears selection — do not auto-pick
+      // another card (that would keep the Files "This computer" pane open).
       if (focus && focus.tabId === tabId) {
-        const next = cards[0];
-        setFocus(
-          next
-            ? { kind: next.kind, cardId: next.id, tabId: next.tabId }
-            : null
-        );
+        setFocus(null);
       }
       syncEmpty();
       markMinimapDirty();

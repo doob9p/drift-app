@@ -10,6 +10,8 @@ export interface SavedSession {
   user: string;
   port?: number;
   identityFile?: string;
+  /** Local identity path last installed to this host's authorized_keys (not verified remotely). */
+  authorizedKeyIdentity?: string;
   proxyJump?: string;
   startDir?: string;
   sshConfigHost?: string;

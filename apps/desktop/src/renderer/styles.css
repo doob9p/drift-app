@@ -744,7 +744,6 @@ body.is-resizing-col {
   align-items: center;
   padding: 0.55rem 0 0.75rem;
   background: var(--chrome);
-  border-right: 1px solid var(--line);
   z-index: 2;
 }
 
@@ -1157,6 +1156,10 @@ body.is-resizing-col {
 }
 
 .files-panel:not(.has-server) .files-pane[data-scope="server"] {
+  display: none;
+}
+
+.files-panel:not(.has-local) .files-pane[data-scope="local"] {
   display: none;
 }
 
@@ -2228,20 +2231,6 @@ body.is-resizing-col {
 .board-zoom-label:hover {
   background: color-mix(in srgb, var(--text) 8%, transparent);
   color: var(--text);
-}
-
-.board-empty {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  pointer-events: none;
-  color: var(--text-3);
-  font-size: 0.86rem;
-}
-
-.board-empty.hidden {
-  display: none;
 }
 
 .board-card {
@@ -4298,15 +4287,63 @@ body.is-resizing-editor {
   cursor: help;
 }
 
-.ssh-advanced {
-  margin-top: 0.85rem;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  overflow: hidden;
+.modal.modal-ssh {
+  width: min(520px, calc(100vw - 2rem));
+  gap: 0.9rem;
 }
 
-.ssh-advanced > summary {
+.ssh-modal-head {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.ssh-modal-head .lead {
+  margin: 0;
+}
+
+.ssh-section {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.ssh-password-field {
+  display: grid;
+  gap: 0.3rem;
+  margin-top: 0.15rem;
+}
+
+.ssh-password-field > .field-label {
+  font-size: 0.74rem;
+  font-weight: 500;
+  color: var(--text-2);
+  letter-spacing: -0.01em;
+}
+
+.ssh-password-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.ssh-password-row.hidden {
+  display: none;
+}
+
+.ssh-password-row input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.ssh-fold {
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: transparent;
+  overflow: visible;
+}
+
+.ssh-fold > summary {
   list-style: none;
   cursor: pointer;
   padding: 0.7rem 0.85rem;
@@ -4317,11 +4354,11 @@ body.is-resizing-editor {
   user-select: none;
 }
 
-.ssh-advanced > summary::-webkit-details-marker {
+.ssh-fold > summary::-webkit-details-marker {
   display: none;
 }
 
-.ssh-advanced > summary::after {
+.ssh-fold > summary::after {
   content: "";
   float: right;
   width: 0.45rem;
@@ -4333,12 +4370,12 @@ body.is-resizing-editor {
   transition: transform 0.15s ease;
 }
 
-.ssh-advanced[open] > summary::after {
+.ssh-fold[open] > summary::after {
   transform: rotate(-135deg);
   margin-top: 0.42rem;
 }
 
-.ssh-advanced-body {
+.ssh-fold-body {
   padding: 0 0.85rem 0.85rem;
 }
 

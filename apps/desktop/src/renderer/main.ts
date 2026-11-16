@@ -258,7 +258,7 @@ app.innerHTML = `
               >${icons.importConfig(14)}</button>
             </div>
           </div>
-          <div class="section-label"><span data-i18n="sidebar.ssh">SSH sessions</span></div>
+          <div class="section-label"><span data-i18n="sidebar.ssh">Hosts</span></div>
           <div class="session-empty" id="session-empty" data-i18n-html="sidebar.empty"></div>
           <ul class="session-list" id="session-list"></ul>
         </section>
@@ -409,42 +409,75 @@ app.innerHTML = `
   <div class="toast-host" id="toast-host" aria-live="polite"></div>
 
   <div class="modal-backdrop hidden" id="modal-ssh">
-    <div class="modal">
-      <h2 id="ssh-modal-title" data-i18n="ssh.title">SSH session</h2>
-      <p class="lead" data-i18n="ssh.lead">Passwords are never saved. Use keys or enter credentials in the terminal.</p>
+    <div class="modal modal-ssh">
+      <header class="ssh-modal-head">
+        <h2 id="ssh-modal-title" data-i18n="ssh.title">SSH session</h2>
+      </header>
       <input type="hidden" id="ssh-edit-id" value="" />
-      <div class="form-grid two">
-        <label>
-          <span class="field-label"
-            ><span data-i18n="ssh.name">Name</span
-            ><abbr class="req" data-i18n-title="ssh.required" title="Required">*</abbr></span
-          >
-          <input id="ssh-name" placeholder="prod-gpu" required autocomplete="off" />
-        </label>
-        <label>
-          <span class="field-label"
-            ><span data-i18n="ssh.host">Host</span
-            ><abbr class="req" data-i18n-title="ssh.required" title="Required">*</abbr></span
-          >
-          <input id="ssh-host" placeholder="192.168.1.10" required autocomplete="off" />
-        </label>
-        <label>
-          <span class="field-label"
-            ><span data-i18n="ssh.user">User</span
-            ><abbr class="req" data-i18n-title="ssh.required" title="Required">*</abbr></span
-          >
-          <input id="ssh-user" placeholder="ubuntu" required autocomplete="off" />
-        </label>
-        <label>
-          <span class="field-label" data-i18n="ssh.port">Port</span>
-          <input id="ssh-port" type="number" placeholder="22" autocomplete="off" />
-        </label>
-      </div>
-      <details class="ssh-advanced" id="ssh-advanced">
-        <summary data-i18n="ssh.advanced">Advanced (optional)</summary>
-        <div class="form-grid ssh-advanced-body">
+      <section class="ssh-section">
+        <div class="form-grid two">
+          <label>
+            <span class="field-label"
+              ><span data-i18n="ssh.name">Name</span
+              ><abbr class="req" data-i18n-title="ssh.required" title="Required">*</abbr></span
+            >
+            <input id="ssh-name" placeholder="prod-gpu" required autocomplete="off" />
+          </label>
+          <label>
+            <span class="field-label"
+              ><span data-i18n="ssh.host">Host</span
+              ><abbr class="req" data-i18n-title="ssh.required" title="Required">*</abbr></span
+            >
+            <input id="ssh-host" placeholder="192.168.1.10" required autocomplete="off" />
+          </label>
+          <label>
+            <span class="field-label"
+              ><span data-i18n="ssh.user">User</span
+              ><abbr class="req" data-i18n-title="ssh.required" title="Required">*</abbr></span
+            >
+            <input id="ssh-user" placeholder="ubuntu" required autocomplete="off" />
+          </label>
+          <label>
+            <span class="field-label" data-i18n="ssh.port">Port</span>
+            <input id="ssh-port" type="number" placeholder="22" autocomplete="off" />
+          </label>
+        </div>
+        <div class="ssh-password-field">
+          <span class="field-label" data-i18n="ssh.password">Password</span>
+          <div class="ssh-password-row" id="ssh-password-unset">
+            <input
+              id="ssh-password"
+              type="password"
+              autocomplete="new-password"
+              spellcheck="false"
+              data-i18n-placeholder="ssh.passwordPlaceholder"
+              placeholder="Stored encrypted on this device"
+            />
+            <button
+              type="button"
+              class="primary settings-key-save hidden"
+              id="btn-ssh-password-save"
+              data-i18n="ssh.passwordSave"
+            >Save</button>
+          </div>
+          <div class="ssh-password-row hidden" id="ssh-password-set">
+            <button
+              type="button"
+              class="settings-key-clear"
+              id="btn-ssh-password-clear"
+              data-i18n-title="ssh.passwordClear"
+              title="Delete"
+            >
+              <span class="settings-key-clear-idle" data-i18n="ssh.passwordSaved">Saved</span>
+              <span class="settings-key-clear-hover" data-i18n="ssh.passwordClear">Delete</span>
+            </button>
+          </div>
+        </div>
+      </section>
+      <details class="ssh-fold" id="ssh-advanced">
+        <summary data-i18n="ssh.advanced">Advanced</summary>
+        <div class="form-grid ssh-fold-body">
           <label><span data-i18n="ssh.dir">Start dir</span> <input id="ssh-dir" placeholder="/home/ubuntu" /></label>
-          <label><span data-i18n="ssh.identity">Identity file</span> <input id="ssh-identity" placeholder="~/.ssh/id_ed25519" /></label>
           <label><span data-i18n="ssh.jump">ProxyJump</span> <input id="ssh-jump" placeholder="bastion" /></label>
         </div>
       </details>
@@ -1643,7 +1676,15 @@ function sshFormEls() {
     host: document.getElementById("ssh-host") as HTMLInputElement,
     user: document.getElementById("ssh-user") as HTMLInputElement,
     port: document.getElementById("ssh-port") as HTMLInputElement,
-    identity: document.getElementById("ssh-identity") as HTMLInputElement,
+    password: document.getElementById("ssh-password") as HTMLInputElement,
+    passwordUnset: document.getElementById("ssh-password-unset")!,
+    passwordSet: document.getElementById("ssh-password-set")!,
+    passwordSave: document.getElementById(
+      "btn-ssh-password-save"
+    ) as HTMLButtonElement,
+    passwordClear: document.getElementById(
+      "btn-ssh-password-clear"
+    ) as HTMLButtonElement,
     jump: document.getElementById("ssh-jump") as HTMLInputElement,
     dir: document.getElementById("ssh-dir") as HTMLInputElement,
     advanced: document.getElementById("ssh-advanced") as HTMLDetailsElement,
@@ -1652,7 +1693,18 @@ function sshFormEls() {
   };
 }
 
-function openSshModal(session?: SavedSession): void {
+function syncSshPasswordUi(hasSaved: boolean): void {
+  const form = sshFormEls();
+  const editing = Boolean(form.editId.value.trim());
+  form.passwordUnset.classList.toggle("hidden", hasSaved);
+  form.passwordSet.classList.toggle("hidden", !hasSaved);
+  // Edit: save password immediately via the inline button (like settings API key).
+  // Add: password is saved with the bottom session Save.
+  form.passwordSave.classList.toggle("hidden", hasSaved || !editing);
+  if (hasSaved) form.password.value = "";
+}
+
+async function openSshModal(session?: SavedSession): Promise<void> {
   const form = sshFormEls();
   const editing = Boolean(session?.id);
   form.editId.value = session?.id ?? "";
@@ -1661,18 +1713,22 @@ function openSshModal(session?: SavedSession): void {
   form.user.value = session?.user ?? "";
   form.port.value =
     session?.port && session.port !== 22 ? String(session.port) : "";
-  form.identity.value = session?.identityFile ?? "";
+  form.password.value = "";
   form.jump.value = session?.proxyJump ?? "";
   form.dir.value = session?.startDir ?? "";
-  const hasAdvanced = Boolean(
-    form.identity.value || form.jump.value || form.dir.value
-  );
-  form.advanced.open = hasAdvanced;
+  form.advanced.open = Boolean(form.jump.value || form.dir.value);
   form.title.textContent = editing ? t("ssh.editTitle") : t("ssh.title");
   form.title.dataset.i18n = editing ? "ssh.editTitle" : "ssh.title";
   form.save.textContent = editing ? t("ssh.saveEdit") : t("ssh.save");
   form.save.dataset.i18n = editing ? "ssh.saveEdit" : "ssh.save";
+  syncSshPasswordUi(false);
   els.modalSsh.classList.remove("hidden");
+  if (session?.id) {
+    const status = await api.getSshPasswordStatus(session.id);
+    if (form.editId.value === session.id) {
+      syncSshPasswordUi(status.hasPassword);
+    }
+  }
   requestAnimationFrame(() => form.name.focus());
 }
 
@@ -1680,7 +1736,9 @@ function closeSshModal(): void {
   els.modalSsh.classList.add("hidden");
   const form = sshFormEls();
   form.editId.value = "";
+  form.password.value = "";
   form.advanced.open = false;
+  syncSshPasswordUi(false);
 }
 
 async function refreshSessions(): Promise<void> {
@@ -1704,7 +1762,7 @@ async function refreshSessions(): Promise<void> {
     edit.innerHTML = icons.pencil(14);
     edit.onclick = (e) => {
       e.stopPropagation();
-      openSshModal(s);
+      void openSshModal(s);
     };
     const del = document.createElement("button");
     del.className = "session-action ghost";
@@ -2733,14 +2791,12 @@ async function closeTab(tabId: string): Promise<void> {
   board.removeTab(tabId);
   await api.closeTab(tabId);
   if (filesFollowTabId === tabId) filesFollowTabId = null;
-  const next = state.tabs.keys().next().value as string | undefined;
-  state.activeTabId = next ?? null;
-  if (next) activateTab(next);
-  else {
-    board.syncEmpty();
-    refreshStatusStrip();
-    void syncFilesPanel(true);
+  if (state.activeTabId === tabId) {
+    state.activeTabId = null;
   }
+  board.syncEmpty();
+  refreshStatusStrip();
+  void syncFilesPanel(true);
   scheduleBoardSave();
 }
 
@@ -3215,33 +3271,85 @@ els.meetingList.addEventListener("click", (e) => {
   ) as HTMLElement | null;
   if (open?.dataset.id) void openMeetingById(open.dataset.id);
 });
-document.getElementById("btn-add-ssh")!.onclick = () => openSshModal();
+document.getElementById("btn-add-ssh")!.onclick = () => {
+  void openSshModal();
+};
 document.getElementById("btn-cancel-ssh")!.onclick = () => closeSshModal();
+document.getElementById("btn-ssh-password-save")!.onclick = () => {
+  void (async () => {
+    const form = sshFormEls();
+    const sessionId = form.editId.value.trim();
+    const value = form.password.value.trim();
+    if (!sessionId) return;
+    if (!value) {
+      showToast(t("ssh.passwordSaveNeed"), "info");
+      form.password.focus();
+      return;
+    }
+    form.passwordSave.disabled = true;
+    try {
+      const result = await api.setSshPassword(sessionId, value);
+      if (!result.ok) {
+        showToast(t("ssh.passwordSaveFail"), "error");
+        return;
+      }
+      syncSshPasswordUi(true);
+      showToast(t("ssh.passwordSaveOk"), "ok");
+    } finally {
+      form.passwordSave.disabled = false;
+    }
+  })();
+};
+document.getElementById("btn-ssh-password-clear")!.onclick = () => {
+  void (async () => {
+    const form = sshFormEls();
+    const sessionId = form.editId.value.trim();
+    form.password.value = "";
+    if (sessionId) {
+      form.passwordClear.disabled = true;
+      try {
+        await api.clearSshPassword(sessionId);
+      } finally {
+        form.passwordClear.disabled = false;
+      }
+    }
+    syncSshPasswordUi(false);
+  })();
+};
 document.getElementById("btn-save-ssh")!.onclick = async () => {
   const form = sshFormEls();
   const name = form.name.value.trim();
   const host = form.host.value.trim();
   const user = form.user.value.trim();
   const portRaw = form.port.value;
-  const identityFile = form.identity.value.trim();
   const proxyJump = form.jump.value.trim();
   const startDir = form.dir.value.trim();
+  const password = form.password.value;
   if (!name || !host || !user) {
     showToast(t("ssh.requiredHint"), "info");
     (!name ? form.name : !host ? form.host : form.user).focus();
     return;
   }
   const editId = form.editId.value.trim();
-  await api.saveSession({
+  const existing = editId
+    ? state.sessions.find((s) => s.id === editId)
+    : undefined;
+  const saved = await api.saveSession({
     id: editId || undefined,
     name,
     host,
     user,
     port: portRaw ? Number(portRaw) : undefined,
-    identityFile: identityFile || undefined,
+    // Keep imported IdentityFile if present; the modal no longer edits keys.
+    identityFile: existing?.identityFile,
+    authorizedKeyIdentity: existing?.authorizedKeyIdentity,
     proxyJump: proxyJump || undefined,
     startDir: startDir || undefined,
   });
+  // Add flow: password is stored with the session. Edit flow uses the inline Save.
+  if (!editId && password.trim()) {
+    await api.setSshPassword(saved.id, password);
+  }
   closeSshModal();
   await refreshSessions();
 };

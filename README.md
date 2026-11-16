@@ -7,7 +7,7 @@ Terminal app with saved SSH sessions and a Cursor agent panel.
 ## MVP
 
 - Local PTY terminal (macOS / Windows)
-- Saved SSH sessions (no passwords stored)
+- Saved SSH sessions (optional encrypted password + SSH key)
 - Cursor API key entered in-app (OS encrypted storage)
 - Agent proposes commands → approve → run on the active host
 - Auto-update from GitHub Releases (packaged builds)
@@ -99,6 +99,6 @@ Packaged apps check for updates on launch (and every 4 hours). When a newer vers
 ## Notes
 
 - Set your Cursor API key in **Settings** (gear). Stored encrypted in the OS keychain / credential store.
-- SSH sessions are saved without passwords; uses OpenSSH + IdentityFile / agent. Windows builds bundle a portable OpenSSH client so the optional Windows feature is not required (system OpenSSH is still preferred when present).
+- SSH sessions can save an encrypted password and/or an SSH key in the Add SSH dialog (generate key, install pubkey on the server with the password once). Key auth is preferred when both are set. Passwords never go into `sessions.json`. Windows builds bundle a portable OpenSSH client so the optional Windows feature is not required (system OpenSSH is still preferred when present).
 - Agent proposes commands → approve once / for session / deny → runs on the active host.
 - Dev mode (`npm run dev`) does not check for updates.

@@ -45,6 +45,7 @@ export class SessionStore {
           // Allow clearing optional fields on edit (empty form → undefined).
           port: input.port,
           identityFile: input.identityFile,
+          authorizedKeyIdentity: input.authorizedKeyIdentity,
           proxyJump: input.proxyJump,
           startDir: input.startDir,
           folder: input.folder,
@@ -64,6 +65,7 @@ export class SessionStore {
       user: input.user,
       port: input.port,
       identityFile: input.identityFile,
+      authorizedKeyIdentity: input.authorizedKeyIdentity,
       proxyJump: input.proxyJump,
       startDir: input.startDir,
       sshConfigHost: input.sshConfigHost,

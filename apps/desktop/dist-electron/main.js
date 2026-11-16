@@ -1,40 +1,2378 @@
-"use strict";var Ut=Object.create;var ke=Object.defineProperty;var Ht=Object.getOwnPropertyDescriptor;var Wt=Object.getOwnPropertyNames;var zt=Object.getPrototypeOf,Kt=Object.prototype.hasOwnProperty;var qt=(t,e,r)=>e in t?ke(t,e,{enumerable:!0,configurable:!0,writable:!0,value:r}):t[e]=r;var Vt=(t,e,r,n)=>{if(e&&typeof e=="object"||typeof e=="function")for(let s of Wt(e))!Kt.call(t,s)&&s!==r&&ke(t,s,{get:()=>e[s],enumerable:!(n=Ht(e,s))||n.enumerable});return t};var q=(t,e,r)=>(r=t!=null?Ut(zt(t)):{},Vt(e||!t||!t.__esModule?ke(r,"default",{value:t,enumerable:!0}):r,t));var re=(t,e,r)=>qt(t,typeof e!="symbol"?e+"":e,r);const l=require("electron"),u=require("node:path"),P=require("node:fs"),b=require("node:fs/promises"),Ee=require("node:stream/promises"),N=require("node:os"),$e=require("node:crypto"),lt=require("node-pty"),L=require("node:child_process"),U=require("electron-updater"),Jt=require("node:stream"),Gt=/\b(rm\s+-rf|rm\s+-r|dd\s+|mkfs|shutdown|reboot|git\s+push\s+--force|git\s+push\s+-f|drop\s+table|truncate\s+)\b/i,Zt=/\b(rm\s+|mv\s+|cp\s+|mkdir\s+|touch\s+|chmod\s+|chown\s+|npm\s+i|npm\s+install|pnpm\s+i|yarn\s+add|pip\s+install|brew\s+install|apt\s+|docker\s+|kubectl\s+apply|git\s+commit|git\s+push|tee\s+|sed\s+-i|>\s*|>>\s*)\b/i,Yt=/\b(curl\s+|wget\s+|nc\s+|ssh\s+|scp\s+|rsync\s+|npm\s+publish|pip\s+upload)\b/i,Xt=/^(ls|pwd|whoami|date|uname|cat|head|tail|less|more|echo|which|type|file|stat|df|du|ps|top|htop|git\s+status|git\s+diff|git\s+log|git\s+branch)\b/i;function _e(t){const e=t.trim();return e?Gt.test(e)?"destructive":Yt.test(e)?"network":Zt.test(e)?"write":Xt.test(e)?"read":"unknown":"unknown"}class Qt{constructor(e="ask"){re(this,"mode");re(this,"sessionRules");this.mode=e,this.sessionRules=[]}classify(e){return _e(e)}needsApproval(e){return this.mode==="read-only"?e.effect!=="read":e.effect==="read"?!1:this.mode==="session-allow"?!this.matchesRule(e):!this.matchesRule(e)}remember(e,r){var s;if(r.type!=="allow-session")return;const n=e.target.kind==="ssh"?e.target.sessionId:void 0;this.sessionRules.push({sessionId:n,effect:e.effect,commandPrefix:(s=e.command)==null?void 0:s.trim().split(/\s+/)[0]})}matchesRule(e){const r=e.target.kind==="ssh"?e.target.sessionId:void 0;return this.sessionRules.some(n=>n.sessionId&&n.sessionId!==r?!1:(n.effect!==e.effect&&n.effect,n.commandPrefix&&e.command?e.command.trim().startsWith(n.commandPrefix):n.effect===e.effect))}}class er{constructor(e){re(this,"filePath");re(this,"sessions",[]);this.filePath=u.join(e,"sessions.json")}async load(){try{const e=await b.readFile(this.filePath,"utf8"),r=JSON.parse(e);this.sessions=Array.isArray(r)?r:[]}catch{this.sessions=[]}return this.list()}list(){return[...this.sessions].sort((e,r)=>e.name.localeCompare(r.name,"en"))}async upsert(e){const r=new Date().toISOString();if(e.id){const s=this.sessions.findIndex(o=>o.id===e.id);if(s>=0){const o=this.sessions[s],a={...o,...e,id:e.id,port:e.port,identityFile:e.identityFile,proxyJump:e.proxyJump,startDir:e.startDir,folder:e.folder,updatedAt:r,createdAt:o.createdAt};return this.sessions[s]=a,await this.persist(),a}}const n={id:e.id??$e.randomUUID(),name:e.name,folder:e.folder,host:e.host,user:e.user,port:e.port,identityFile:e.identityFile,proxyJump:e.proxyJump,startDir:e.startDir,sshConfigHost:e.sshConfigHost,createdAt:r,updatedAt:r};return this.sessions.push(n),await this.persist(),n}async remove(e){const r=this.sessions.length;return this.sessions=this.sessions.filter(n=>n.id!==e),this.sessions.length===r?!1:(await this.persist(),!0)}get(e){return this.sessions.find(r=>r.id===e)}async persist(){await b.mkdir(u.dirname(this.filePath),{recursive:!0}),await b.writeFile(this.filePath,JSON.stringify(this.sessions,null,2),"utf8")}}function tr(t){const e=t.split(/\r?\n/),r=[];let n=null;const s=()=>{n&&n.sshConfigHost&&!/[?*]/.test(n.sshConfigHost)&&r.push(n),n=null};for(const o of e){const a=o.replace(/#.*$/,"").trim();if(!a)continue;const[i,...d]=a.split(/\s+/),c=d.join(" ").trim(),f=i.toLowerCase();if(f==="host"){s();const m=c.split(/\s+/)[0];n={sshConfigHost:m,host:m};continue}n&&(f==="hostname"&&(n.host=c),f==="user"&&(n.user=c),f==="port"&&(n.port=Number(c)||void 0),f==="identityfile"&&(n.identityFile=c),f==="proxyjump"&&(n.proxyJump=c))}return s(),r}function F(){return $e.randomUUID()}const rr=/cursor-sandbox-cache/i,nr=new Set(["CURSOR_AGENT","CURSOR_AGENT_STORE_FILES_DIR","CURSOR_AGENT_STORE_SHARED_PATHS","CURSOR_CONVERSATION_ID","CURSOR_REQUEST_ID","CURSOR_SPAWNED_BY_EXTENSION_ID","CURSOR_SPAWN_CHAIN","CI"]);function H(){return process.platform==="win32"}function sr(){const t={};for(const[e,r]of Object.entries(process.env))typeof r=="string"&&(nr.has(e)||rr.test(r)||(t[e]=r));if(!t.PATH&&!t.Path&&(t.PATH=H()?[process.env.SystemRoot?u.join(process.env.SystemRoot,"System32"):"",process.env.SystemRoot??"",process.env.SystemRoot?u.join(process.env.SystemRoot,"System32","WindowsPowerShell","v1.0"):""].filter(Boolean).join(";"):"/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"),(!t.TERM||t.TERM==="dumb")&&(t.TERM="xterm-256color"),t.HOME||(t.HOME=N.homedir()),H()&&!t.USERPROFILE&&(t.USERPROFILE=N.homedir()),!H()){const e=t.LC_ALL||t.LANG||"";/utf-?8/i.test(e)||(t.LANG="en_US.UTF-8",t.LC_ALL&&(t.LC_ALL="en_US.UTF-8"))}return t}function Ae(t){for(const e of t)if(e&&P.existsSync(e))return e;return null}function Ce(){const t=process.env.SystemRoot||"C:\\Windows";return Ae([u.join(t,"System32","WindowsPowerShell","v1.0","powershell.exe"),u.join(t,"SysWOW64","WindowsPowerShell","v1.0","powershell.exe")])||"powershell.exe"}function ut(){const t=process.env.SystemRoot||"C:\\Windows";return Ae([u.join(t,"System32","cmd.exe"),u.join(t,"SysWOW64","cmd.exe")])||"cmd.exe"}function dt(){const t=process.env.ProgramFiles||"C:\\Program Files",e=process.env["ProgramFiles(x86)"]||"C:\\Program Files (x86)",r=process.env.LOCALAPPDATA||"";return Ae([u.join(t,"Git","bin","bash.exe"),u.join(t,"Git","usr","bin","bash.exe"),u.join(e,"Git","bin","bash.exe"),u.join(e,"Git","usr","bin","bash.exe"),r?u.join(r,"Programs","Git","bin","bash.exe"):""])}function or(t){return t==="cmd"?ut():t==="gitbash"&&dt()||Ce()}function ir(){const t=dt();return[{id:"powershell",available:!0,path:Ce()},{id:"cmd",available:!0,path:ut()},{id:"gitbash",available:!!t,path:t}]}function ar(t){if(H()){const r=process.env.DRIFT_SHELL;return r||or(t??"powershell")}const e=[process.env.SHELL,"/bin/zsh","/bin/bash","/bin/sh"];for(const r of e)if(r&&r.startsWith("/"))return r;return"/bin/zsh"}function ie(t){return u.basename(t).toLowerCase().replace(/\.exe$/,"")}function cr(t,e){if(!H())return["-l"];if(e==="gitbash"||ie(t)==="bash")return["--login","-i"];const r=ie(t);return r==="powershell"||r==="pwsh"?["-NoLogo"]:r==="cmd"?[]:[]}function lr(t,e,r){const n='printf "\\033]7;file://%s%s\\033\\\\" "localhost" "$PWD"';if(r.PROMPT_COMMAND?r.PROMPT_COMMAND.includes("]7;")||(r.PROMPT_COMMAND=`${n}; ${r.PROMPT_COMMAND}`):r.PROMPT_COMMAND=n,ie(t)!=="zsh")return;const s=u.join(N.tmpdir(),`drift-zsh-${e}`);P.mkdirSync(s,{recursive:!0}),P.writeFileSync(u.join(s,".zshrc"),['[[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"',"ZLE_RPROMPT_INDENT=${ZLE_RPROMPT_INDENT:-0}",'pwd_report(){ printf "\\033]7;file://localhost%s\\033\\\\" "$PWD"; }',"typeset -ga precmd_functions",'precmd_functions=("${(@)precmd_functions:#pwd_report}")',"precmd_functions+=(pwd_report)",""].join(`
-`),"utf8"),P.writeFileSync(u.join(s,".zprofile"),`[[ -f "$HOME/.zprofile" ]] && source "$HOME/.zprofile"
-`,"utf8"),r.ZDOTDIR=s}function ur(t,e,r){const n=ie(t);if(n!=="powershell"&&n!=="pwsh")return;const s=u.join(N.tmpdir(),`drift-ps-${e}`);P.mkdirSync(s,{recursive:!0});const o=u.join(s,"profile.ps1");P.writeFileSync(o,["function prompt {","  $cwd = (Get-Location).Path","  $unix = ($cwd -replace '\\\\','/')","  if ($unix -notmatch '^/') { $unix = '/' + $unix }",'  [Console]::Write(([char]27 + "]7;file://localhost" + $unix + [char]7))','  "PS $cwd> "',"}",""].join(`
-`),"utf8"),r.DRIFT_PS_PROFILE=o}function je(t){const e=(t==null?void 0:t.shellKind)??"powershell",r=ar(e),n=(t==null?void 0:t.cwd)??(H()?process.env.USERPROFILE||N.homedir():process.env.HOME||N.homedir()),s=F(),o=sr(),a=ie(r),i=a==="powershell"||a==="pwsh";H()&&i?ur(r,s,o):H()||lr(r,s,o);let d=cr(r,H()?e:void 0);H()&&i&&o.DRIFT_PS_PROFILE&&(d=["-NoLogo","-NoExit","-Command","if (Test-Path $env:DRIFT_PS_PROFILE) { . $env:DRIFT_PS_PROFILE }"]);const c=lt.spawn(r,d,{name:"xterm-256color",cols:(t==null?void 0:t.cols)??120,rows:(t==null?void 0:t.rows)??30,cwd:n,env:o});let f=!1,m=n;const p=new Set,k=new Set;return c.onData(y=>{for(const h of p)h(y)}),c.onExit(({exitCode:y,signal:h})=>{for(const M of k)M({exitCode:y,signal:h??void 0})}),{id:s,get pid(){return c.pid},get target(){return{kind:"local",cwd:m}},onData(y){return p.add(y),()=>p.delete(y)},onExit(y){return k.add(y),()=>k.delete(y)},write(y){f||c.write(y)},resize(y,h){f||c.resize(y,h)},async exec(y,h){const M=await Be(c.pid).catch(()=>null);return fr(y,(h==null?void 0:h.cwd)??M??m,h==null?void 0:h.timeoutMs)},async getCwd(){const y=await Be(c.pid).catch(()=>null);return y&&(m=y),m},async dispose(){if(!f){f=!0,p.clear(),k.clear();try{c.kill()}catch{}}}}}function dr(t){const e=t.replace(/(?:\\x[0-9a-fA-F]{2})+/g,r=>{const n=[...r.matchAll(/\\x([0-9a-fA-F]{2})/g)].map(s=>parseInt(s[1],16));return Buffer.from(n).toString("utf8")});try{return e.normalize("NFC")}catch{return e}}async function Be(t){if(!t||t<1)return null;if(process.platform==="linux")try{return await b.readlink(`/proc/${t}/cwd`)}catch{return null}return process.platform==="darwin"?await new Promise(e=>{const r=L.spawn("lsof",["-a","-p",String(t),"-d","cwd","-Fn"],{env:process.env});let n="";r.stdout.on("data",s=>{n+=s.toString("utf8")}),r.on("close",()=>{const s=n.split(`
-`).find(o=>o.startsWith("n"));e(s?dr(s.slice(1)):null)}),r.on("error",()=>e(null))}):null}function fr(t,e,r=6e4){return new Promise(n=>{var c,f;const s=H()?L.spawn(process.env.ComSpec||process.env.COMSPEC||"cmd.exe",["/d","/s","/c",t],{cwd:e,env:process.env,windowsHide:!0}):L.spawn(process.env.SHELL||"/bin/zsh",["-lc",t],{cwd:e,env:process.env});let o="",a="",i=!1;const d=setTimeout(()=>{if(!i){i=!0;try{s.kill()}catch{}n({stdout:o,stderr:a,exitCode:null,timedOut:!0})}},r);(c=s.stdout)==null||c.on("data",m=>{o+=m.toString("utf8")}),(f=s.stderr)==null||f.on("data",m=>{a+=m.toString("utf8")}),s.on("close",m=>{i||(i=!0,clearTimeout(d),n({stdout:o,stderr:a,exitCode:m}))}),s.on("error",m=>{i||(i=!0,clearTimeout(d),n({stdout:o,stderr:a||(m instanceof Error?m.message:String(m)),exitCode:null}))})})}let ge=null;function mr(t){ge=t&&t.trim()?t:null,Pe=void 0,ve=void 0}function Z(){return process.platform==="win32"?process.env.USERPROFILE||process.env.HOME||N.homedir():process.env.HOME||N.homedir()}function ft(){const t={};for(const[e,r]of Object.entries(process.env))typeof r=="string"&&(t[e]=r);if(process.platform==="win32"){const e=process.env.SystemRoot||"C:\\Windows",r=Object.keys(t).find(a=>a.toLowerCase()==="path")??"Path",n=t[r]||t.PATH||t.Path||"",o=[...[ge,u.join(e,"System32","OpenSSH"),u.join(e,"System32")].filter(a=>!!a),...n.split(";").map(a=>a.trim()).filter(Boolean)];t[r]=[...new Set(o)].join(";"),t.HOME||(t.HOME=Z()),t.USERPROFILE||(t.USERPROFILE=Z())}else t.PATH||(t.PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin");return t.TERM||(t.TERM="xterm-256color"),t.HOME||(t.HOME=Z()),t}function pr(){if(process.platform!=="win32")return null;const t=process.env.SystemRoot||"C:\\Windows",e=u.join(t,"System32","OpenSSH");return P.existsSync(u.join(e,"ssh.exe"))?e:null}function Ue(t){if(process.platform!=="win32"){const s=(L.spawnSync("which",[t],{encoding:"utf8"}).stdout||"").trim().split(`
-`)[0];return s&&P.existsSync(s)?s:null}return(L.spawnSync("where.exe",[t],{encoding:"utf8",env:ft(),windowsHide:!0}).stdout||"").split(/\r?\n/).map(n=>n.trim()).find(n=>n.length>0&&P.existsSync(n))||null}let Pe,ve;function mt(t){const e=t==="ssh"?Pe:ve;if(e)return e;const r=`${t}.exe`,n=[],s=pr();s&&n.push(u.join(s,r)),ge&&n.push(u.join(ge,r));const o=process.resourcesPath;typeof o=="string"&&n.push(u.join(o,"win-openssh",r));let a;for(const i of n)if(P.existsSync(i)){a=i;break}return a||(a=Ue(r)||Ue(t)||r),t==="ssh"?Pe=a:ve=a,a}function hr(){return process.platform!=="win32"}function gr(t){const e=u.join(Z(),".ssh","drift");P.mkdirSync(e,{recursive:!0});const r=u.join(e,"cm-%C");return process.platform==="win32"?r.replace(/\\/g,"/"):r}function Ne(t,e){if(hr()){t.push("-o","ControlMaster=auto"),t.push("-o",`ControlPath=${gr()}`),t.push("-o","ControlPersist=600");return}t.push("-o","ControlMaster=no")}function pt(t,e){const r=[];return(e==null?void 0:e.tty)!==!1&&r.push("-tt"),t.port&&r.push("-p",String(t.port)),t.identityFile&&r.push("-i",Re(t.identityFile)),t.proxyJump&&r.push("-J",t.proxyJump),r.push("-o","StrictHostKeyChecking=accept-new"),Ne(r),e!=null&&e.batch&&r.push("-o","BatchMode=yes"),r.push(`${t.user}@${t.host}`),r}function Re(t){return t==="~"?Z():t.startsWith("~/")||t.startsWith("~\\")?u.join(Z(),t.slice(2)):t}function Ie(){return process.platform==="win32"?mt("ssh"):"/usr/bin/ssh"}function yr(t){return(t?`cd ${ht(t)} 2>/dev/null || true; `:"")+'shell=${SHELL:-/bin/bash}; base=${shell##*/}; if [ "$base" = zsh ]; then exec "$shell" -i -c "pwd_report(){ printf \'\\033]7;file://%s%s\\033\\\\\' \\"\\${HOST:-localhost}\\" \\"\\$PWD\\"; }; precmd_functions+=(pwd_report); [[ -f ~/.zshrc ]] && source ~/.zshrc; exec zsh -i"; else export PROMPT_COMMAND=\'printf "\\033]7;file://%s%s\\033\\\\" "${HOSTNAME:-${HOST:-localhost}}" "$PWD"\'; exec "$shell" -i; fi'}function wr(t,e){const r=F(),n=pt(t,{tty:!0});n.push(yr(t.startDir));const s=Ie();let o;try{o=lt.spawn(s,n,{name:"xterm-256color",cols:(e==null?void 0:e.cols)??120,rows:(e==null?void 0:e.rows)??30,cwd:Z(),env:ft()})}catch(f){const m=f instanceof Error?f.message:String(f);throw new Error(`Could not start SSH client (${s}): ${m}`+(process.platform==="win32"?". Reinstall Drift so the bundled OpenSSH client is present.":""))}let a=!1,i=t.startDir||"~";const d=new Set,c=new Set;return o.onData(f=>{for(const m of d)m(f)}),o.onExit(({exitCode:f,signal:m})=>{for(const p of c)p({exitCode:f,signal:m??void 0})}),{id:r,session:t,get target(){return{kind:"ssh",sessionId:t.id,hostLabel:t.name||`${t.user}@${t.host}`,cwd:i}},onData(f){return d.add(f),()=>d.delete(f)},onExit(f){return c.add(f),()=>c.delete(f)},write(f){a||o.write(f)},resize(f,m){a||o.resize(f,m)},async exec(f,m){return Sr(t,f,(m==null?void 0:m.cwd)??i,m==null?void 0:m.timeoutMs)},async getCwd(){return i},setCwd(f){f.trim()&&(i=f.trim())},async dispose(){if(!a){a=!0,d.clear(),c.clear();try{o.kill()}catch{}}}}}function ht(t){return`'${t.replace(/'/g,`'"'"'`)}'`}function gt(){return process.platform==="win32"?mt("scp"):"/usr/bin/scp"}function yt(t){const e=["-r"];return t.port&&e.push("-P",String(t.port)),t.identityFile&&e.push("-i",Re(t.identityFile)),t.proxyJump&&e.push("-o",`ProxyJump=${t.proxyJump}`),e.push("-o","StrictHostKeyChecking=accept-new"),Ne(e),e.push("-o","BatchMode=yes"),e}function ye(){if(process.platform==="win32")return"rsync";for(const t of["/opt/homebrew/bin/rsync","/usr/local/bin/rsync","/usr/bin/rsync"])if(P.existsSync(t))return t;return"rsync"}let le=null;function wt(t){var n;if(le!=null)return le;const e=L.spawnSync(t,["--info=progress2"],{encoding:"utf8",timeout:3e3}),r=`${e.stderr||""}${e.stdout||""}${((n=e.error)==null?void 0:n.message)||""}`;return le=!/unrecognized option|--info/i.test(r),le}function bt(t){const e=[Ie()];return t.port&&e.push("-p",String(t.port)),t.identityFile&&e.push("-i",Re(t.identityFile)),t.proxyJump&&e.push("-o",`ProxyJump=${t.proxyJump}`),e.push("-o","StrictHostKeyChecking=accept-new"),Ne(e),e.push("-o","BatchMode=yes"),e.map(r=>/\s/.test(r)?`"${r.replace(/"/g,'\\"')}"`:r).join(" ")}function kt(t){const e=t.replace(/\r/g,`
-`);let r=null;for(const n of e.split(`
-`)){const s=n.match(/([\d,]+)\s+(\d+)%/);s&&(r={transferred:Number(s[1].replace(/,/g,"")),percent:Math.min(100,Number(s[2]))})}return r}function St(t,e,r){const n=e.replace(/\r/g,`
-`);let s=null;for(const o of n.split(`
-`)){const a=o.trim();if(!a)continue;const i=a.match(/^([\d,]+)\s+(\d+)%/);if(i){const d=Number(i[1].replace(/,/g,"")),c=Math.min(100,Number(i[2])),f=Math.min(r||Number.POSITIVE_INFINITY,t.currentFileStart+d),m=r>0?Math.min(99,Math.round(f/r*100)):c;s={transferred:Number.isFinite(f)?f:d,total:r||d||1,percent:m,currentName:t.currentName},(c>=100||/\(xfer#\d+/i.test(a))&&(t.completedBytes=Math.max(t.completedBytes,t.currentFileStart+d),t.currentFileStart=t.completedBytes);continue}!a.includes("%")&&!a.startsWith("rsync:")&&!a.startsWith("building")&&!a.startsWith("sent ")&&!a.startsWith("total ")&&!/^opening /i.test(a)&&(t.currentName=u.basename(a.replace(/\/$/,"")),t.currentFileStart=t.completedBytes)}return s}async function He(t){let e=0;async function r(n){let s;try{s=await b.stat(n)}catch{return}if(s.isFile()){e+=s.size;return}if(!s.isDirectory())return;let o;try{o=await b.readdir(n)}catch{return}for(const a of o)a==="."||a===".."||await r(u.join(n,a))}for(const n of t)await r(n);return e}async function br(t,e,r,n){const s=e.map(h=>h.trim()).filter(Boolean);if(!s.length)return{error:"No files"};const o=(n==null?void 0:n.timeoutMs)??12e4,a=n==null?void 0:n.onProgress,i=r.trim()||"~",d=`${t.user}@${t.host}:${i.replace(/\/?$/,"/")}`,c=await He(s);a==null||a({transferred:0,total:c,percent:0,currentName:u.basename(s[0]||"")});const f=h=>new Promise(M=>{const T=["-a",...h==="progress2"?["--info=progress2"]:["--progress"],"-e",bt(t),...s,d],x=L.spawn(ye(),T,{env:process.env});let $="",v=!1;const R={completedBytes:0,currentFileStart:0,currentName:u.basename(s[0]||"")},_=setTimeout(()=>{v||(v=!0,x.kill("SIGKILL"),M({error:"Upload timed out"}))},o),O=C=>{const I=C.toString("utf8");if($+=I,!a)return;if(h==="progress2"){const S=kt(I);if(!S)return;const z=S.transferred,Bt=c>0?Math.min(99,Math.round(z/c*100)):S.percent;a({transferred:c>0?Math.min(z,c):z,total:c||z||1,percent:Bt,currentName:R.currentName});return}const w=St(R,I,c);w&&a(w)};x.stdout.on("data",O),x.stderr.on("data",O),x.on("error",C=>{v||(v=!0,clearTimeout(_),C.code==="ENOENT"?M("missing"):M({error:C.message}))}),x.on("close",C=>{if(v)return;if(v=!0,clearTimeout(_),C===0){a==null||a({transferred:c,total:c||1,percent:100}),M({ok:!0});return}const I=($||`rsync exit ${C}`).trim();if(h==="progress2"&&/unrecognized option|--info/i.test(I)){M("unsupported");return}M({error:I.slice(0,400)})})}),m=ye(),p=!wt(m);let k=await f(p?"classic":"progress2");if(k==="unsupported"&&(k=await f("classic")),k!=="missing"&&k!=="unsupported")return k;let y=0;for(const h of s){let M=0;try{M=await He([h])}catch{M=0}a==null||a({transferred:y,total:c||1,percent:c>0?Math.min(99,Math.round(y/c*100)):0,currentName:u.basename(h)});const T=[...yt(t),h,d],x=await new Promise($=>{const v=L.spawn(gt(),T,{env:process.env});let R="",_=!1;const O=setTimeout(()=>{_||(_=!0,v.kill("SIGKILL"),$({error:"Upload timed out"}))},o);v.stderr.on("data",C=>{R+=C.toString("utf8")}),v.on("error",C=>{_||(_=!0,clearTimeout(O),$({error:C.message}))}),v.on("close",C=>{_||(_=!0,clearTimeout(O),$(C===0?{ok:!0}:{error:(R||`scp exit ${C}`).trim().slice(0,400)}))})});if("error"in x)return x;y+=M,a==null||a({transferred:Math.min(y,c||y),total:c||y||1,percent:c>0?Math.min(100,Math.round(y/c*100)):100,currentName:u.basename(h)})}return{ok:!0}}async function kr(t,e,r,n){const s=e.map(h=>h.trim()).filter(Boolean);if(!s.length)return{error:"No files"};const o=r.trim();if(!o)return{error:"No destination"};const a=(n==null?void 0:n.timeoutMs)??12e4,i=n==null?void 0:n.onProgress,d=s.map(h=>`${t.user}@${t.host}:${h}`),c=o.replace(/\/?$/,"/");i==null||i({transferred:0,total:s.length,percent:0,currentName:u.basename(s[0]||"")});const f=h=>new Promise(M=>{const T=["-a",...h==="progress2"?["--info=progress2"]:["--progress"],"-e",bt(t),...d,c],x=L.spawn(ye(),T,{env:process.env});let $="",v=!1;const R={completedBytes:0,currentFileStart:0,currentName:u.basename(s[0]||"")},_=setTimeout(()=>{v||(v=!0,x.kill("SIGKILL"),M({error:"Download timed out"}))},a),O=C=>{const I=C.toString("utf8");if($+=I,!i)return;if(h==="progress2"){const S=kt(I);if(!S)return;i({transferred:S.transferred,total:Math.max(S.transferred,1),percent:Math.min(99,S.percent),currentName:R.currentName});return}const w=St(R,I,0);w&&i(w)};x.stdout.on("data",O),x.stderr.on("data",O),x.on("error",C=>{v||(v=!0,clearTimeout(_),C.code==="ENOENT"?M("missing"):M({error:C.message}))}),x.on("close",C=>{if(v)return;if(v=!0,clearTimeout(_),C===0){i==null||i({transferred:s.length,total:s.length,percent:100}),M({ok:!0});return}const I=($||`rsync exit ${C}`).trim();if(h==="progress2"&&/unrecognized option|--info/i.test(I)){M("unsupported");return}M({error:I.slice(0,400)})})}),m=ye(),p=!wt(m);let k=await f(p?"classic":"progress2");if(k==="unsupported"&&(k=await f("classic")),k!=="missing"&&k!=="unsupported")return k;let y=0;for(const h of d){const M=u.basename(s[y]||h);i==null||i({transferred:y,total:s.length,percent:s.length>0?Math.min(99,Math.round(y/s.length*100)):0,currentName:M});const T=[...yt(t),h,c],x=await new Promise($=>{const v=L.spawn(gt(),T,{env:process.env});let R="",_=!1;const O=setTimeout(()=>{_||(_=!0,v.kill("SIGKILL"),$({error:"Download timed out"}))},a);v.stderr.on("data",C=>{R+=C.toString("utf8")}),v.on("error",C=>{_||(_=!0,clearTimeout(O),$({error:C.message}))}),v.on("close",C=>{_||(_=!0,clearTimeout(O),$(C===0?{ok:!0}:{error:(R||`scp exit ${C}`).trim().slice(0,400)}))})});if("error"in x)return x;y+=1,i==null||i({transferred:y,total:s.length,percent:s.length>0?Math.min(100,Math.round(y/s.length*100)):100,currentName:M})}return{ok:!0}}function Sr(t,e,r,n=6e4){const s=`cd ${ht(r)} 2>/dev/null; ${e}`,o=pt({...t},{tty:!1,batch:!0});return o.push(s),new Promise(a=>{const i=L.spawn(Ie(),o,{env:process.env});let d="",c="",f=!1;const m=setTimeout(()=>{f||(f=!0,i.kill("SIGKILL"),a({stdout:d,stderr:c,exitCode:null,timedOut:!0}))},n);i.stdout.on("data",p=>{d+=p.toString("utf8")}),i.stderr.on("data",p=>{c+=p.toString("utf8")}),i.on("close",p=>{f||(f=!0,clearTimeout(m),a({stdout:d,stderr:c,exitCode:p}))})})}function B(t){return!!(t!=null&&t.aborted)}const Mt="composer-2.5";async function Mr(t){if(!t.trim())return We();try{const{Cursor:e}=await import("@cursor/sdk");return(await e.models.list({apiKey:t})).map(n=>({id:n.id,displayName:n.displayName||n.id,description:n.description}))}catch{return We()}}function We(){return[{id:"auto",displayName:"Auto"},{id:Mt,displayName:"Composer 2.5"}]}async function*ze(t){if(B(t.signal)){yield{type:"status",status:"cancelled",detail:"Stopped"};return}if(yield{type:"status",status:"running"},!t.apiKey.trim()){yield{type:"status",status:"error",detail:"Cursor API key is not set. Open Settings and paste your key."};return}try{const e=await import("@cursor/sdk").catch(()=>null);if(e!=null&&e.Agent){yield*Pr(e,t);return}}catch(e){if(B(t.signal)||e instanceof Error&&e.name==="AbortError"){yield{type:"status",status:"cancelled",detail:"Stopped"};return}yield{type:"text",text:`Cursor SDK call failed: ${e instanceof Error?e.message:String(e)}
+"use strict";
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+const electron = require("electron");
+const path = require("node:path");
+const node_fs = require("node:fs");
+const promises = require("node:fs/promises");
+const promises$1 = require("node:stream/promises");
+const os = require("node:os");
+const node_crypto = require("node:crypto");
+const nodePty = require("node-pty");
+const node_child_process = require("node:child_process");
+const electronUpdater = require("electron-updater");
+const node_stream = require("node:stream");
+const DESTRUCTIVE = /\b(rm\s+-rf|rm\s+-r|dd\s+|mkfs|shutdown|reboot|git\s+push\s+--force|git\s+push\s+-f|drop\s+table|truncate\s+)\b/i;
+const WRITE = /\b(rm\s+|mv\s+|cp\s+|mkdir\s+|touch\s+|chmod\s+|chown\s+|npm\s+i|npm\s+install|pnpm\s+i|yarn\s+add|pip\s+install|brew\s+install|apt\s+|docker\s+|kubectl\s+apply|git\s+commit|git\s+push|tee\s+|sed\s+-i|>\s*|>>\s*)\b/i;
+const NETWORK = /\b(curl\s+|wget\s+|nc\s+|ssh\s+|scp\s+|rsync\s+|npm\s+publish|pip\s+upload)\b/i;
+const READ = /^(ls|pwd|whoami|date|uname|cat|head|tail|less|more|echo|which|type|file|stat|df|du|ps|top|htop|git\s+status|git\s+diff|git\s+log|git\s+branch)\b/i;
+function classifyCommand(command) {
+  const trimmed = command.trim();
+  if (!trimmed) return "unknown";
+  if (DESTRUCTIVE.test(trimmed)) return "destructive";
+  if (NETWORK.test(trimmed)) return "network";
+  if (WRITE.test(trimmed)) return "write";
+  if (READ.test(trimmed)) return "read";
+  return "unknown";
+}
+class ApprovalPolicy {
+  constructor(mode = "ask") {
+    __publicField(this, "mode");
+    __publicField(this, "sessionRules");
+    this.mode = mode;
+    this.sessionRules = [];
+  }
+  classify(command) {
+    return classifyCommand(command);
+  }
+  needsApproval(action) {
+    if (this.mode === "read-only") {
+      return action.effect !== "read";
+    }
+    if (action.effect === "read") return false;
+    if (this.mode === "session-allow") {
+      return !this.matchesRule(action);
+    }
+    if (this.matchesRule(action)) return false;
+    return true;
+  }
+  remember(action, decision) {
+    var _a;
+    if (decision.type !== "allow-session") return;
+    const sessionId = action.target.kind === "ssh" ? action.target.sessionId : void 0;
+    this.sessionRules.push({
+      sessionId,
+      effect: action.effect,
+      commandPrefix: (_a = action.command) == null ? void 0 : _a.trim().split(/\s+/)[0]
+    });
+  }
+  matchesRule(action) {
+    const sessionId = action.target.kind === "ssh" ? action.target.sessionId : void 0;
+    return this.sessionRules.some((rule) => {
+      if (rule.sessionId && rule.sessionId !== sessionId) return false;
+      if (rule.effect !== action.effect && rule.effect !== "unknown") ;
+      if (rule.commandPrefix && action.command) {
+        return action.command.trim().startsWith(rule.commandPrefix);
+      }
+      return rule.effect === action.effect;
+    });
+  }
+}
+class SessionStore {
+  constructor(dataDir2) {
+    __publicField(this, "filePath");
+    __publicField(this, "sessions", []);
+    this.filePath = path.join(dataDir2, "sessions.json");
+  }
+  async load() {
+    try {
+      const raw = await promises.readFile(this.filePath, "utf8");
+      const parsed = JSON.parse(raw);
+      this.sessions = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      this.sessions = [];
+    }
+    return this.list();
+  }
+  list() {
+    return [...this.sessions].sort(
+      (a, b) => a.name.localeCompare(b.name, "en")
+    );
+  }
+  async upsert(input) {
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    if (input.id) {
+      const idx = this.sessions.findIndex((s) => s.id === input.id);
+      if (idx >= 0) {
+        const prev = this.sessions[idx];
+        const next = {
+          ...prev,
+          ...input,
+          id: input.id,
+          // Allow clearing optional fields on edit (empty form → undefined).
+          port: input.port,
+          identityFile: input.identityFile,
+          authorizedKeyIdentity: input.authorizedKeyIdentity,
+          proxyJump: input.proxyJump,
+          startDir: input.startDir,
+          folder: input.folder,
+          updatedAt: now,
+          createdAt: prev.createdAt
+        };
+        this.sessions[idx] = next;
+        await this.persist();
+        return next;
+      }
+    }
+    const created = {
+      id: input.id ?? node_crypto.randomUUID(),
+      name: input.name,
+      folder: input.folder,
+      host: input.host,
+      user: input.user,
+      port: input.port,
+      identityFile: input.identityFile,
+      authorizedKeyIdentity: input.authorizedKeyIdentity,
+      proxyJump: input.proxyJump,
+      startDir: input.startDir,
+      sshConfigHost: input.sshConfigHost,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.sessions.push(created);
+    await this.persist();
+    return created;
+  }
+  async remove(id) {
+    const before = this.sessions.length;
+    this.sessions = this.sessions.filter((s) => s.id !== id);
+    if (this.sessions.length === before) return false;
+    await this.persist();
+    return true;
+  }
+  get(id) {
+    return this.sessions.find((s) => s.id === id);
+  }
+  async persist() {
+    await promises.mkdir(path.dirname(this.filePath), { recursive: true });
+    await promises.writeFile(
+      this.filePath,
+      JSON.stringify(this.sessions, null, 2),
+      "utf8"
+    );
+  }
+}
+function parseSshConfig(content) {
+  const lines = content.split(/\r?\n/);
+  const results = [];
+  let current = null;
+  const flush = () => {
+    if (current && current.sshConfigHost && !/[?*]/.test(current.sshConfigHost)) {
+      results.push(current);
+    }
+    current = null;
+  };
+  for (const raw of lines) {
+    const line = raw.replace(/#.*$/, "").trim();
+    if (!line) continue;
+    const [key, ...rest] = line.split(/\s+/);
+    const value = rest.join(" ").trim();
+    const k = key.toLowerCase();
+    if (k === "host") {
+      flush();
+      const name = value.split(/\s+/)[0];
+      current = {
+        sshConfigHost: name,
+        host: name
+      };
+      continue;
+    }
+    if (!current) continue;
+    if (k === "hostname") current.host = value;
+    if (k === "user") current.user = value;
+    if (k === "port") current.port = Number(value) || void 0;
+    if (k === "identityfile") current.identityFile = value;
+    if (k === "proxyjump") current.proxyJump = value;
+  }
+  flush();
+  return results;
+}
+function newId() {
+  return node_crypto.randomUUID();
+}
+const SANDBOX_ENV_RE = /cursor-sandbox-cache/i;
+const STRIP_ENV_KEYS = /* @__PURE__ */ new Set([
+  "CURSOR_AGENT",
+  "CURSOR_AGENT_STORE_FILES_DIR",
+  "CURSOR_AGENT_STORE_SHARED_PATHS",
+  "CURSOR_CONVERSATION_ID",
+  "CURSOR_REQUEST_ID",
+  "CURSOR_SPAWNED_BY_EXTENSION_ID",
+  "CURSOR_SPAWN_CHAIN",
+  "CI"
+]);
+function isWin() {
+  return process.platform === "win32";
+}
+function cleanEnv$1() {
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value !== "string") continue;
+    if (STRIP_ENV_KEYS.has(key) || SANDBOX_ENV_RE.test(value)) continue;
+    env[key] = value;
+  }
+  if (!env.PATH && !env.Path) {
+    env.PATH = isWin() ? [
+      process.env.SystemRoot ? path.join(process.env.SystemRoot, "System32") : "",
+      process.env.SystemRoot ?? "",
+      process.env.SystemRoot ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0") : ""
+    ].filter(Boolean).join(";") : "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+  }
+  if (!env.TERM || env.TERM === "dumb") env.TERM = "xterm-256color";
+  if (!env.HOME) env.HOME = os.homedir();
+  if (isWin() && !env.USERPROFILE) env.USERPROFILE = os.homedir();
+  if (!isWin()) {
+    const lang = env.LC_ALL || env.LANG || "";
+    if (!/utf-?8/i.test(lang)) {
+      env.LANG = "en_US.UTF-8";
+      if (env.LC_ALL) env.LC_ALL = "en_US.UTF-8";
+    }
+  }
+  return env;
+}
+function firstExisting(paths) {
+  for (const p of paths) {
+    if (p && node_fs.existsSync(p)) return p;
+  }
+  return null;
+}
+function powershellPath() {
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  return firstExisting([
+    path.join(
+      systemRoot,
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe"
+    ),
+    path.join(
+      systemRoot,
+      "SysWOW64",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe"
+    )
+  ]) || "powershell.exe";
+}
+function cmdPath() {
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  return firstExisting([
+    path.join(systemRoot, "System32", "cmd.exe"),
+    path.join(systemRoot, "SysWOW64", "cmd.exe")
+  ]) || "cmd.exe";
+}
+function gitBashPath() {
+  const pf = process.env.ProgramFiles || "C:\\Program Files";
+  const pf86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+  const local = process.env.LOCALAPPDATA || "";
+  return firstExisting([
+    path.join(pf, "Git", "bin", "bash.exe"),
+    path.join(pf, "Git", "usr", "bin", "bash.exe"),
+    path.join(pf86, "Git", "bin", "bash.exe"),
+    path.join(pf86, "Git", "usr", "bin", "bash.exe"),
+    local ? path.join(local, "Programs", "Git", "bin", "bash.exe") : ""
+  ]);
+}
+function resolveWindowsShell(kind) {
+  if (kind === "cmd") return cmdPath();
+  if (kind === "gitbash") {
+    return gitBashPath() || powershellPath();
+  }
+  return powershellPath();
+}
+function detectWindowsShells() {
+  const bash = gitBashPath();
+  return [
+    { id: "powershell", available: true, path: powershellPath() },
+    { id: "cmd", available: true, path: cmdPath() },
+    { id: "gitbash", available: Boolean(bash), path: bash }
+  ];
+}
+function defaultShell(kind) {
+  if (isWin()) {
+    const override = process.env.DRIFT_SHELL;
+    if (override) return override;
+    return resolveWindowsShell(kind ?? "powershell");
+  }
+  const candidates = [process.env.SHELL, "/bin/zsh", "/bin/bash", "/bin/sh"];
+  for (const c of candidates) {
+    if (c && c.startsWith("/")) return c;
+  }
+  return "/bin/zsh";
+}
+function shellBaseName(shell) {
+  return path.basename(shell).toLowerCase().replace(/\.exe$/, "");
+}
+function shellArgs(shell, kind) {
+  if (!isWin()) return ["-l"];
+  if (kind === "gitbash" || shellBaseName(shell) === "bash") {
+    return ["--login", "-i"];
+  }
+  const base = shellBaseName(shell);
+  if (base === "powershell" || base === "pwsh") {
+    return ["-NoLogo"];
+  }
+  if (base === "cmd") {
+    return [];
+  }
+  return [];
+}
+function prepareUnixShellEnv(shell, id, env) {
+  const osc = 'printf "\\033]7;file://%s%s\\033\\\\" "localhost" "$PWD"';
+  if (!env.PROMPT_COMMAND) {
+    env.PROMPT_COMMAND = osc;
+  } else if (!env.PROMPT_COMMAND.includes("]7;")) {
+    env.PROMPT_COMMAND = `${osc}; ${env.PROMPT_COMMAND}`;
+  }
+  if (shellBaseName(shell) !== "zsh") return;
+  const zdot = path.join(os.tmpdir(), `drift-zsh-${id}`);
+  node_fs.mkdirSync(zdot, { recursive: true });
+  node_fs.writeFileSync(
+    path.join(zdot, ".zshrc"),
+    [
+      // Source user config first (oh-my-zsh may reset precmd hooks).
+      '[[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"',
+      // Powerline prompts (agnoster) glitch on wrap if RPROMPT indent is off.
+      "ZLE_RPROMPT_INDENT=${ZLE_RPROMPT_INDENT:-0}",
+      // Emit OSC 7 after omz so cwd tracking survives theme init.
+      'pwd_report(){ printf "\\033]7;file://localhost%s\\033\\\\" "$PWD"; }',
+      "typeset -ga precmd_functions",
+      'precmd_functions=("${(@)precmd_functions:#pwd_report}")',
+      "precmd_functions+=(pwd_report)",
+      ""
+    ].join("\n"),
+    "utf8"
+  );
+  node_fs.writeFileSync(
+    path.join(zdot, ".zprofile"),
+    '[[ -f "$HOME/.zprofile" ]] && source "$HOME/.zprofile"\n',
+    "utf8"
+  );
+  env.ZDOTDIR = zdot;
+}
+function prepareWindowsPowerShellEnv(shell, id, env) {
+  const base = shellBaseName(shell);
+  if (base !== "powershell" && base !== "pwsh") return;
+  const dir = path.join(os.tmpdir(), `drift-ps-${id}`);
+  node_fs.mkdirSync(dir, { recursive: true });
+  const profilePath = path.join(dir, "profile.ps1");
+  node_fs.writeFileSync(
+    profilePath,
+    [
+      "function prompt {",
+      "  $cwd = (Get-Location).Path",
+      "  $unix = ($cwd -replace '\\\\','/')",
+      "  if ($unix -notmatch '^/') { $unix = '/' + $unix }",
+      '  [Console]::Write(([char]27 + "]7;file://localhost" + $unix + [char]7))',
+      '  "PS $cwd> "',
+      "}",
+      ""
+    ].join("\n"),
+    "utf8"
+  );
+  env.DRIFT_PS_PROFILE = profilePath;
+}
+function createLocalPty(opts) {
+  const shellKind = (opts == null ? void 0 : opts.shellKind) ?? "powershell";
+  const shell = defaultShell(shellKind);
+  const cwd = (opts == null ? void 0 : opts.cwd) ?? (isWin() ? process.env.USERPROFILE || os.homedir() : process.env.HOME || os.homedir());
+  const id = newId();
+  const env = cleanEnv$1();
+  const base = shellBaseName(shell);
+  const isPowerShell = base === "powershell" || base === "pwsh";
+  if (isWin() && isPowerShell) {
+    prepareWindowsPowerShellEnv(shell, id, env);
+  } else if (!isWin()) {
+    prepareUnixShellEnv(shell, id, env);
+  }
+  let args = shellArgs(shell, isWin() ? shellKind : void 0);
+  if (isWin() && isPowerShell && env.DRIFT_PS_PROFILE) {
+    args = [
+      "-NoLogo",
+      "-NoExit",
+      "-Command",
+      `if (Test-Path $env:DRIFT_PS_PROFILE) { . $env:DRIFT_PS_PROFILE }`
+    ];
+  }
+  const pty = nodePty.spawn(shell, args, {
+    name: "xterm-256color",
+    cols: (opts == null ? void 0 : opts.cols) ?? 120,
+    rows: (opts == null ? void 0 : opts.rows) ?? 30,
+    cwd,
+    env
+  });
+  let disposed = false;
+  let cwdGuess = cwd;
+  const listeners = /* @__PURE__ */ new Set();
+  const exitListeners = /* @__PURE__ */ new Set();
+  pty.onData((data) => {
+    for (const cb of listeners) cb(data);
+  });
+  pty.onExit(({ exitCode, signal }) => {
+    for (const cb of exitListeners) {
+      cb({ exitCode, signal: signal ?? void 0 });
+    }
+  });
+  return {
+    id,
+    get pid() {
+      return pty.pid;
+    },
+    get target() {
+      return { kind: "local", cwd: cwdGuess };
+    },
+    onData(cb) {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    },
+    onExit(cb) {
+      exitListeners.add(cb);
+      return () => exitListeners.delete(cb);
+    },
+    write(data) {
+      if (!disposed) pty.write(data);
+    },
+    resize(cols, rows) {
+      if (!disposed) pty.resize(cols, rows);
+    },
+    async exec(command, execOpts) {
+      const live = await readProcessCwd(pty.pid).catch(() => null);
+      return runDetached(
+        command,
+        (execOpts == null ? void 0 : execOpts.cwd) ?? live ?? cwdGuess,
+        execOpts == null ? void 0 : execOpts.timeoutMs
+      );
+    },
+    async getCwd() {
+      const live = await readProcessCwd(pty.pid).catch(() => null);
+      if (live) cwdGuess = live;
+      return cwdGuess;
+    },
+    async dispose() {
+      if (disposed) return;
+      disposed = true;
+      listeners.clear();
+      exitListeners.clear();
+      try {
+        pty.kill();
+      } catch {
+      }
+    }
+  };
+}
+function decodeLsofPath(raw) {
+  const decoded = raw.replace(/(?:\\x[0-9a-fA-F]{2})+/g, (seq) => {
+    const bytes = [...seq.matchAll(/\\x([0-9a-fA-F]{2})/g)].map(
+      (m) => parseInt(m[1], 16)
+    );
+    return Buffer.from(bytes).toString("utf8");
+  });
+  try {
+    return decoded.normalize("NFC");
+  } catch {
+    return decoded;
+  }
+}
+async function readProcessCwd(pid) {
+  if (!pid || pid < 1) return null;
+  if (process.platform === "linux") {
+    try {
+      return await promises.readlink(`/proc/${pid}/cwd`);
+    } catch {
+      return null;
+    }
+  }
+  if (process.platform === "darwin") {
+    return await new Promise((resolve) => {
+      const child = node_child_process.spawn("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
+        env: process.env
+      });
+      let out = "";
+      child.stdout.on("data", (d) => {
+        out += d.toString("utf8");
+      });
+      child.on("close", () => {
+        const line = out.split("\n").find((l) => l.startsWith("n"));
+        resolve(line ? decodeLsofPath(line.slice(1)) : null);
+      });
+      child.on("error", () => resolve(null));
+    });
+  }
+  return null;
+}
+function runDetached(command, cwd, timeoutMs = 6e4) {
+  return new Promise((resolve) => {
+    var _a, _b;
+    const child = isWin() ? node_child_process.spawn(
+      process.env.ComSpec || process.env.COMSPEC || "cmd.exe",
+      ["/d", "/s", "/c", command],
+      { cwd, env: process.env, windowsHide: true }
+    ) : node_child_process.spawn(process.env.SHELL || "/bin/zsh", ["-lc", command], {
+      cwd,
+      env: process.env
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        child.kill();
+      } catch {
+      }
+      resolve({ stdout, stderr, exitCode: null, timedOut: true });
+    }, timeoutMs);
+    (_a = child.stdout) == null ? void 0 : _a.on("data", (d) => {
+      stdout += d.toString("utf8");
+    });
+    (_b = child.stderr) == null ? void 0 : _b.on("data", (d) => {
+      stderr += d.toString("utf8");
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ stdout, stderr, exitCode: code });
+    });
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        stdout,
+        stderr: stderr || (err instanceof Error ? err.message : String(err)),
+        exitCode: null
+      });
+    });
+  });
+}
+let winOpenSshDir = null;
+function setWinOpenSshDir(dir) {
+  winOpenSshDir = dir && dir.trim() ? dir : null;
+  sshPathCache = void 0;
+  scpPathCache = void 0;
+}
+function homeDir() {
+  if (process.platform === "win32") {
+    return process.env.USERPROFILE || process.env.HOME || os.homedir();
+  }
+  return process.env.HOME || os.homedir();
+}
+function cleanEnv() {
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === "string") env[key] = value;
+  }
+  if (process.platform === "win32") {
+    const sysRoot = process.env.SystemRoot || "C:\\Windows";
+    const pathKey = Object.keys(env).find((k) => k.toLowerCase() === "path") ?? "Path";
+    const current = env[pathKey] || env.PATH || env.Path || "";
+    const extras = [
+      winOpenSshDir,
+      path.join(sysRoot, "System32", "OpenSSH"),
+      path.join(sysRoot, "System32")
+    ].filter((p) => Boolean(p));
+    const parts = [
+      ...extras,
+      ...current.split(";").map((p) => p.trim()).filter(Boolean)
+    ];
+    env[pathKey] = [...new Set(parts)].join(";");
+    if (!env.HOME) env.HOME = homeDir();
+    if (!env.USERPROFILE) env.USERPROFILE = homeDir();
+  } else if (!env.PATH) {
+    env.PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+  }
+  if (!env.TERM) env.TERM = "xterm-256color";
+  if (!env.HOME) env.HOME = homeDir();
+  return env;
+}
+function createAskpassHandle(password) {
+  const dir = node_fs.mkdtempSync(path.join(os.tmpdir(), "drift-askpass-"));
+  const pwFile = path.join(dir, "pw");
+  node_fs.writeFileSync(pwFile, password, { encoding: "utf8", mode: 384 });
+  let script;
+  if (process.platform === "win32") {
+    script = path.join(dir, "askpass.cmd");
+    node_fs.writeFileSync(
+      script,
+      `@echo off\r
+type "${pwFile.replace(/"/g, "")}"\r
+`,
+      "utf8"
+    );
+  } else {
+    script = path.join(dir, "askpass.sh");
+    node_fs.writeFileSync(script, `#!/bin/sh
+exec cat ${JSON.stringify(pwFile)}
+`, {
+      encoding: "utf8",
+      mode: 448
+    });
+    try {
+      node_fs.chmodSync(script, 448);
+    } catch {
+    }
+  }
+  return {
+    env: {
+      SSH_ASKPASS: script,
+      SSH_ASKPASS_REQUIRE: "force",
+      DISPLAY: process.env.DISPLAY || ":0"
+    },
+    cleanup: () => {
+      try {
+        node_fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+      }
+    }
+  };
+}
+function stripAnsi$1(s) {
+  return s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
+}
+function systemOpenSshDir() {
+  if (process.platform !== "win32") return null;
+  const sysRoot = process.env.SystemRoot || "C:\\Windows";
+  const dir = path.join(sysRoot, "System32", "OpenSSH");
+  return node_fs.existsSync(path.join(dir, "ssh.exe")) ? dir : null;
+}
+function whichOnPath(exe) {
+  if (process.platform !== "win32") {
+    const probe2 = node_child_process.spawnSync("which", [exe], { encoding: "utf8" });
+    const line2 = (probe2.stdout || "").trim().split("\n")[0];
+    return line2 && node_fs.existsSync(line2) ? line2 : null;
+  }
+  const probe = node_child_process.spawnSync("where.exe", [exe], {
+    encoding: "utf8",
+    env: cleanEnv(),
+    windowsHide: true
+  });
+  const line = (probe.stdout || "").split(/\r?\n/).map((s) => s.trim()).find((s) => s.length > 0 && node_fs.existsSync(s));
+  return line || null;
+}
+let sshPathCache;
+let scpPathCache;
+function resolveWinClient(kind) {
+  const cached = kind === "ssh" ? sshPathCache : scpPathCache;
+  if (cached) return cached;
+  const exe = `${kind}.exe`;
+  const candidates = [];
+  const systemDir = systemOpenSshDir();
+  if (systemDir) candidates.push(path.join(systemDir, exe));
+  if (winOpenSshDir) candidates.push(path.join(winOpenSshDir, exe));
+  const resourcesPath = process.resourcesPath;
+  if (typeof resourcesPath === "string") {
+    candidates.push(path.join(resourcesPath, "win-openssh", exe));
+  }
+  let resolved;
+  for (const candidate of candidates) {
+    if (node_fs.existsSync(candidate)) {
+      resolved = candidate;
+      break;
+    }
+  }
+  if (!resolved) {
+    resolved = whichOnPath(exe) || whichOnPath(kind) || exe;
+  }
+  if (kind === "ssh") sshPathCache = resolved;
+  else scpPathCache = resolved;
+  return resolved;
+}
+function sshMuxSupported() {
+  return process.platform !== "win32";
+}
+function sshControlPath(session) {
+  const dir = path.join(homeDir(), ".ssh", "drift");
+  node_fs.mkdirSync(dir, { recursive: true });
+  const raw = path.join(dir, "cm-%C");
+  return process.platform === "win32" ? raw.replace(/\\/g, "/") : raw;
+}
+function pushMuxOptions(args, session) {
+  if (sshMuxSupported()) {
+    args.push("-o", "ControlMaster=auto");
+    args.push("-o", `ControlPath=${sshControlPath()}`);
+    args.push("-o", "ControlPersist=600");
+    return;
+  }
+  args.push("-o", "ControlMaster=no");
+}
+function buildSshArgs(session, opts) {
+  const args = [];
+  if ((opts == null ? void 0 : opts.tty) !== false) args.push("-tt");
+  if (session.port) args.push("-p", String(session.port));
+  if (session.identityFile) args.push("-i", expandHome(session.identityFile));
+  if (session.proxyJump) args.push("-J", session.proxyJump);
+  args.push("-o", "StrictHostKeyChecking=accept-new");
+  pushMuxOptions(args);
+  if (opts == null ? void 0 : opts.batch) args.push("-o", "BatchMode=yes");
+  args.push(`${session.user}@${session.host}`);
+  return args;
+}
+function expandHome(p) {
+  if (p === "~") return homeDir();
+  if (p.startsWith("~/") || p.startsWith("~\\")) {
+    return path.join(homeDir(), p.slice(2));
+  }
+  return p;
+}
+function sshBinary() {
+  if (process.platform === "win32") return resolveWinClient("ssh");
+  return "/usr/bin/ssh";
+}
+function buildRemoteShellCommand(startDir) {
+  const cd = startDir ? `cd ${shellQuote(startDir)} 2>/dev/null || true; ` : "";
+  return cd + `shell=\${SHELL:-/bin/bash}; base=\${shell##*/}; if [ "$base" = zsh ]; then exec "$shell" -i -c "pwd_report(){ printf '\\033]7;file://%s%s\\033\\\\' \\"\\\${HOST:-localhost}\\" \\"\\$PWD\\"; }; precmd_functions+=(pwd_report); [[ -f ~/.zshrc ]] && source ~/.zshrc; exec zsh -i"; else export PROMPT_COMMAND='printf "\\033]7;file://%s%s\\033\\\\" "\${HOSTNAME:-\${HOST:-localhost}}" "$PWD"'; exec "$shell" -i; fi`;
+}
+function createSshPty(session, opts) {
+  var _a, _b;
+  const id = newId();
+  const args = buildSshArgs(session, { tty: true });
+  const password = !((_a = session.identityFile) == null ? void 0 : _a.trim()) && ((_b = opts == null ? void 0 : opts.password) == null ? void 0 : _b.trim()) ? opts.password.trim() : "";
+  if (password) {
+    args.push("-o", "NumberOfPasswordPrompts=1");
+  }
+  args.push(buildRemoteShellCommand(session.startDir));
+  const bin = sshBinary();
+  const askpass = password ? createAskpassHandle(password) : null;
+  const env = { ...cleanEnv(), ...(askpass == null ? void 0 : askpass.env) ?? {} };
+  let pty;
+  try {
+    pty = nodePty.spawn(bin, args, {
+      name: "xterm-256color",
+      cols: (opts == null ? void 0 : opts.cols) ?? 120,
+      rows: (opts == null ? void 0 : opts.rows) ?? 30,
+      cwd: homeDir(),
+      env
+    });
+  } catch (err) {
+    askpass == null ? void 0 : askpass.cleanup();
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Could not start SSH client (${bin}): ${detail}` + (process.platform === "win32" ? ". Reinstall Drift so the bundled OpenSSH client is present." : "")
+    );
+  }
+  let disposed = false;
+  let cwdGuess = session.startDir || "~";
+  let passwordInjected = false;
+  const listeners = /* @__PURE__ */ new Set();
+  const exitListeners = /* @__PURE__ */ new Set();
+  pty.onData((data) => {
+    if (password && !passwordInjected) {
+      const plain = stripAnsi$1(data);
+      if (/password:\s*$/im.test(plain)) {
+        passwordInjected = true;
+        try {
+          pty.write(`${password}\r`);
+        } catch {
+        }
+      }
+    }
+    for (const cb of listeners) cb(data);
+  });
+  pty.onExit(({ exitCode, signal }) => {
+    askpass == null ? void 0 : askpass.cleanup();
+    for (const cb of exitListeners) {
+      cb({ exitCode, signal: signal ?? void 0 });
+    }
+  });
+  return {
+    id,
+    session,
+    get target() {
+      return {
+        kind: "ssh",
+        sessionId: session.id,
+        hostLabel: session.name || `${session.user}@${session.host}`,
+        cwd: cwdGuess
+      };
+    },
+    onData(cb) {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    },
+    onExit(cb) {
+      exitListeners.add(cb);
+      return () => exitListeners.delete(cb);
+    },
+    write(data) {
+      if (!disposed) pty.write(data);
+    },
+    resize(cols, rows) {
+      if (!disposed) pty.resize(cols, rows);
+    },
+    async exec(command, execOpts) {
+      return runSshExec(
+        session,
+        command,
+        (execOpts == null ? void 0 : execOpts.cwd) ?? cwdGuess,
+        execOpts == null ? void 0 : execOpts.timeoutMs
+      );
+    },
+    async getCwd() {
+      return cwdGuess;
+    },
+    setCwd(cwd) {
+      if (cwd.trim()) cwdGuess = cwd.trim();
+    },
+    async dispose() {
+      if (disposed) return;
+      disposed = true;
+      listeners.clear();
+      exitListeners.clear();
+      askpass == null ? void 0 : askpass.cleanup();
+      try {
+        pty.kill();
+      } catch {
+      }
+    }
+  };
+}
+async function installAuthorizedKey(session, publicKeyLine, password) {
+  const key = publicKeyLine.trim();
+  const pw = password.trim();
+  if (!key) return { ok: false, message: "empty_key" };
+  if (!pw) return { ok: false, message: "empty_password" };
+  const remote = `mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && KEY=${shellQuote(key)}; grep -qxF "$KEY" ~/.ssh/authorized_keys 2>/dev/null || printf '%s\\n' "$KEY" >> ~/.ssh/authorized_keys`;
+  const args = buildSshArgs(
+    { ...session, identityFile: void 0 },
+    { tty: false, batch: false }
+  );
+  args.push("-o", "NumberOfPasswordPrompts=1");
+  args.push("-o", "PreferredAuthentications=password,keyboard-interactive");
+  args.push(remote);
+  const askpass = createAskpassHandle(pw);
+  const env = { ...cleanEnv(), ...askpass.env };
+  try {
+    const result = await new Promise((resolve) => {
+      const child = node_child_process.spawn(sshBinary(), args, {
+        env,
+        windowsHide: true
+      });
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        child.kill("SIGKILL");
+        resolve({ stdout, stderr, exitCode: null, timedOut: true });
+      }, 45e3);
+      child.stdout.on("data", (d) => {
+        stdout += d.toString("utf8");
+      });
+      child.stderr.on("data", (d) => {
+        stderr += d.toString("utf8");
+      });
+      child.on("error", (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({
+          stdout,
+          stderr: stderr || err.message,
+          exitCode: 1
+        });
+      });
+      child.on("close", (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr, exitCode: code });
+      });
+    });
+    if (result.timedOut) {
+      return { ok: false, message: "timed_out" };
+    }
+    if (result.exitCode === 0) return { ok: true };
+    const detail = (result.stderr || result.stdout || "").trim();
+    return {
+      ok: false,
+      message: detail.slice(0, 400) || `exit_${result.exitCode ?? "null"}`
+    };
+  } finally {
+    askpass.cleanup();
+  }
+}
+function shellQuote(s) {
+  return `'${s.replace(/'/g, `'"'"'`)}'`;
+}
+function scpBinary() {
+  if (process.platform === "win32") return resolveWinClient("scp");
+  return "/usr/bin/scp";
+}
+function buildScpArgs(session) {
+  const args = ["-r"];
+  if (session.port) args.push("-P", String(session.port));
+  if (session.identityFile) args.push("-i", expandHome(session.identityFile));
+  if (session.proxyJump) args.push("-o", `ProxyJump=${session.proxyJump}`);
+  args.push("-o", "StrictHostKeyChecking=accept-new");
+  pushMuxOptions(args);
+  args.push("-o", "BatchMode=yes");
+  return args;
+}
+function rsyncBinary() {
+  if (process.platform === "win32") return "rsync";
+  for (const candidate of [
+    "/opt/homebrew/bin/rsync",
+    "/usr/local/bin/rsync",
+    "/usr/bin/rsync"
+  ]) {
+    if (node_fs.existsSync(candidate)) return candidate;
+  }
+  return "rsync";
+}
+let progress2Support = null;
+function rsyncSupportsProgress2(bin) {
+  var _a;
+  if (progress2Support != null) return progress2Support;
+  const probe = node_child_process.spawnSync(bin, ["--info=progress2"], {
+    encoding: "utf8",
+    timeout: 3e3
+  });
+  const err = `${probe.stderr || ""}${probe.stdout || ""}${((_a = probe.error) == null ? void 0 : _a.message) || ""}`;
+  progress2Support = !/unrecognized option|--info/i.test(err);
+  return progress2Support;
+}
+function buildRsyncShell(session) {
+  const parts = [sshBinary()];
+  if (session.port) parts.push("-p", String(session.port));
+  if (session.identityFile) parts.push("-i", expandHome(session.identityFile));
+  if (session.proxyJump) parts.push("-o", `ProxyJump=${session.proxyJump}`);
+  parts.push("-o", "StrictHostKeyChecking=accept-new");
+  pushMuxOptions(parts);
+  parts.push("-o", "BatchMode=yes");
+  return parts.map((p) => /\s/.test(p) ? `"${p.replace(/"/g, '\\"')}"` : p).join(" ");
+}
+function parseProgress2(chunk) {
+  const text = chunk.replace(/\r/g, "\n");
+  let best = null;
+  for (const line of text.split("\n")) {
+    const m = line.match(/([\d,]+)\s+(\d+)%/);
+    if (!m) continue;
+    best = {
+      transferred: Number(m[1].replace(/,/g, "")),
+      percent: Math.min(100, Number(m[2]))
+    };
+  }
+  return best;
+}
+function applyClassicProgress(state, chunk, total) {
+  const text = chunk.replace(/\r/g, "\n");
+  let latest = null;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    const prog = line.match(/^([\d,]+)\s+(\d+)%/);
+    if (prog) {
+      const fileBytes = Number(prog[1].replace(/,/g, ""));
+      const filePct = Math.min(100, Number(prog[2]));
+      const transferred = Math.min(
+        total || Number.POSITIVE_INFINITY,
+        state.currentFileStart + fileBytes
+      );
+      const percent = total > 0 ? Math.min(99, Math.round(transferred / total * 100)) : filePct;
+      latest = {
+        transferred: Number.isFinite(transferred) ? transferred : fileBytes,
+        total: total || fileBytes || 1,
+        percent,
+        currentName: state.currentName
+      };
+      if (filePct >= 100 || /\(xfer#\d+/i.test(line)) {
+        state.completedBytes = Math.max(
+          state.completedBytes,
+          state.currentFileStart + fileBytes
+        );
+        state.currentFileStart = state.completedBytes;
+      }
+      continue;
+    }
+    if (!line.includes("%") && !line.startsWith("rsync:") && !line.startsWith("building") && !line.startsWith("sent ") && !line.startsWith("total ") && !/^opening /i.test(line)) {
+      state.currentName = path.basename(line.replace(/\/$/, ""));
+      state.currentFileStart = state.completedBytes;
+    }
+  }
+  return latest;
+}
+async function totalLocalBytes(paths) {
+  let total = 0;
+  async function walk(p) {
+    let st;
+    try {
+      st = await promises.stat(p);
+    } catch {
+      return;
+    }
+    if (st.isFile()) {
+      total += st.size;
+      return;
+    }
+    if (!st.isDirectory()) return;
+    let entries;
+    try {
+      entries = await promises.readdir(p);
+    } catch {
+      return;
+    }
+    for (const name of entries) {
+      if (name === "." || name === "..") continue;
+      await walk(path.join(p, name));
+    }
+  }
+  for (const p of paths) await walk(p);
+  return total;
+}
+async function uploadFilesViaScp(session, localPaths, remoteDir, opts) {
+  const cleaned = localPaths.map((p) => p.trim()).filter(Boolean);
+  if (!cleaned.length) return { error: "No files" };
+  const timeoutMs = (opts == null ? void 0 : opts.timeoutMs) ?? 12e4;
+  const onProgress = opts == null ? void 0 : opts.onProgress;
+  const remote = remoteDir.trim() || "~";
+  const dest = `${session.user}@${session.host}:${remote.replace(/\/?$/, "/")}`;
+  const total = await totalLocalBytes(cleaned);
+  onProgress == null ? void 0 : onProgress({
+    transferred: 0,
+    total,
+    percent: 0,
+    currentName: path.basename(cleaned[0] || "")
+  });
+  const tryRsync = (progressMode) => new Promise((resolve) => {
+    const args = [
+      "-a",
+      ...progressMode === "progress2" ? ["--info=progress2"] : ["--progress"],
+      "-e",
+      buildRsyncShell(session),
+      ...cleaned,
+      dest
+    ];
+    const child = node_child_process.spawn(rsyncBinary(), args, { env: process.env });
+    let stderr = "";
+    let settled = false;
+    const classicState = {
+      completedBytes: 0,
+      currentFileStart: 0,
+      currentName: path.basename(cleaned[0] || "")
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGKILL");
+      resolve({ error: "Upload timed out" });
+    }, timeoutMs);
+    const onChunk = (d) => {
+      const text = d.toString("utf8");
+      stderr += text;
+      if (!onProgress) return;
+      if (progressMode === "progress2") {
+        const parsed = parseProgress2(text);
+        if (!parsed) return;
+        const transferred = parsed.transferred;
+        const percent = total > 0 ? Math.min(99, Math.round(transferred / total * 100)) : parsed.percent;
+        onProgress({
+          transferred: total > 0 ? Math.min(transferred, total) : transferred,
+          total: total || transferred || 1,
+          percent,
+          currentName: classicState.currentName
+        });
+        return;
+      }
+      const latest = applyClassicProgress(classicState, text, total);
+      if (latest) onProgress(latest);
+    };
+    child.stdout.on("data", onChunk);
+    child.stderr.on("data", onChunk);
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err.code === "ENOENT") resolve("missing");
+      else resolve({ error: err.message });
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code === 0) {
+        onProgress == null ? void 0 : onProgress({
+          transferred: total,
+          total: total || 1,
+          percent: 100
+        });
+        resolve({ ok: true });
+        return;
+      }
+      const errText = (stderr || `rsync exit ${code}`).trim();
+      if (progressMode === "progress2" && /unrecognized option|--info/i.test(errText)) {
+        resolve("unsupported");
+        return;
+      }
+      resolve({ error: errText.slice(0, 400) });
+    });
+  });
+  const bin = rsyncBinary();
+  const preferClassic = !rsyncSupportsProgress2(bin);
+  let rsyncResult = await tryRsync(preferClassic ? "classic" : "progress2");
+  if (rsyncResult === "unsupported") {
+    rsyncResult = await tryRsync("classic");
+  }
+  if (rsyncResult !== "missing" && rsyncResult !== "unsupported") {
+    return rsyncResult;
+  }
+  let doneBytes = 0;
+  for (const src of cleaned) {
+    let size = 0;
+    try {
+      size = await totalLocalBytes([src]);
+    } catch {
+      size = 0;
+    }
+    onProgress == null ? void 0 : onProgress({
+      transferred: doneBytes,
+      total: total || 1,
+      percent: total > 0 ? Math.min(99, Math.round(doneBytes / total * 100)) : 0,
+      currentName: path.basename(src)
+    });
+    const args = [...buildScpArgs(session), src, dest];
+    const one = await new Promise((resolve) => {
+      const child = node_child_process.spawn(scpBinary(), args, { env: process.env });
+      let stderr = "";
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        child.kill("SIGKILL");
+        resolve({ error: "Upload timed out" });
+      }, timeoutMs);
+      child.stderr.on("data", (d) => {
+        stderr += d.toString("utf8");
+      });
+      child.on("error", (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ error: err.message });
+      });
+      child.on("close", (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (code === 0) resolve({ ok: true });
+        else
+          resolve({
+            error: (stderr || `scp exit ${code}`).trim().slice(0, 400)
+          });
+      });
+    });
+    if ("error" in one) return one;
+    doneBytes += size;
+    onProgress == null ? void 0 : onProgress({
+      transferred: Math.min(doneBytes, total || doneBytes),
+      total: total || doneBytes || 1,
+      percent: total > 0 ? Math.min(100, Math.round(doneBytes / total * 100)) : 100,
+      currentName: path.basename(src)
+    });
+  }
+  return { ok: true };
+}
+async function downloadFilesViaScp(session, remotePaths, localDir, opts) {
+  const cleaned = remotePaths.map((p) => p.trim()).filter(Boolean);
+  if (!cleaned.length) return { error: "No files" };
+  const destDir = localDir.trim();
+  if (!destDir) return { error: "No destination" };
+  const timeoutMs = (opts == null ? void 0 : opts.timeoutMs) ?? 12e4;
+  const onProgress = opts == null ? void 0 : opts.onProgress;
+  const remotes = cleaned.map(
+    (p) => `${session.user}@${session.host}:${p}`
+  );
+  const dest = destDir.replace(/\/?$/, "/");
+  onProgress == null ? void 0 : onProgress({
+    transferred: 0,
+    total: cleaned.length,
+    percent: 0,
+    currentName: path.basename(cleaned[0] || "")
+  });
+  const tryRsync = (progressMode) => new Promise((resolve) => {
+    const args = [
+      "-a",
+      ...progressMode === "progress2" ? ["--info=progress2"] : ["--progress"],
+      "-e",
+      buildRsyncShell(session),
+      ...remotes,
+      dest
+    ];
+    const child = node_child_process.spawn(rsyncBinary(), args, { env: process.env });
+    let stderr = "";
+    let settled = false;
+    const classicState = {
+      completedBytes: 0,
+      currentFileStart: 0,
+      currentName: path.basename(cleaned[0] || "")
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGKILL");
+      resolve({ error: "Download timed out" });
+    }, timeoutMs);
+    const onChunk = (d) => {
+      const text = d.toString("utf8");
+      stderr += text;
+      if (!onProgress) return;
+      if (progressMode === "progress2") {
+        const parsed = parseProgress2(text);
+        if (!parsed) return;
+        onProgress({
+          transferred: parsed.transferred,
+          total: Math.max(parsed.transferred, 1),
+          percent: Math.min(99, parsed.percent),
+          currentName: classicState.currentName
+        });
+        return;
+      }
+      const latest = applyClassicProgress(classicState, text, 0);
+      if (latest) onProgress(latest);
+    };
+    child.stdout.on("data", onChunk);
+    child.stderr.on("data", onChunk);
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err.code === "ENOENT") resolve("missing");
+      else resolve({ error: err.message });
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code === 0) {
+        onProgress == null ? void 0 : onProgress({
+          transferred: cleaned.length,
+          total: cleaned.length,
+          percent: 100
+        });
+        resolve({ ok: true });
+        return;
+      }
+      const errText = (stderr || `rsync exit ${code}`).trim();
+      if (progressMode === "progress2" && /unrecognized option|--info/i.test(errText)) {
+        resolve("unsupported");
+        return;
+      }
+      resolve({ error: errText.slice(0, 400) });
+    });
+  });
+  const bin = rsyncBinary();
+  const preferClassic = !rsyncSupportsProgress2(bin);
+  let rsyncResult = await tryRsync(preferClassic ? "classic" : "progress2");
+  if (rsyncResult === "unsupported") {
+    rsyncResult = await tryRsync("classic");
+  }
+  if (rsyncResult !== "missing" && rsyncResult !== "unsupported") {
+    return rsyncResult;
+  }
+  let done = 0;
+  for (const remote of remotes) {
+    const name = path.basename(cleaned[done] || remote);
+    onProgress == null ? void 0 : onProgress({
+      transferred: done,
+      total: cleaned.length,
+      percent: cleaned.length > 0 ? Math.min(99, Math.round(done / cleaned.length * 100)) : 0,
+      currentName: name
+    });
+    const args = [...buildScpArgs(session), remote, dest];
+    const one = await new Promise((resolve) => {
+      const child = node_child_process.spawn(scpBinary(), args, { env: process.env });
+      let stderr = "";
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        child.kill("SIGKILL");
+        resolve({ error: "Download timed out" });
+      }, timeoutMs);
+      child.stderr.on("data", (d) => {
+        stderr += d.toString("utf8");
+      });
+      child.on("error", (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ error: err.message });
+      });
+      child.on("close", (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (code === 0) resolve({ ok: true });
+        else
+          resolve({
+            error: (stderr || `scp exit ${code}`).trim().slice(0, 400)
+          });
+      });
+    });
+    if ("error" in one) return one;
+    done += 1;
+    onProgress == null ? void 0 : onProgress({
+      transferred: done,
+      total: cleaned.length,
+      percent: cleaned.length > 0 ? Math.min(100, Math.round(done / cleaned.length * 100)) : 100,
+      currentName: name
+    });
+  }
+  return { ok: true };
+}
+function runSshExec(session, command, cwd, timeoutMs = 6e4) {
+  const remote = `cd ${shellQuote(cwd)} 2>/dev/null; ${command}`;
+  const base = buildSshArgs(
+    { ...session },
+    { tty: false, batch: true }
+  );
+  base.push(remote);
+  return new Promise((resolve) => {
+    const child = node_child_process.spawn(sshBinary(), base, {
+      env: process.env
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGKILL");
+      resolve({ stdout, stderr, exitCode: null, timedOut: true });
+    }, timeoutMs);
+    child.stdout.on("data", (d) => {
+      stdout += d.toString("utf8");
+    });
+    child.stderr.on("data", (d) => {
+      stderr += d.toString("utf8");
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ stdout, stderr, exitCode: code });
+    });
+  });
+}
+function isAborted(signal) {
+  return Boolean(signal == null ? void 0 : signal.aborted);
+}
+const DEFAULT_MODEL = "composer-2.5";
+async function listModels(apiKey) {
+  if (!apiKey.trim()) return fallbackModels();
+  try {
+    const { Cursor } = await import("@cursor/sdk");
+    const models = await Cursor.models.list({ apiKey });
+    return models.map((m) => ({
+      id: m.id,
+      displayName: m.displayName || m.id,
+      description: m.description
+    }));
+  } catch {
+    return fallbackModels();
+  }
+}
+function fallbackModels() {
+  return [
+    { id: "auto", displayName: "Auto" },
+    { id: DEFAULT_MODEL, displayName: "Composer 2.5" }
+  ];
+}
+async function* sendAgent(input) {
+  if (isAborted(input.signal)) {
+    yield { type: "status", status: "cancelled", detail: "Stopped" };
+    return;
+  }
+  yield { type: "status", status: "running" };
+  if (!input.apiKey.trim()) {
+    yield {
+      type: "status",
+      status: "error",
+      detail: "Cursor API key is not set. Open Settings and paste your key."
+    };
+    return;
+  }
+  try {
+    const sdk = await import("@cursor/sdk").catch(() => null);
+    if (sdk == null ? void 0 : sdk.Agent) {
+      yield* runWithCursorSdk(sdk, input);
+      return;
+    }
+  } catch (err) {
+    if (isAborted(input.signal) || err instanceof Error && err.name === "AbortError") {
+      yield { type: "status", status: "cancelled", detail: "Stopped" };
+      return;
+    }
+    yield {
+      type: "text",
+      text: `Cursor SDK call failed: ${err instanceof Error ? err.message : String(err)}
 Falling back to local proposer.
-`}}if(B(t.signal)){yield{type:"status",status:"cancelled",detail:"Stopped"};return}yield*vr(t)}function xr(t){var o,a;const e=t.chatMode??"agent",r=e==="ask"?["Mode: Ask.","Answer questions only. Explain and advise.","Do NOT propose shell commands to run. Do NOT use propose blocks."]:e==="plan"?["Mode: Plan.","Produce a clear numbered plan (3–8 steps) for the request.","Do NOT run or propose executable shell commands. Do NOT use propose blocks.","Optionally end with a short ```plan block listing one step per line."]:["Mode: Agent.","If you need a shell command run on the user's active host, reply with a single fenced block:","```propose","summary: short reason","command: exact shell command","```","To split work into parallel subagent prompt cards on the Drift board, emit one or more:","```spawn","title: short card title","task: full instructions for the subagent","```","Use spawn when the user asks to divide work, run parallel checks, or hand off a subtask.","Do not spawn from inside a subagent task unless the user explicitly asks.","Otherwise answer briefly in plain text."];return["You are assisting inside Drift, a terminal app.",(t.locale==="en"?"en":"ko")==="ko"?"Respond in Korean (한국어). Keep shell commands and code in their original form.":"Respond in English. Keep shell commands and code in their original form.",...r,`Active target: ${JSON.stringify(t.target)}`,(o=t.context)!=null&&o.notes?`Context notes: ${t.context.notes}`:"",(a=t.context)!=null&&a.terminalTail?`Recent terminal output (scrollback tail):
+`
+    };
+  }
+  if (isAborted(input.signal)) {
+    yield { type: "status", status: "cancelled", detail: "Stopped" };
+    return;
+  }
+  yield* runLocalProposer(input);
+}
+function buildPrompt(input) {
+  var _a, _b;
+  const mode = input.chatMode ?? "agent";
+  const modeBlock = mode === "ask" ? [
+    "Mode: Ask.",
+    "Answer questions only. Explain and advise.",
+    "Do NOT propose shell commands to run. Do NOT use propose blocks."
+  ] : mode === "plan" ? [
+    "Mode: Plan.",
+    "Produce a clear numbered plan (3–8 steps) for the request.",
+    "Do NOT run or propose executable shell commands. Do NOT use propose blocks.",
+    "Optionally end with a short ```plan block listing one step per line."
+  ] : [
+    "Mode: Agent.",
+    "If you need a shell command run on the user's active host, reply with a single fenced block:",
+    "```propose",
+    "summary: short reason",
+    "command: exact shell command",
+    "```",
+    "To split work into parallel subagent prompt cards on the Drift board, emit one or more:",
+    "```spawn",
+    "title: short card title",
+    "task: full instructions for the subagent",
+    "```",
+    "Use spawn when the user asks to divide work, run parallel checks, or hand off a subtask.",
+    "Do not spawn from inside a subagent task unless the user explicitly asks.",
+    "Otherwise answer briefly in plain text."
+  ];
+  const locale = input.locale === "en" ? "en" : "ko";
+  const languageLine = locale === "ko" ? "Respond in Korean (한국어). Keep shell commands and code in their original form." : "Respond in English. Keep shell commands and code in their original form.";
+  return [
+    "You are assisting inside Drift, a terminal app.",
+    languageLine,
+    ...modeBlock,
+    `Active target: ${JSON.stringify(input.target)}`,
+    ((_a = input.context) == null ? void 0 : _a.notes) ? `Context notes: ${input.context.notes}` : "",
+    ((_b = input.context) == null ? void 0 : _b.terminalTail) ? `Recent terminal output (scrollback tail):
 \`\`\`
-${t.context.terminalTail}
-\`\`\``:"","",`User: ${t.message}`].filter(Boolean).join(`
-`)}function Cr(t){const e=t.match(/```plan\s*([\s\S]*?)```/i),n=((e==null?void 0:e[1])??t).split(/\r?\n/).map(o=>o.replace(/^\s*(?:\d+[.)]\s+|[-*]\s+)/,"").trim()).filter(o=>o.length>0&&o.length<200);if(e&&n.length>=2)return n.slice(0,10);const s=t.split(/\r?\n/).map(o=>{var a,i;return(i=(a=o.match(/^\s*\d+[.)]\s+(.+)$/))==null?void 0:a[1])==null?void 0:i.trim()}).filter(o=>!!o);return s.length>=2?s.slice(0,10):null}async function*Pr(t,e){var c,f,m,p,k;const r=e.target.kind==="local"&&e.target.cwd.startsWith("/")?e.target.cwd:process.cwd(),n=((c=e.modelId)==null?void 0:c.trim())||Mt,s=e.chatMode??"agent",o=xr(e);if(B(e.signal)){yield{type:"status",status:"cancelled",detail:"Stopped"};return}const a=await t.Agent.create({apiKey:e.apiKey,model:{id:n},mode:s==="plan"?"plan":"agent",local:{cwd:r}});let i=null;const d=()=>{i&&i.cancel().catch(()=>{})};try{if(B(e.signal)){yield{type:"status",status:"cancelled",detail:"Stopped"};return}if(i=await a.send(o),(f=e.signal)==null||f.addEventListener("abort",d,{once:!0}),B(e.signal)){d(),yield{type:"status",status:"cancelled",detail:"Stopped"};return}let y="",h,M=0,T=0,x=0,$=0,v=0;const R=()=>{const w=[];return T>0&&w.push(`${T} tools`),x>0&&w.push(`${x} searches`),$>0&&w.push(`${$} edits`),v>0&&w.push(`${v} commands`),w.length?w.join(" · "):void 0};yield{type:"progress",phase:"status",title:"Working",detail:"Starting…"};for await(const w of i.stream()){if(B(e.signal))break;if(w.type==="thinking"&&(yield{type:"progress",phase:"thinking",title:"Thinking",detail:w.text.trim().replace(/\s+/g," ").slice(0,140)||void 0,summary:R(),done:!!w.thinking_duration_ms}),w.type==="task"&&(w.text||w.status)&&(yield{type:"progress",phase:"task",title:((m=w.status)==null?void 0:m.trim())||"Working",detail:((p=w.text)==null?void 0:p.trim().slice(0,160))||void 0,summary:R()}),w.type==="tool_call"){w.status==="running"&&(M+=1),(w.status==="completed"||w.status==="error")&&(T+=1);const S=Ke(w.name);w.status==="running"&&(S==="search"&&(x+=1),S==="edit"&&($+=1),S==="command"&&(v+=1)),yield{type:"progress",phase:"tool",title:qe(S,w.name,w.status),detail:Ve(w.args)||w.name,summary:R(),done:w.status!=="running"}}if(w.type==="status"&&w.message&&(yield{type:"progress",phase:"status",title:w.status.toLowerCase(),detail:w.message.slice(0,160),summary:R()}),w.type==="assistant"){for(const S of w.message.content)if(S.type==="text"&&"text"in S&&(y||(yield{type:"progress",phase:"replying",title:"Replying",summary:R()}),y+=S.text,yield{type:"text",text:S.text}),S.type==="tool_use"){const z=Ke(S.name);yield{type:"progress",phase:"tool",title:qe(z,S.name,"running"),detail:Ve(S.input)||S.name,summary:R()}}}if(w.type==="usage"){const S=ue(w.usage);S&&(h=S,yield{type:"usage",usage:S,modelId:n})}}if(B(e.signal)||i.status==="cancelled"){yield{type:"status",status:"cancelled",detail:"Stopped"};return}const _=await i.wait();if(B(e.signal)||_.status==="cancelled"){yield{type:"status",status:"cancelled",detail:"Stopped"};return}const O=ue(_.usage??i.usage??h);let C;try{const w=await a.getUsage();if(w.usage){!O&&w.usage&&(h=ue(w.usage)),w.cost&&(C={rawCostCents:w.cost.rawCostCents,chargedCents:w.cost.chargedCents});const S=w.runs.at(-1);S!=null&&S.cost&&(C={rawCostCents:S.cost.rawCostCents,chargedCents:S.cost.chargedCents}),S!=null&&S.usage&&(h=ue(S.usage))}}catch{}const I=O??h;if(I&&(yield{type:"usage",usage:I,cost:C,modelId:n}),s==="plan"){const w=Cr(y);w&&(yield{type:"plan",steps:w})}else if(s==="agent"){const w=Er(y);for(const z of w){if(B(e.signal)){yield{type:"status",status:"cancelled",detail:"Stopped"};return}yield{type:"spawn",title:z.title,task:z.task}}const S=Tr(y,e.target);if(S){if(B(e.signal)){yield{type:"status",status:"cancelled",detail:"Stopped"};return}yield{type:"status",status:"waiting-approval"},yield{type:"propose",action:S}}}yield{type:"status",status:"done"}}finally{(k=e.signal)==null||k.removeEventListener("abort",d),a.close()}}function ue(t){if(t)return{inputTokens:t.inputTokens??0,outputTokens:t.outputTokens??0,cacheReadTokens:t.cacheReadTokens??0,cacheWriteTokens:t.cacheWriteTokens??0,totalTokens:t.totalTokens??0,reasoningTokens:t.reasoningTokens}}async function*vr(t){if(B(t.signal)){yield{type:"status",status:"cancelled",detail:"Stopped"};return}const e=t.chatMode??"agent";if(e==="ask"){yield{type:"text",text:`Ask mode (local fallback): I can only answer in text here. Set a Cursor API key for full Ask replies.
-`},yield{type:"status",status:"done"};return}if(e==="plan"){yield{type:"text",text:`Plan mode (local fallback):
-1. Inspect current shell context
-2. Identify the failing step
-3. Propose a minimal fix
-4. Verify with a read-only check
-`},yield{type:"plan",steps:["Inspect current shell context","Identify the failing step","Propose a minimal fix","Verify with a read-only check"]},yield{type:"status",status:"done"};return}yield{type:"text",text:`Local proposer (SDK unavailable). Suggesting a safe read-only command.
-`};const r=$r(t.message),n={id:F(),target:t.target,effect:_e(r),summary:`Investigate: ${t.message.slice(0,80)}`,command:r,reason:"local fallback proposer"};yield{type:"status",status:"waiting-approval"},yield{type:"propose",action:n},yield{type:"status",status:"done"}}function Tr(t,e){var a,i,d,c;const r=t.match(/```propose\s*([\s\S]*?)```/i);if(!r)return null;const n=r[1],s=((i=(a=n.match(/summary:\s*(.+)/i))==null?void 0:a[1])==null?void 0:i.trim())||"Proposed command",o=(c=(d=n.match(/command:\s*(.+)/i))==null?void 0:d[1])==null?void 0:c.trim();return o?{id:F(),target:e,effect:_e(o),summary:s,command:o}:null}function Er(t){var s,o,a,i,d;const e=[],r=/```spawn\s*([\s\S]*?)```/gi;let n;for(;(n=r.exec(t))!=null;){const c=n[1]??"",f=((o=(s=c.match(/title:\s*(.+)/i))==null?void 0:s[1])==null?void 0:o.trim())||((i=(a=c.match(/summary:\s*(.+)/i))==null?void 0:a[1])==null?void 0:i.trim())||"Subagent",m=c.match(/task:\s*([\s\S]+)/i);let p=((d=m==null?void 0:m[1])==null?void 0:d.trim())||"";p=p.replace(/\n(?:title|summary|command)\s*:[\s\S]*$/i,"").trim(),p&&e.push({title:f.slice(0,80),task:p})}return e}function $r(t){const e=t.toLowerCase();return e.includes("port")?"lsof -nP -iTCP -sTCP:LISTEN | head -n 40":e.includes("disk")?"df -h":e.includes("process")||e.includes("cpu")?"ps aux | head -n 30":e.includes("git")?"git status -sb":"pwd && ls -la"}function Ke(t){const e=t.toLowerCase();return e.includes("grep")||e.includes("search")||e.includes("find")||e.includes("glob")?"search":e.includes("edit")||e.includes("write")||e.includes("apply")||e.includes("patch")||e.includes("strreplace")?"edit":e.includes("shell")||e.includes("bash")||e.includes("exec")||e.includes("terminal")||e.includes("command")?"command":e.includes("read")||e.includes("cat")||e.includes("open")?"read":"other"}function qe(t,e,r){const n=r==="running";switch(t){case"search":return n?"Searching":"Searched";case"edit":return n?"Editing":"Edited";case"command":return n?"Running command":"Ran command";case"read":return n?"Reading":"Read";default:return n?e:`${e} done`}}function Ve(t){if(!t||typeof t!="object")return;const e=t;for(const r of["command","cmd","query","pattern","path","file_path","filePath","target_file","relative_workspace_path"]){const n=e[r];if(typeof n=="string"&&n.trim())return n.trim().slice(0,140)}}function _r(){if(process.platform==="darwin")return u.join(N.homedir(),"Library/Application Support/Cursor/User/globalStorage/state.vscdb");if(process.platform==="win32"){const t=process.env.APPDATA;return t?u.join(t,"Cursor/User/globalStorage/state.vscdb"):null}return u.join(N.homedir(),".config/Cursor/User/globalStorage/state.vscdb")}async function Ar(t,e){try{const r=await import("node:sqlite"),n=new r.DatabaseSync(t,{readOnly:!0});try{const s=n.prepare("SELECT value FROM ItemTable WHERE key = ?").get(e),o=s==null?void 0:s.value;return typeof o=="string"&&o.trim()?o.trim():o!=null&&typeof o!="string"&&String(o).trim()||null}finally{n.close()}}catch{return null}}function Nr(t,e){return new Promise(r=>{const n=`SELECT value FROM ItemTable WHERE key = '${e.replace(/'/g,"''")}';`,s=L.spawn("sqlite3",[t,n],{env:process.env,windowsHide:!0});let o="";s.stdout.on("data",a=>{o+=a.toString("utf8")}),s.on("error",()=>r(null)),s.on("close",a=>{if(a!==0){r(null);return}const i=o.trim();r(i||null)})})}async function Rr(t,e){if(!P.existsSync(t))return null;const r=await Ar(t,e);return r??Nr(t,e)}async function Ir(){const t=_r();return t?Rr(t,"cursorAuth/accessToken"):null}function X(t){return typeof t=="number"&&Number.isFinite(t)?t:typeof t=="string"&&t.trim()&&Number.isFinite(Number(t))?Number(t):null}function Je(t){const e=X(t);return e!=null&&e>0?new Date(e).toISOString():typeof t=="string"&&t.includes("T")?t:null}function Ge(t){var i,d,c;const e=t.planUsage??((i=t.individualUsage)==null?void 0:i.plan)??null,r=X(e==null?void 0:e.apiPercentUsed),n=X(e==null?void 0:e.totalPercentUsed),s=n??r??(()=>{const f=X(e==null?void 0:e.used),m=X(e==null?void 0:e.limit);if(f!=null&&m!=null&&m>0)return f/m*100;const p=X(e==null?void 0:e.remaining);return p!=null&&m!=null&&m>0?(m-p)/m*100:null})();if(s==null||!Number.isFinite(s))return null;const o=Math.max(0,Math.min(100,Math.round(100-s))),a=typeof t.membershipType=="string"&&t.membershipType||typeof((d=t.planInfo)==null?void 0:d.planName)=="string"&&t.planInfo.planName||null;return{usedPercent:Math.max(0,s),remainingPercent:o,apiPercentUsed:r,totalPercentUsed:n,membershipType:a,resetAt:Je(t.billingCycleEnd)||Je((c=t.planInfo)==null?void 0:c.billingCycleEnd),displayMessage:typeof t.displayMessage=="string"&&t.displayMessage||typeof t.namedModelSelectedDisplayMessage=="string"&&t.namedModelSelectedDisplayMessage||null}}async function Ze(t,e){try{const r=await fetch(t,e);if(!r.ok)return null;const n=await r.json();return!n||typeof n!="object"?null:n}catch{return null}}async function Or(t){const e=await Ze("https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",{method:"POST",headers:{Authorization:`Bearer ${t}`,"Content-Type":"application/json","Connect-Protocol-Version":"1"},body:"{}"});if(e){const n=Ge(e);if(n)return n}const r=await Ze("https://cursor.com/api/usage-summary",{method:"GET",headers:{Authorization:`Bearer ${t}`,Accept:"application/json"}});if(r){const n=Ge(r);if(n)return n}return null}async function Dr(t){const e=[],r=t==null?void 0:t.trim();r&&e.push(r);const n=await Ir();n&&!e.includes(n)&&e.push(n);for(const s of e){const o=await Or(s);if(o)return o}return null}function Oe(){return u.join(l.app.getPath("userData"),"drift","meetings")}function V(t){return u.join(Oe(),t)}async function xt(){await b.mkdir(Oe(),{recursive:!0})}async function Ct(t){try{return JSON.parse(await b.readFile(t,"utf8"))}catch{return null}}async function K(t,e){await b.writeFile(t,e,"utf8")}async function Se(t){try{return await b.readFile(t,"utf8")}catch{return""}}function Fr(t=new Date){const e=r=>String(r).padStart(2,"0");return`Meeting ${t.getFullYear()}-${e(t.getMonth()+1)}-${e(t.getDate())} ${e(t.getHours())}:${e(t.getMinutes())}`}async function De(t){const e=V(t.id),r={...t,hasAudio:!1,hasTranscript:!1,hasNotes:!1,hasSummary:!1};try{const n=await b.readdir(e);r.hasAudio=n.includes("audio.webm"),r.hasTranscript=n.includes("transcript.txt"),r.hasNotes=n.includes("notes.md"),r.hasSummary=n.includes("summary.md")}catch{}return r}async function Lr(){await xt();const t=await b.readdir(Oe()).catch(()=>[]),e=[];for(const r of t){const n=await Ct(u.join(V(r),"meta.json"));n&&e.push(await De(n))}return e.sort((r,n)=>{const s=n.updatedAt.localeCompare(r.updatedAt);return s!==0?s:n.createdAt.localeCompare(r.createdAt)}),e}async function jr(t){await xt();const e=F(),r=new Date().toISOString(),n=V(e);await b.mkdir(n,{recursive:!0});const s={id:e,title:(t==null?void 0:t.trim())||Fr(),createdAt:r,updatedAt:r,durationMs:0,status:"idle",hasAudio:!1,hasTranscript:!1,hasNotes:!1,hasSummary:!1};return await K(u.join(n,"meta.json"),JSON.stringify(s,null,2)),await K(u.join(n,"transcript.txt"),""),await K(u.join(n,"notes.md"),""),await K(u.join(n,"summary.md"),""),{meta:s,transcript:"",notes:"",summary:"",audioPath:null}}async function te(t){const e=V(t),r=await Ct(u.join(e,"meta.json"));if(!r)return null;const n=await De(r);return{meta:n,transcript:await Se(u.join(e,"transcript.txt")),notes:await Se(u.join(e,"notes.md")),summary:await Se(u.join(e,"summary.md")),audioPath:n.hasAudio?u.join(e,"audio.webm"):null}}async function Te(t,e){var a;const r=await te(t);if(!r)return null;const n=V(t),s={...r.meta,title:((a=e.title)==null?void 0:a.trim())||r.meta.title,durationMs:e.durationMs!=null?e.durationMs:r.meta.durationMs,status:e.status??r.meta.status,updatedAt:new Date().toISOString()};e.transcript!=null&&await K(u.join(n,"transcript.txt"),e.transcript),e.notes!=null&&await K(u.join(n,"notes.md"),e.notes),e.summary!=null&&await K(u.join(n,"summary.md"),e.summary);const o=await De(s);return await K(u.join(n,"meta.json"),JSON.stringify(o,null,2)),te(t)}async function Br(t,e){if(!await te(t))return null;const n=V(t);return await b.writeFile(u.join(n,"audio.webm"),Buffer.from(e)),Te(t,{status:"done"})}async function Ur(t){return await b.rm(V(t),{recursive:!0,force:!0}),{ok:!0}}async function Hr(t,e){const r=await te(t);if(!r)return{ok:!1,error:"Meeting not found"};const n=r.meta.title.replace(/[\\/:*?"<>|]+/g,"-").trim().slice(0,80),s=e?await l.dialog.showSaveDialog(e,{title:"Export meeting",defaultPath:n||`meeting-${t.slice(0,8)}`,buttonLabel:"Export",properties:["createDirectory","showOverwriteConfirmation"]}):await l.dialog.showSaveDialog({title:"Export meeting",defaultPath:n||`meeting-${t.slice(0,8)}`,buttonLabel:"Export",properties:["createDirectory","showOverwriteConfirmation"]});if(s.canceled||!s.filePath)return{ok:!1,canceled:!0};const o=s.filePath;await b.mkdir(o,{recursive:!0});const a=V(t),i=[["meta.json","meta.json"],["transcript.txt","transcript.txt"],["notes.md","notes.md"],["summary.md","summary.md"]];r.meta.hasAudio&&i.push(["audio.webm","audio.webm"]);for(const[c,f]of i)try{await b.copyFile(u.join(a,c),u.join(o,f))}catch{}const d=[`# ${r.meta.title}`,"",`Created: ${r.meta.createdAt}`,`Duration: ${Math.round(r.meta.durationMs/1e3)}s`,"","## Summary","",r.summary.trim()||"_(no summary)_","","## Notes","",r.notes.trim()||"_(no notes)_","","## Transcript","",r.transcript.trim()||"_(no transcript)_",""].join(`
-`);return await K(u.join(o,"meeting.md"),d),{ok:!0,path:o}}const Wr=4e3,zr=14400*1e3,Kr="doob9p",qr="drift-app";let Ye=!1,me=null,pe=null,he=null;function Fe(){return u.join(l.app.getPath("userData"),"drift","update-dismissed.json")}function Vr(){try{const t=Fe();return P.existsSync(t)?JSON.parse(P.readFileSync(t,"utf8")):{}}catch{return{}}}function Jr(t){const e=Fe();P.mkdirSync(u.dirname(e),{recursive:!0}),P.writeFileSync(e,JSON.stringify({version:t}),"utf8")}function Gr(t){const e=[];if(typeof t=="string")e.push(t);else if(Array.isArray(t)){for(const s of t)if(typeof s=="string")e.push(s);else if(s&&typeof s=="object"&&"note"in s){const o=s.note;typeof o=="string"&&e.push(o)}}const r=e.join(`
-`).trim();return r&&r.replace(/<\s*br\s*\/?\s*>/gi,`
-`).replace(/<\/\s*p\s*>/gi,`
-`).replace(/<\/\s*div\s*>/gi,`
-`).replace(/<[^>]+>/g,"").replace(/&nbsp;/gi," ").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&amp;/g,"&").replace(/[ \t]+\n/g,`
-`).replace(/\n{3,}/g,`
-
-`).split(`
-`).filter(s=>!/^\s*Co-authored-by:/i.test(s)).join(`
-`).trim()||null}function Pt(){const t=Fe();P.mkdirSync(u.dirname(t),{recursive:!0}),P.writeFileSync(t,JSON.stringify({}),"utf8")}function J(t,e,r){!t||t.isDestroyed()||t.webContents.send(e,r)}function Zr(){return u.resolve(process.execPath,"../../..")}function Yr(t){const r=(t.files??[]).find(s=>/\.zip$/i.test(s.url))??(/\.zip$/i.test(t.path??"")?{url:t.path,sha512:t.sha512,size:void 0}:void 0);if(!(r!=null&&r.url)||!r.sha512)throw new Error("No macOS zip asset found in update feed");return{fileName:u.basename(r.url),sha512:r.sha512,size:r.size}}function Xr(t,e){return`https://github.com/${Kr}/${qr}/releases/download/v${t}/${e}`}async function Qr(t){const e=$e.createHash("sha512"),{createReadStream:r}=await import("node:fs");return await Ee.pipeline(r(t),e),e.digest("base64")}async function en(t,e,r){const n=await fetch(t,{redirect:"follow"});if(!n.ok||!n.body)throw new Error(`Download failed (${n.status})`);const s=Number(n.headers.get("content-length")||0);let o=0,a=Date.now(),i=0;await b.mkdir(u.dirname(e),{recursive:!0});const d=`${e}.partial`,c=Jt.Readable.fromWeb(n.body);c.on("data",f=>{o+=f.length;const m=Date.now(),p=Math.max(1,m-a),k=(o-i)*1e3/p;(m-a>=200||o===s)&&(a=m,i=o,r({percent:s>0?o/s*100:0,bytesPerSecond:k,transferred:o,total:s}))}),await Ee.pipeline(c,P.createWriteStream(d)),P.renameSync(d,e)}async function tn(t){if(!pe)throw new Error("No pending update");const e=pe.version,{fileName:r,sha512:n}=Yr(pe),s=Xr(e,r),o=u.join(l.app.getPath("temp"),"drift-updates",`Drift-${e}-mac-arm64.zip`);if(P.existsSync(o)&&P.rmSync(o,{force:!0}),await en(s,o,i=>{J(t(),"updater:progress",i)}),await Qr(o)!==n)throw P.rmSync(o,{force:!0}),new Error("Update archive checksum mismatch");he=o,me=e,Pt(),J(t(),"updater:downloaded",{version:e,currentVersion:l.app.getVersion()})}async function rn(){if(!he||!P.existsSync(he))throw new Error("Update archive missing — download again");const t=Zr();if(!t.endsWith(".app")||!P.existsSync(t))throw new Error(`Cannot locate Drift.app (${t})`);const e=await b.mkdtemp(u.join(N.tmpdir(),"drift-install-")),r=u.join(e,"install.sh"),n=u.join(l.app.getPath("logs"),"drift-update.log"),s=`#!/bin/bash
+${input.context.terminalTail}
+\`\`\`` : "",
+    "",
+    `User: ${input.message}`
+  ].filter(Boolean).join("\n");
+}
+function extractPlanSteps(text) {
+  const fenced = text.match(/```plan\s*([\s\S]*?)```/i);
+  const body = (fenced == null ? void 0 : fenced[1]) ?? text;
+  const lines = body.split(/\r?\n/).map((l) => l.replace(/^\s*(?:\d+[.)]\s+|[-*]\s+)/, "").trim()).filter((l) => l.length > 0 && l.length < 200);
+  if (fenced && lines.length >= 2) return lines.slice(0, 10);
+  const numbered = text.split(/\r?\n/).map((l) => {
+    var _a, _b;
+    return (_b = (_a = l.match(/^\s*\d+[.)]\s+(.+)$/)) == null ? void 0 : _a[1]) == null ? void 0 : _b.trim();
+  }).filter((x) => Boolean(x));
+  return numbered.length >= 2 ? numbered.slice(0, 10) : null;
+}
+async function* runWithCursorSdk(sdk, input) {
+  var _a, _b, _c, _d, _e;
+  const cwd = input.target.kind === "local" && input.target.cwd.startsWith("/") ? input.target.cwd : process.cwd();
+  const modelId = ((_a = input.modelId) == null ? void 0 : _a.trim()) || DEFAULT_MODEL;
+  const chatMode = input.chatMode ?? "agent";
+  const prompt = buildPrompt(input);
+  if (isAborted(input.signal)) {
+    yield { type: "status", status: "cancelled", detail: "Stopped" };
+    return;
+  }
+  const agent = await sdk.Agent.create({
+    apiKey: input.apiKey,
+    model: { id: modelId },
+    mode: chatMode === "plan" ? "plan" : "agent",
+    local: { cwd }
+  });
+  let run = null;
+  const cancelRun = () => {
+    if (!run) return;
+    void run.cancel().catch(() => {
+    });
+  };
+  try {
+    if (isAborted(input.signal)) {
+      yield { type: "status", status: "cancelled", detail: "Stopped" };
+      return;
+    }
+    run = await agent.send(prompt);
+    (_b = input.signal) == null ? void 0 : _b.addEventListener("abort", cancelRun, { once: true });
+    if (isAborted(input.signal)) {
+      cancelRun();
+      yield { type: "status", status: "cancelled", detail: "Stopped" };
+      return;
+    }
+    let text = "";
+    let lastUsage;
+    let toolRuns = 0;
+    let toolDone = 0;
+    let searches = 0;
+    let edits = 0;
+    let commands = 0;
+    const summaryLine = () => {
+      const bits = [];
+      if (toolDone > 0) bits.push(`${toolDone} tools`);
+      if (searches > 0) bits.push(`${searches} searches`);
+      if (edits > 0) bits.push(`${edits} edits`);
+      if (commands > 0) bits.push(`${commands} commands`);
+      return bits.length ? bits.join(" · ") : void 0;
+    };
+    yield {
+      type: "progress",
+      phase: "status",
+      title: "Working",
+      detail: "Starting…"
+    };
+    for await (const event of run.stream()) {
+      if (isAborted(input.signal)) break;
+      if (event.type === "thinking") {
+        const snippet = event.text.trim().replace(/\s+/g, " ").slice(0, 140);
+        yield {
+          type: "progress",
+          phase: "thinking",
+          title: "Thinking",
+          detail: snippet || void 0,
+          summary: summaryLine(),
+          done: Boolean(event.thinking_duration_ms)
+        };
+      }
+      if (event.type === "task" && (event.text || event.status)) {
+        yield {
+          type: "progress",
+          phase: "task",
+          title: ((_c = event.status) == null ? void 0 : _c.trim()) || "Working",
+          detail: ((_d = event.text) == null ? void 0 : _d.trim().slice(0, 160)) || void 0,
+          summary: summaryLine()
+        };
+      }
+      if (event.type === "tool_call") {
+        if (event.status === "running") toolRuns += 1;
+        if (event.status === "completed" || event.status === "error") {
+          toolDone += 1;
+        }
+        const kind = classifyToolName(event.name);
+        if (event.status === "running") {
+          if (kind === "search") searches += 1;
+          if (kind === "edit") edits += 1;
+          if (kind === "command") commands += 1;
+        }
+        yield {
+          type: "progress",
+          phase: "tool",
+          title: toolTitle(kind, event.name, event.status),
+          detail: toolDetail(event.args) || event.name,
+          summary: summaryLine(),
+          done: event.status !== "running"
+        };
+      }
+      if (event.type === "status" && event.message) {
+        yield {
+          type: "progress",
+          phase: "status",
+          title: event.status.toLowerCase(),
+          detail: event.message.slice(0, 160),
+          summary: summaryLine()
+        };
+      }
+      if (event.type === "assistant") {
+        for (const block of event.message.content) {
+          if (block.type === "text" && "text" in block) {
+            if (!text) {
+              yield {
+                type: "progress",
+                phase: "replying",
+                title: "Replying",
+                summary: summaryLine()
+              };
+            }
+            text += block.text;
+            yield { type: "text", text: block.text };
+          }
+          if (block.type === "tool_use") {
+            const kind = classifyToolName(block.name);
+            yield {
+              type: "progress",
+              phase: "tool",
+              title: toolTitle(kind, block.name, "running"),
+              detail: toolDetail(block.input) || block.name,
+              summary: summaryLine()
+            };
+          }
+        }
+      }
+      if (event.type === "usage") {
+        const usage2 = normalizeUsage$1(event.usage);
+        if (usage2) {
+          lastUsage = usage2;
+          yield { type: "usage", usage: usage2, modelId };
+        }
+      }
+    }
+    if (isAborted(input.signal) || run.status === "cancelled") {
+      yield { type: "status", status: "cancelled", detail: "Stopped" };
+      return;
+    }
+    const result = await run.wait();
+    if (isAborted(input.signal) || result.status === "cancelled") {
+      yield { type: "status", status: "cancelled", detail: "Stopped" };
+      return;
+    }
+    const usageFromResult = normalizeUsage$1(result.usage ?? run.usage ?? lastUsage);
+    let cost;
+    try {
+      const billed = await agent.getUsage();
+      if (billed.usage) {
+        if (!usageFromResult && billed.usage) {
+          lastUsage = normalizeUsage$1(billed.usage);
+        }
+        if (billed.cost) {
+          cost = {
+            rawCostCents: billed.cost.rawCostCents,
+            chargedCents: billed.cost.chargedCents
+          };
+        }
+        const latest = billed.runs.at(-1);
+        if (latest == null ? void 0 : latest.cost) {
+          cost = {
+            rawCostCents: latest.cost.rawCostCents,
+            chargedCents: latest.cost.chargedCents
+          };
+        }
+        if (latest == null ? void 0 : latest.usage) {
+          lastUsage = normalizeUsage$1(latest.usage);
+        }
+      }
+    } catch {
+    }
+    const usage = usageFromResult ?? lastUsage;
+    if (usage) {
+      yield { type: "usage", usage, cost, modelId };
+    }
+    if (chatMode === "plan") {
+      const steps = extractPlanSteps(text);
+      if (steps) yield { type: "plan", steps };
+    } else if (chatMode === "agent") {
+      const spawns = extractSpawns(text);
+      for (const spawn of spawns) {
+        if (isAborted(input.signal)) {
+          yield { type: "status", status: "cancelled", detail: "Stopped" };
+          return;
+        }
+        yield { type: "spawn", title: spawn.title, task: spawn.task };
+      }
+      const proposed = extractPropose(text, input.target);
+      if (proposed) {
+        if (isAborted(input.signal)) {
+          yield { type: "status", status: "cancelled", detail: "Stopped" };
+          return;
+        }
+        yield { type: "status", status: "waiting-approval" };
+        yield { type: "propose", action: proposed };
+      }
+    }
+    yield { type: "status", status: "done" };
+  } finally {
+    (_e = input.signal) == null ? void 0 : _e.removeEventListener("abort", cancelRun);
+    agent.close();
+  }
+}
+function normalizeUsage$1(usage) {
+  if (!usage) return void 0;
+  return {
+    inputTokens: usage.inputTokens ?? 0,
+    outputTokens: usage.outputTokens ?? 0,
+    cacheReadTokens: usage.cacheReadTokens ?? 0,
+    cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+    totalTokens: usage.totalTokens ?? 0,
+    reasoningTokens: usage.reasoningTokens
+  };
+}
+async function* runLocalProposer(input) {
+  if (isAborted(input.signal)) {
+    yield { type: "status", status: "cancelled", detail: "Stopped" };
+    return;
+  }
+  const mode = input.chatMode ?? "agent";
+  if (mode === "ask") {
+    yield {
+      type: "text",
+      text: "Ask mode (local fallback): I can only answer in text here. Set a Cursor API key for full Ask replies.\n"
+    };
+    yield { type: "status", status: "done" };
+    return;
+  }
+  if (mode === "plan") {
+    yield {
+      type: "text",
+      text: "Plan mode (local fallback):\n1. Inspect current shell context\n2. Identify the failing step\n3. Propose a minimal fix\n4. Verify with a read-only check\n"
+    };
+    yield {
+      type: "plan",
+      steps: [
+        "Inspect current shell context",
+        "Identify the failing step",
+        "Propose a minimal fix",
+        "Verify with a read-only check"
+      ]
+    };
+    yield { type: "status", status: "done" };
+    return;
+  }
+  yield {
+    type: "text",
+    text: "Local proposer (SDK unavailable). Suggesting a safe read-only command.\n"
+  };
+  const cmd = guessReadonlyCommand(input.message);
+  const action = {
+    id: newId(),
+    target: input.target,
+    effect: classifyCommand(cmd),
+    summary: `Investigate: ${input.message.slice(0, 80)}`,
+    command: cmd,
+    reason: "local fallback proposer"
+  };
+  yield { type: "status", status: "waiting-approval" };
+  yield { type: "propose", action };
+  yield { type: "status", status: "done" };
+}
+function extractPropose(text, target) {
+  var _a, _b, _c, _d;
+  const match = text.match(/```propose\s*([\s\S]*?)```/i);
+  if (!match) return null;
+  const body = match[1];
+  const summary = ((_b = (_a = body.match(/summary:\s*(.+)/i)) == null ? void 0 : _a[1]) == null ? void 0 : _b.trim()) || "Proposed command";
+  const command = (_d = (_c = body.match(/command:\s*(.+)/i)) == null ? void 0 : _c[1]) == null ? void 0 : _d.trim();
+  if (!command) return null;
+  return {
+    id: newId(),
+    target,
+    effect: classifyCommand(command),
+    summary,
+    command
+  };
+}
+function extractSpawns(text) {
+  var _a, _b, _c, _d, _e;
+  const out = [];
+  const re = /```spawn\s*([\s\S]*?)```/gi;
+  let match;
+  while ((match = re.exec(text)) != null) {
+    const body = match[1] ?? "";
+    const title = ((_b = (_a = body.match(/title:\s*(.+)/i)) == null ? void 0 : _a[1]) == null ? void 0 : _b.trim()) || ((_d = (_c = body.match(/summary:\s*(.+)/i)) == null ? void 0 : _c[1]) == null ? void 0 : _d.trim()) || "Subagent";
+    const taskMatch = body.match(/task:\s*([\s\S]+)/i);
+    let task = ((_e = taskMatch == null ? void 0 : taskMatch[1]) == null ? void 0 : _e.trim()) || "";
+    task = task.replace(/\n(?:title|summary|command)\s*:[\s\S]*$/i, "").trim();
+    if (!task) continue;
+    out.push({ title: title.slice(0, 80), task });
+  }
+  return out;
+}
+function guessReadonlyCommand(message) {
+  const m = message.toLowerCase();
+  if (m.includes("port")) return "lsof -nP -iTCP -sTCP:LISTEN | head -n 40";
+  if (m.includes("disk")) return "df -h";
+  if (m.includes("process") || m.includes("cpu")) return "ps aux | head -n 30";
+  if (m.includes("git")) return "git status -sb";
+  return "pwd && ls -la";
+}
+function classifyToolName(name) {
+  const n = name.toLowerCase();
+  if (n.includes("grep") || n.includes("search") || n.includes("find") || n.includes("glob")) {
+    return "search";
+  }
+  if (n.includes("edit") || n.includes("write") || n.includes("apply") || n.includes("patch") || n.includes("strreplace")) {
+    return "edit";
+  }
+  if (n.includes("shell") || n.includes("bash") || n.includes("exec") || n.includes("terminal") || n.includes("command")) {
+    return "command";
+  }
+  if (n.includes("read") || n.includes("cat") || n.includes("open")) {
+    return "read";
+  }
+  return "other";
+}
+function toolTitle(kind, name, status) {
+  const running = status === "running";
+  switch (kind) {
+    case "search":
+      return running ? "Searching" : "Searched";
+    case "edit":
+      return running ? "Editing" : "Edited";
+    case "command":
+      return running ? "Running command" : "Ran command";
+    case "read":
+      return running ? "Reading" : "Read";
+    default:
+      return running ? name : `${name} done`;
+  }
+}
+function toolDetail(args) {
+  if (!args || typeof args !== "object") return void 0;
+  const o = args;
+  for (const key of [
+    "command",
+    "cmd",
+    "query",
+    "pattern",
+    "path",
+    "file_path",
+    "filePath",
+    "target_file",
+    "relative_workspace_path"
+  ]) {
+    const v = o[key];
+    if (typeof v === "string" && v.trim()) return v.trim().slice(0, 140);
+  }
+  return void 0;
+}
+function cursorStateDbPath() {
+  if (process.platform === "darwin") {
+    return path.join(
+      os.homedir(),
+      "Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+    );
+  }
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA;
+    if (!appData) return null;
+    return path.join(appData, "Cursor/User/globalStorage/state.vscdb");
+  }
+  return path.join(
+    os.homedir(),
+    ".config/Cursor/User/globalStorage/state.vscdb"
+  );
+}
+async function readSqliteValueNative(dbPath, key) {
+  try {
+    const mod = await import("node:sqlite");
+    const db = new mod.DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const row = db.prepare(
+        "SELECT value FROM ItemTable WHERE key = ?"
+      ).get(key);
+      const value = row == null ? void 0 : row.value;
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (value != null && typeof value !== "string") {
+        const asText = String(value).trim();
+        return asText || null;
+      }
+      return null;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+}
+function readSqliteValueViaCli(dbPath, key) {
+  return new Promise((resolve) => {
+    const sql = `SELECT value FROM ItemTable WHERE key = '${key.replace(/'/g, "''")}';`;
+    const child = node_child_process.spawn("sqlite3", [dbPath, sql], {
+      env: process.env,
+      windowsHide: true
+    });
+    let out = "";
+    child.stdout.on("data", (d) => {
+      out += d.toString("utf8");
+    });
+    child.on("error", () => resolve(null));
+    child.on("close", (code) => {
+      if (code !== 0) {
+        resolve(null);
+        return;
+      }
+      const value = out.trim();
+      resolve(value || null);
+    });
+  });
+}
+async function readSqliteValue(dbPath, key) {
+  if (!node_fs.existsSync(dbPath)) return null;
+  const native = await readSqliteValueNative(dbPath, key);
+  if (native != null) return native;
+  return readSqliteValueViaCli(dbPath, key);
+}
+async function readCursorAccessToken() {
+  const db = cursorStateDbPath();
+  if (!db) return null;
+  return readSqliteValue(db, "cursorAuth/accessToken");
+}
+function asNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) {
+    return Number(value);
+  }
+  return null;
+}
+function msToIso(value) {
+  const n = asNumber(value);
+  if (n != null && n > 0) return new Date(n).toISOString();
+  if (typeof value === "string" && value.includes("T")) return value;
+  return null;
+}
+function normalizeUsage(raw) {
+  var _a, _b, _c;
+  const planUsage = raw.planUsage ?? ((_a = raw.individualUsage) == null ? void 0 : _a.plan) ?? null;
+  const apiPercentUsed = asNumber(planUsage == null ? void 0 : planUsage.apiPercentUsed);
+  const totalPercentUsed = asNumber(planUsage == null ? void 0 : planUsage.totalPercentUsed);
+  const used = totalPercentUsed ?? apiPercentUsed ?? (() => {
+    const usedAmt = asNumber(planUsage == null ? void 0 : planUsage.used);
+    const limit = asNumber(planUsage == null ? void 0 : planUsage.limit);
+    if (usedAmt != null && limit != null && limit > 0) {
+      return usedAmt / limit * 100;
+    }
+    const remaining = asNumber(planUsage == null ? void 0 : planUsage.remaining);
+    if (remaining != null && limit != null && limit > 0) {
+      return (limit - remaining) / limit * 100;
+    }
+    return null;
+  })();
+  if (used == null || !Number.isFinite(used)) return null;
+  const remainingPercent = Math.max(0, Math.min(100, Math.round(100 - used)));
+  const membershipType = typeof raw.membershipType === "string" && raw.membershipType || typeof ((_b = raw.planInfo) == null ? void 0 : _b.planName) === "string" && raw.planInfo.planName || null;
+  return {
+    usedPercent: Math.max(0, used),
+    remainingPercent,
+    apiPercentUsed,
+    totalPercentUsed,
+    membershipType,
+    resetAt: msToIso(raw.billingCycleEnd) || msToIso((_c = raw.planInfo) == null ? void 0 : _c.billingCycleEnd),
+    displayMessage: typeof raw.displayMessage === "string" && raw.displayMessage || typeof raw.namedModelSelectedDisplayMessage === "string" && raw.namedModelSelectedDisplayMessage || null
+  };
+}
+async function fetchJson(url, init) {
+  try {
+    const res = await fetch(url, init);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || typeof data !== "object") return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+async function fetchWithToken(token) {
+  const connect = await fetchJson(
+    "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "Connect-Protocol-Version": "1"
+      },
+      body: "{}"
+    }
+  );
+  if (connect) {
+    const normalized = normalizeUsage(connect);
+    if (normalized) return normalized;
+  }
+  const summary = await fetchJson("https://cursor.com/api/usage-summary", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json"
+    }
+  });
+  if (summary) {
+    const normalized = normalizeUsage(summary);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+async function fetchCursorAccountUsage(apiKey) {
+  const tokens = [];
+  const key = apiKey == null ? void 0 : apiKey.trim();
+  if (key) tokens.push(key);
+  const desktopToken = await readCursorAccessToken();
+  if (desktopToken && !tokens.includes(desktopToken)) tokens.push(desktopToken);
+  for (const token of tokens) {
+    const usage = await fetchWithToken(token);
+    if (usage) return usage;
+  }
+  return null;
+}
+function meetingsRoot() {
+  return path.join(electron.app.getPath("userData"), "drift", "meetings");
+}
+function meetingDir(id) {
+  return path.join(meetingsRoot(), id);
+}
+async function ensureRoot() {
+  await promises.mkdir(meetingsRoot(), { recursive: true });
+}
+async function readJson(file) {
+  try {
+    return JSON.parse(await promises.readFile(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+async function writeText(file, content) {
+  await promises.writeFile(file, content, "utf8");
+}
+async function readText(file) {
+  try {
+    return await promises.readFile(file, "utf8");
+  } catch {
+    return "";
+  }
+}
+function defaultTitle(when = /* @__PURE__ */ new Date()) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `Meeting ${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} ${pad(when.getHours())}:${pad(when.getMinutes())}`;
+}
+async function refreshFlags(meta) {
+  const dir = meetingDir(meta.id);
+  const next = {
+    ...meta,
+    hasAudio: false,
+    hasTranscript: false,
+    hasNotes: false,
+    hasSummary: false
+  };
+  try {
+    const files = await promises.readdir(dir);
+    next.hasAudio = files.includes("audio.webm");
+    next.hasTranscript = files.includes("transcript.txt");
+    next.hasNotes = files.includes("notes.md");
+    next.hasSummary = files.includes("summary.md");
+  } catch {
+  }
+  return next;
+}
+async function listMeetings() {
+  await ensureRoot();
+  const ids = await promises.readdir(meetingsRoot()).catch(() => []);
+  const items = [];
+  for (const id of ids) {
+    const meta = await readJson(path.join(meetingDir(id), "meta.json"));
+    if (meta) items.push(await refreshFlags(meta));
+  }
+  items.sort((a, b) => {
+    const byUpdated = b.updatedAt.localeCompare(a.updatedAt);
+    if (byUpdated !== 0) return byUpdated;
+    return b.createdAt.localeCompare(a.createdAt);
+  });
+  return items;
+}
+async function createMeeting(title) {
+  await ensureRoot();
+  const id = newId();
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const dir = meetingDir(id);
+  await promises.mkdir(dir, { recursive: true });
+  const meta = {
+    id,
+    title: (title == null ? void 0 : title.trim()) || defaultTitle(),
+    createdAt: now,
+    updatedAt: now,
+    durationMs: 0,
+    status: "idle",
+    hasAudio: false,
+    hasTranscript: false,
+    hasNotes: false,
+    hasSummary: false
+  };
+  await writeText(path.join(dir, "meta.json"), JSON.stringify(meta, null, 2));
+  await writeText(path.join(dir, "transcript.txt"), "");
+  await writeText(path.join(dir, "notes.md"), "");
+  await writeText(path.join(dir, "summary.md"), "");
+  return {
+    meta,
+    transcript: "",
+    notes: "",
+    summary: "",
+    audioPath: null
+  };
+}
+async function getMeeting(id) {
+  const dir = meetingDir(id);
+  const meta = await readJson(path.join(dir, "meta.json"));
+  if (!meta) return null;
+  const refreshed = await refreshFlags(meta);
+  return {
+    meta: refreshed,
+    transcript: await readText(path.join(dir, "transcript.txt")),
+    notes: await readText(path.join(dir, "notes.md")),
+    summary: await readText(path.join(dir, "summary.md")),
+    audioPath: refreshed.hasAudio ? path.join(dir, "audio.webm") : null
+  };
+}
+async function saveMeeting(id, patch) {
+  var _a;
+  const current = await getMeeting(id);
+  if (!current) return null;
+  const dir = meetingDir(id);
+  const meta = {
+    ...current.meta,
+    title: ((_a = patch.title) == null ? void 0 : _a.trim()) || current.meta.title,
+    durationMs: patch.durationMs != null ? patch.durationMs : current.meta.durationMs,
+    status: patch.status ?? current.meta.status,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  if (patch.transcript != null) {
+    await writeText(path.join(dir, "transcript.txt"), patch.transcript);
+  }
+  if (patch.notes != null) {
+    await writeText(path.join(dir, "notes.md"), patch.notes);
+  }
+  if (patch.summary != null) {
+    await writeText(path.join(dir, "summary.md"), patch.summary);
+  }
+  const refreshed = await refreshFlags(meta);
+  await writeText(path.join(dir, "meta.json"), JSON.stringify(refreshed, null, 2));
+  return getMeeting(id);
+}
+async function saveMeetingAudio(id, data) {
+  const current = await getMeeting(id);
+  if (!current) return null;
+  const dir = meetingDir(id);
+  await promises.writeFile(path.join(dir, "audio.webm"), Buffer.from(data));
+  return saveMeeting(id, { status: "done" });
+}
+async function deleteMeeting(id) {
+  await promises.rm(meetingDir(id), { recursive: true, force: true });
+  return { ok: true };
+}
+async function exportMeeting(id, parentWindow) {
+  const meeting = await getMeeting(id);
+  if (!meeting) return { ok: false, error: "Meeting not found" };
+  const safeTitle = meeting.meta.title.replace(/[\\/:*?"<>|]+/g, "-").trim().slice(0, 80);
+  const result = parentWindow ? await electron.dialog.showSaveDialog(parentWindow, {
+    title: "Export meeting",
+    defaultPath: safeTitle || `meeting-${id.slice(0, 8)}`,
+    buttonLabel: "Export",
+    properties: ["createDirectory", "showOverwriteConfirmation"]
+  }) : await electron.dialog.showSaveDialog({
+    title: "Export meeting",
+    defaultPath: safeTitle || `meeting-${id.slice(0, 8)}`,
+    buttonLabel: "Export",
+    properties: ["createDirectory", "showOverwriteConfirmation"]
+  });
+  if (result.canceled || !result.filePath) {
+    return { ok: false, canceled: true };
+  }
+  const dest = result.filePath;
+  await promises.mkdir(dest, { recursive: true });
+  const dir = meetingDir(id);
+  const copies = [
+    ["meta.json", "meta.json"],
+    ["transcript.txt", "transcript.txt"],
+    ["notes.md", "notes.md"],
+    ["summary.md", "summary.md"]
+  ];
+  if (meeting.meta.hasAudio) {
+    copies.push(["audio.webm", "audio.webm"]);
+  }
+  for (const [srcName, destName] of copies) {
+    try {
+      await promises.copyFile(path.join(dir, srcName), path.join(dest, destName));
+    } catch {
+    }
+  }
+  const bundle = [
+    `# ${meeting.meta.title}`,
+    "",
+    `Created: ${meeting.meta.createdAt}`,
+    `Duration: ${Math.round(meeting.meta.durationMs / 1e3)}s`,
+    "",
+    "## Summary",
+    "",
+    meeting.summary.trim() || "_(no summary)_",
+    "",
+    "## Notes",
+    "",
+    meeting.notes.trim() || "_(no notes)_",
+    "",
+    "## Transcript",
+    "",
+    meeting.transcript.trim() || "_(no transcript)_",
+    ""
+  ].join("\n");
+  await writeText(path.join(dest, "meeting.md"), bundle);
+  return { ok: true, path: dest };
+}
+const CHECK_DELAY_MS = 4e3;
+const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1e3;
+const GITHUB_OWNER = "doob9p";
+const GITHUB_REPO = "drift-app";
+let started = false;
+let downloadedVersion = null;
+let pendingInfo = null;
+let downloadedZipPath = null;
+function dismissedPath() {
+  return path.join(electron.app.getPath("userData"), "drift", "update-dismissed.json");
+}
+function readDismissed() {
+  try {
+    const file = dismissedPath();
+    if (!node_fs.existsSync(file)) return {};
+    return JSON.parse(node_fs.readFileSync(file, "utf8"));
+  } catch {
+    return {};
+  }
+}
+function writeDismissed(version) {
+  const file = dismissedPath();
+  node_fs.mkdirSync(path.dirname(file), { recursive: true });
+  node_fs.writeFileSync(file, JSON.stringify({ version }), "utf8");
+}
+function toPlainReleaseNotes(raw) {
+  const parts = [];
+  if (typeof raw === "string") {
+    parts.push(raw);
+  } else if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (typeof item === "string") parts.push(item);
+      else if (item && typeof item === "object" && "note" in item) {
+        const note = item.note;
+        if (typeof note === "string") parts.push(note);
+      }
+    }
+  }
+  const joined = parts.join("\n").trim();
+  if (!joined) return null;
+  const text = joined.replace(/<\s*br\s*\/?\s*>/gi, "\n").replace(/<\/\s*p\s*>/gi, "\n").replace(/<\/\s*div\s*>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/gi, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").split("\n").filter((line) => !/^\s*Co-authored-by:/i.test(line)).join("\n").trim();
+  return text || null;
+}
+function clearDismissed() {
+  const file = dismissedPath();
+  node_fs.mkdirSync(path.dirname(file), { recursive: true });
+  node_fs.writeFileSync(file, JSON.stringify({}), "utf8");
+}
+function send(win, channel, payload) {
+  if (!win || win.isDestroyed()) return;
+  win.webContents.send(channel, payload);
+}
+function appBundlePath() {
+  return path.resolve(process.execPath, "../../..");
+}
+function pickMacZip(info) {
+  const files = info.files ?? [];
+  const zip = files.find((f) => /\.zip$/i.test(f.url)) ?? (/\.zip$/i.test(info.path ?? "") ? { url: info.path, sha512: info.sha512, size: void 0 } : void 0);
+  if (!(zip == null ? void 0 : zip.url) || !zip.sha512) {
+    throw new Error("No macOS zip asset found in update feed");
+  }
+  const fileName = path.basename(zip.url);
+  return { fileName, sha512: zip.sha512, size: zip.size };
+}
+function releaseAssetUrl(version, fileName) {
+  return `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/v${version}/${fileName}`;
+}
+async function sha512File(filePath) {
+  const hash = node_crypto.createHash("sha512");
+  const { createReadStream } = await import("node:fs");
+  await promises$1.pipeline(createReadStream(filePath), hash);
+  return hash.digest("base64");
+}
+async function downloadToFile(url, dest, onProgress) {
+  const res = await fetch(url, { redirect: "follow" });
+  if (!res.ok || !res.body) {
+    throw new Error(`Download failed (${res.status})`);
+  }
+  const total = Number(res.headers.get("content-length") || 0);
+  let transferred = 0;
+  let lastTs = Date.now();
+  let lastBytes = 0;
+  await promises.mkdir(path.dirname(dest), { recursive: true });
+  const partial = `${dest}.partial`;
+  const nodeStream = node_stream.Readable.fromWeb(res.body);
+  nodeStream.on("data", (chunk) => {
+    transferred += chunk.length;
+    const now = Date.now();
+    const dt = Math.max(1, now - lastTs);
+    const bytesPerSecond = (transferred - lastBytes) * 1e3 / dt;
+    if (now - lastTs >= 200 || transferred === total) {
+      lastTs = now;
+      lastBytes = transferred;
+      onProgress({
+        percent: total > 0 ? transferred / total * 100 : 0,
+        bytesPerSecond,
+        transferred,
+        total
+      });
+    }
+  });
+  await promises$1.pipeline(nodeStream, node_fs.createWriteStream(partial));
+  node_fs.renameSync(partial, dest);
+}
+async function downloadMacUpdate(getWindow) {
+  if (!pendingInfo) {
+    throw new Error("No pending update");
+  }
+  const version = pendingInfo.version;
+  const { fileName, sha512 } = pickMacZip(pendingInfo);
+  const url = releaseAssetUrl(version, fileName);
+  const dest = path.join(
+    electron.app.getPath("temp"),
+    "drift-updates",
+    `Drift-${version}-mac-arm64.zip`
+  );
+  if (node_fs.existsSync(dest)) {
+    node_fs.rmSync(dest, { force: true });
+  }
+  await downloadToFile(url, dest, (progress) => {
+    send(getWindow(), "updater:progress", progress);
+  });
+  const actual = await sha512File(dest);
+  if (actual !== sha512) {
+    node_fs.rmSync(dest, { force: true });
+    throw new Error("Update archive checksum mismatch");
+  }
+  downloadedZipPath = dest;
+  downloadedVersion = version;
+  clearDismissed();
+  send(getWindow(), "updater:downloaded", {
+    version,
+    currentVersion: electron.app.getVersion()
+  });
+}
+async function installMacUpdate() {
+  if (!downloadedZipPath || !node_fs.existsSync(downloadedZipPath)) {
+    throw new Error("Update archive missing — download again");
+  }
+  const appPath = appBundlePath();
+  if (!appPath.endsWith(".app") || !node_fs.existsSync(appPath)) {
+    throw new Error(`Cannot locate Drift.app (${appPath})`);
+  }
+  const work = await promises.mkdtemp(path.join(os.tmpdir(), "drift-install-"));
+  const scriptPath = path.join(work, "install.sh");
+  const logPath = path.join(electron.app.getPath("logs"), "drift-update.log");
+  const script = `#!/bin/bash
 set -euo pipefail
-APP_PATH=${JSON.stringify(t)}
-ZIP_PATH=${JSON.stringify(he)}
-LOG=${JSON.stringify(n)}
+APP_PATH=${JSON.stringify(appPath)}
+ZIP_PATH=${JSON.stringify(downloadedZipPath)}
+LOG=${JSON.stringify(logPath)}
 mkdir -p "$(dirname "$LOG")"
 exec >>"$LOG" 2>&1
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) install start"
@@ -75,17 +2413,2338 @@ rm -rf "$BACKUP"
 rm -f "$ZIP_PATH"
 open "$APP_PATH"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) install done"
-`;await b.writeFile(r,s,{mode:493}),await b.chmod(r,493),L.spawn("/bin/bash",[r],{detached:!0,stdio:"ignore"}).unref(),setTimeout(()=>l.app.quit(),300)}function nn(t){if(Ye||(Ye=!0,l.ipcMain.handle("updater:get-version",()=>({version:l.app.getVersion(),packaged:l.app.isPackaged})),l.ipcMain.handle("updater:check",async()=>{var r;if(!l.app.isPackaged)return{ok:!1,reason:"dev"};try{const n=await U.autoUpdater.checkForUpdates();return{ok:!0,versionInfo:((r=n==null?void 0:n.updateInfo)==null?void 0:r.version)??null}}catch(n){return{ok:!1,reason:"error",message:n instanceof Error?n.message:String(n)}}}),l.ipcMain.handle("updater:download",async()=>{if(!l.app.isPackaged)return{ok:!1,reason:"dev"};try{return process.platform==="darwin"?await tn(t):await U.autoUpdater.downloadUpdate(),{ok:!0}}catch(r){return{ok:!1,reason:"error",message:r instanceof Error?r.message:String(r)}}}),l.ipcMain.handle("updater:install",async()=>{if(!l.app.isPackaged)return{ok:!1,reason:"dev"};try{return process.platform==="darwin"?(await rn(),{ok:!0,version:me}):(U.autoUpdater.quitAndInstall(!1,!0),{ok:!0,version:me})}catch(r){const n=r instanceof Error?r.message:String(r);return J(t(),"updater:error",{message:n}),{ok:!1,reason:"error",message:n}}}),l.ipcMain.handle("updater:dismiss",(r,n)=>(typeof n=="string"&&n.length>0&&Jr(n),{ok:!0})),!l.app.isPackaged))return;U.autoUpdater.autoDownload=!1,U.autoUpdater.autoInstallOnAppQuit=process.platform!=="darwin",U.autoUpdater.allowPrerelease=!1,U.autoUpdater.on("update-available",r=>{pe=r;const n=Vr();if(n.version&&n.version===r.version)return;const s={version:r.version,currentVersion:l.app.getVersion(),releaseName:r.releaseName,releaseNotes:Gr(r.releaseNotes)};J(t(),"updater:available",s)}),U.autoUpdater.on("download-progress",r=>{if(process.platform==="darwin")return;const n={percent:r.percent,bytesPerSecond:r.bytesPerSecond,transferred:r.transferred,total:r.total};J(t(),"updater:progress",n)}),U.autoUpdater.on("update-downloaded",r=>{process.platform!=="darwin"&&(me=r.version,Pt(),J(t(),"updater:downloaded",{version:r.version,currentVersion:l.app.getVersion()}))}),U.autoUpdater.on("error",r=>{J(t(),"updater:error",{message:(r==null?void 0:r.message)||String(r)})});const e=()=>{U.autoUpdater.checkForUpdates().catch(()=>{})};setTimeout(e,Wr),setInterval(e,zr)}const Xe=48e3,Qe=8e3;function sn(t){return t.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g,"").replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g,"").replace(/\x1b[PX^_][\s\S]*?\x1b\\/g,"").replace(/\x1b./g,"")}function et(t,e){t.scrollback+=e,t.scrollback.length>Xe&&(t.scrollback=t.scrollback.slice(-Xe))}function on(t){const e=sn(t.scrollback).replace(/\r/g,"");return e.length<=Qe?e.trimEnd():e.slice(-Qe).replace(/^[^\n]*\n/,"").trimEnd()}let ne=null,g=null,W;const E=new Map,ae=new Qt("ask"),ce=new Map,Q=new Map;let A={modelId:"composer-2.5",chatMode:"agent",locale:"ko",localShell:"powershell"};function vt(t){return t==="cmd"||t==="gitbash"||t==="powershell"?t:"powershell"}function tt(t){return{cols:t==null?void 0:t.cols,rows:t==null?void 0:t.rows,shellKind:process.platform==="win32"?A.localShell:void 0}}function an(t){const e=[];for(const[r,n]of[...ce.entries()])t&&r!==t||(ce.delete(r),n.resolve({type:"deny",feedback:"Stopped by user"}),e.includes(r)||e.push(r));for(const[r,n]of[...Q.entries()])t&&r!==t||(n.signal.aborted||n.abort(),e.includes(r)||e.push(r));return{stopped:e}}function Tt(t){ae.mode=t==="ask"?"read-only":"ask",t!=="agent"&&(ae.sessionRules=[])}let D=Et();function Et(){return{turns:0,usage:{inputTokens:0,outputTokens:0,cacheReadTokens:0,cacheWriteTokens:0,totalTokens:0},cost:{rawCostCents:0,chargedCents:0}}}function Y(){return u.join(l.app.getPath("userData"),"drift")}function G(...t){return u.join(__dirname,"../resources/brand",...t)}function $t(){const t=process.platform==="win32"?[G("icon.ico"),G("icon.png")]:[G("icon.icns"),G("icon.png"),G("icon.ico")];for(const e of t){if(!P.existsSync(e))continue;const r=l.nativeImage.createFromPath(e);if(!r.isEmpty())return r}}function we(){return u.join(Y(),"api-key.bin")}function _t(){return u.join(Y(),"settings.json")}function rt(){return u.join(Y(),"board.json")}async function se(){try{const{readFile:t}=await import("node:fs/promises"),e=await t(we());return l.safeStorage.isEncryptionAvailable()?l.safeStorage.decryptString(e):e.toString("utf8")}catch{return""}}async function cn(t){const{mkdir:e,writeFile:r}=await import("node:fs/promises");await e(Y(),{recursive:!0}),l.safeStorage.isEncryptionAvailable()?await r(we(),l.safeStorage.encryptString(t)):await r(we(),t,"utf8")}async function ln(){const{unlink:t}=await import("node:fs/promises");try{await t(we())}catch{}}function At(t){return t==="ask"||t==="plan"||t==="agent"?t:"agent"}function Nt(t){return t==="en"?"en":"ko"}async function un(){var t;try{const e=await b.readFile(_t(),"utf8"),r=JSON.parse(e);return{modelId:((t=r.modelId)==null?void 0:t.trim())||"composer-2.5",chatMode:At(r.chatMode),locale:Nt(r.locale),localShell:vt(r.localShell)}}catch{return{modelId:"composer-2.5",chatMode:"agent",locale:"ko",localShell:"powershell"}}}async function de(t){const{mkdir:e,writeFile:r}=await import("node:fs/promises");await e(Y(),{recursive:!0}),A=t,await r(_t(),JSON.stringify(t,null,2),"utf8")}function nt(t,e){return D={turns:D.turns+1,usage:{inputTokens:D.usage.inputTokens+t.inputTokens,outputTokens:D.usage.outputTokens+t.outputTokens,cacheReadTokens:D.usage.cacheReadTokens+t.cacheReadTokens,cacheWriteTokens:D.usage.cacheWriteTokens+t.cacheWriteTokens,totalTokens:D.usage.totalTokens+t.totalTokens,reasoningTokens:(D.usage.reasoningTokens??0)+(t.reasoningTokens??0)},cost:{rawCostCents:D.cost.rawCostCents+((e==null?void 0:e.rawCostCents)??0),chargedCents:D.cost.chargedCents+((e==null?void 0:e.chargedCents)??0)}},D}function j(t,e){g==null||g.webContents.send("app:shortcut",{action:t,...e})}function Rt(t){const e=g==null?void 0:g.webContents;if(!e)return;const r=Math.min(2,Math.max(.5,t));e.setZoomFactor(r),j("refit-terminals")}function st(t){const e=g==null?void 0:g.webContents;e&&Rt(e.getZoomFactor()+t)}function dn(){const t=process.platform==="darwin",e=[];for(let i=1;i<=9;i++)e.push({label:`Tab ${i}`,accelerator:`CmdOrCtrl+${i}`,click:()=>j("focus-tab",{index:i-1})});const r={label:"File",submenu:[{label:"Save",accelerator:"CmdOrCtrl+S",click:()=>j("save")},{label:"Find",accelerator:"CmdOrCtrl+F",click:()=>j("find")},{type:"separator"},{label:"Close Tab",accelerator:"CmdOrCtrl+W",click:()=>j("close-tab")}]},n={label:"Edit",submenu:[{role:"undo"},{role:"redo"},{type:"separator"},{role:"cut"},{role:"copy"},{role:"paste"},...t?[{role:"pasteAndMatchStyle"}]:[],{role:"delete"},{role:"selectAll"},{type:"separator"},{label:"Toggle Line Comment",accelerator:"CmdOrCtrl+/",click:()=>j("toggle-comment")}]},s={label:"Shell",submenu:[{label:"New Local Terminal",accelerator:"CmdOrCtrl+T",click:()=>j("new-local")},{type:"separator"},{label:"Clear Scrollback",accelerator:"CmdOrCtrl+K",click:()=>j("clear")},{type:"separator"},{label:"Previous Tab",accelerator:"CmdOrCtrl+Shift+[",click:()=>j("prev-tab")},{label:"Next Tab",accelerator:"CmdOrCtrl+Shift+]",click:()=>j("next-tab")},{type:"separator"},...e]},o={label:"View",submenu:[{label:"Actual Size",accelerator:"CmdOrCtrl+0",click:()=>Rt(1)},{label:"Zoom In",accelerator:"CmdOrCtrl+=",click:()=>st(.1)},{label:"Zoom Out",accelerator:"CmdOrCtrl+-",click:()=>st(-.1)},{type:"separator"},{role:"reload"},{role:"toggleDevTools"},{type:"separator"},{role:"togglefullscreen"}]},a=[...t?[{label:"Drift",submenu:[{role:"about"},{type:"separator"},{label:"Settings…",accelerator:"CmdOrCtrl+,",click:()=>j("settings")},{type:"separator"},{role:"services"},{type:"separator"},{role:"hide"},{role:"hideOthers"},{role:"unhide"},{type:"separator"},{role:"quit"}]}]:[{label:"Drift",submenu:[{label:"Settings…",accelerator:"CmdOrCtrl+,",click:()=>j("settings")},{type:"separator"},{role:"quit"}]}],r,n,s,o,{label:"Window",submenu:[{role:"minimize"},{role:"zoom"},...t?[{type:"separator"},{role:"front"}]:[{role:"close"}]]}];l.Menu.setApplicationMenu(l.Menu.buildFromTemplate(a))}function ot(){const t=$t();g=new l.BrowserWindow({width:1280,height:800,minWidth:960,minHeight:600,title:"Drift",backgroundColor:"#000000",show:!1,...t?{icon:t}:{},...process.platform==="darwin"?{titleBarStyle:"hiddenInset",trafficLightPosition:{x:16,y:14}}:{},webPreferences:{preload:u.join(__dirname,"preload.js"),contextIsolation:!0,nodeIntegration:!1,sandbox:!1}}),g.once("ready-to-show",()=>{g==null||g.show()}),l.session.defaultSession.setPermissionRequestHandler((e,r,n)=>{n(r==="media")}),l.session.defaultSession.setPermissionCheckHandler((e,r)=>r==="media"),process.env.VITE_DEV_SERVER_URL?(g.loadURL(process.env.VITE_DEV_SERVER_URL),g.webContents.openDevTools({mode:"detach"})):g.loadFile(u.join(__dirname,"../dist/index.html"))}function Le(t,e){const r=E.get(t);!r||!e||r.lastCwd!==e&&(r.lastCwd=e,r.backend&&r.backend.target.kind==="ssh"&&"setCwd"in r.backend&&r.backend.setCwd(e),g==null||g.webContents.send("term:cwd",{tabId:t,cwd:e}))}function It(t,e){const r=(t.oscBuf??"")+e;t.oscBuf=r.length>4e3?r.slice(-2e3):r;const n=/\x1b\]7;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;let s,o=null;for(;s=n.exec(t.oscBuf);){const i=fn(s[1]??"");i&&(o=i)}const a=Math.max(t.oscBuf.lastIndexOf("\x07"),t.oscBuf.lastIndexOf("\x1B\\"));a>=0&&(t.oscBuf=t.oscBuf.slice(a+1)),o&&Le(t.id,o)}function Me(t){try{return t.normalize("NFC")}catch{return t}}function fn(t){const e=t.trim();if(!e)return null;try{if(e.startsWith("file://")){const s=new URL(e),o=decodeURIComponent(s.pathname||"");return o?Me(o):null}}catch{}const r=e.replace(/^file:\/\//,""),n=r.indexOf("/");return n>=0?Me(r.slice(n)):r.startsWith("/")?Me(r):null}function xe(t,e){const r=E.get(t);if(!r)return;const n=e.onData(o=>{if(It(r,o),et(r,o),!r.ready){r.buffer.push(o),r.buffer.length>200&&(r.buffer=r.buffer.slice(-100));return}g==null||g.webContents.send("term:data",{tabId:t,data:o})}),s=e.onExit(({exitCode:o,signal:a})=>{const i=`\r
-\x1B[90m[session ended: exit ${o}`+(a!=null?`, signal ${a}`:"")+`]\x1B[0m\r
-`;if(et(r,i),!r.ready){r.buffer.push(i);return}g==null||g.webContents.send("term:data",{tabId:t,data:i})});r.unsub=n,r.unsubExit=s,ee(t),mn()}async function ee(t){const e=E.get(t);if(!(!(e!=null&&e.backend)||e.backend.target.kind!=="local"))try{const r=await e.backend.getCwd();r&&Le(t,r)}catch{}}function mn(){ne||(ne=setInterval(()=>{if(E.size===0){ne&&clearInterval(ne),ne=null;return}for(const t of E.keys())ee(t)},600))}function oe(t){g==null||g.webContents.send("fs:transfer-progress",t)}async function pn(t,e){const r=[];let n=0;async function s(a,i,d){const c=await b.stat(a);if(c.isFile()){r.push({src:a,dest:i,size:c.size,name:d}),n+=c.size;return}if(!c.isDirectory())return;await b.mkdir(i,{recursive:!0});const f=await b.readdir(a);for(const m of f)m==="."||m===".."||await s(u.join(a,m),u.join(i,m),m)}const o=u.resolve(e);for(const a of t){const i=u.basename(a);if(!i||i==="."||i==="..")continue;const d=u.join(o,i),c=u.resolve(a),f=u.resolve(d);c===o||f===c||f.startsWith(c+u.sep)||await s(a,d,i)}return{items:r,total:n}}async function hn(t,e,r){var n;try{if(await b.mkdir(e,{recursive:!0}),!(await b.stat(e)).isDirectory())return{error:"Not a directory"};const o=u.resolve(e),{items:a,total:i}=await pn(t,e);if(!a.length)return{error:"No files"};oe({transferId:r,percent:0,transferred:0,total:i||1,currentName:(n=a[0])==null?void 0:n.name});let d=0,c=0;const f=(p=!1,k)=>{const y=Date.now();!p&&y-c<80||(c=y,oe({transferId:r,percent:i>0?Math.min(99,Math.round(d/i*100)):0,transferred:Math.min(d,i),total:i||1,currentName:k}))};for(const p of a)await b.mkdir(u.dirname(p.dest),{recursive:!0}),p.size===0?(await Ee.pipeline(P.createReadStream(p.src),P.createWriteStream(p.dest)),f(!0,p.name)):await new Promise((k,y)=>{const h=P.createReadStream(p.src),M=P.createWriteStream(p.dest);h.on("data",T=>{const x=typeof T=="string"?Buffer.byteLength(T):T.length;d+=x,f(!1,p.name)}),h.on("error",y),M.on("error",y),M.on("finish",()=>{f(!0,p.name),k()}),h.pipe(M)});return oe({transferId:r,percent:100,transferred:i||d,total:i||Math.max(d,1)}),{ok:!0,copied:t.map(p=>u.join(o,u.basename(p))).filter(p=>a.some(k=>k.dest===p||k.dest.startsWith(p+u.sep)))}}catch(s){return{error:s instanceof Error?s.message:String(s)}}}async function gn(t="/"){try{const e=await b.statfs(t),r=Number(e.bsize)||0,n=Number(e.blocks)*r,s=Number(e.bavail)*r,o=Math.max(0,n-s);return{diskUsedPct:n>0?Math.min(100,Math.round(o/n*100)):0,diskUsedBytes:o,diskTotalBytes:n,diskMount:t}}catch{return{diskUsedPct:0,diskUsedBytes:0,diskTotalBytes:0,diskMount:t}}}async function fe(){const t=N.cpus(),e=N.loadavg()[0]??0,r=t.length||1,n=Math.min(100,Math.round(e/r*100)),s=N.totalmem(),o=N.freemem(),a=Math.max(0,s-o),i=await gn("/");return{source:"local",cpuPct:n,load1:e,memUsedBytes:a,memFreeBytes:o,memTotalBytes:s,cores:r,...i,gpuPct:null,gpuMemPct:null,gpuName:null}}const yn=["set +e","LOAD=$(awk '{print $1}' /proc/loadavg 2>/dev/null)","CORES=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)","MEM_TOTAL=$(awk '/^MemTotal:/ {print $2*1024}' /proc/meminfo 2>/dev/null)","MEM_AVAIL=$(awk '/^MemAvailable:/ {print $2*1024}' /proc/meminfo 2>/dev/null)",`if [ -z "$MEM_AVAIL" ]; then MEM_AVAIL=$(awk '/^MemFree:/ {print $2*1024}' /proc/meminfo 2>/dev/null); fi`,`DISK=$(df -PB1 / 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $2" "$3" "$5}')`,"GPU=$(nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,name --format=csv,noheader,nounits 2>/dev/null | head -n 1)",'printf "load=%s\\n" "${LOAD:-0}"','printf "cores=%s\\n" "${CORES:-1}"','printf "mem_total=%s\\n" "${MEM_TOTAL:-0}"','printf "mem_avail=%s\\n" "${MEM_AVAIL:-0}"','printf "disk=%s\\n" "${DISK:-}"','printf "gpu=%s\\n" "${GPU:-}"'].join("; ");function wn(t,e){const r=new Map;for(const T of t.split(/\r?\n/)){const x=T.indexOf("=");x<=0||r.set(T.slice(0,x).trim(),T.slice(x+1).trim())}const n=Number(r.get("load")||0)||0,s=Math.max(1,Number(r.get("cores")||1)||1),o=Math.max(0,Number(r.get("mem_total")||0)||0),a=Math.max(0,Number(r.get("mem_avail")||0)||0),i=Math.max(0,o-a),d=Math.min(100,Math.round(n/s*100));let c=0,f=0,m=0;const p=r.get("disk")||"";if(p){const[T,x,$]=p.split(/\s+/);c=Math.max(0,Number(T)||0),f=Math.max(0,Number(x)||0),m=Math.min(100,Math.max(0,Number($)||0)),!m&&c>0&&(m=Math.min(100,Math.round(f/c*100)))}let k=null,y=null,h=null;const M=r.get("gpu")||"";if(M&&!/error|not found|failed/i.test(M)){const T=M.split(",").map(x=>x.trim());if(T.length>=3){const x=Number(T[0]),$=Number(T[1]),v=Number(T[2]);Number.isFinite(x)&&(k=Math.min(100,Math.max(0,Math.round(x)))),Number.isFinite($)&&Number.isFinite(v)&&v>0&&(y=Math.min(100,Math.round($/v*100))),T[3]&&(h=T.slice(3).join(", ").trim()||null)}}return{source:"ssh",cpuPct:d,load1:n,memUsedBytes:i,memFreeBytes:a,memTotalBytes:o,cores:s,diskUsedPct:m,diskUsedBytes:f,diskTotalBytes:c,diskMount:"/",gpuPct:k,gpuMemPct:y,gpuName:h,hostLabel:e}}async function bn(t){const e=t.session.name||`${t.session.user}@${t.session.host}`;try{const r=await t.exec(yn,{cwd:"~",timeoutMs:8e3});return(r.timedOut||r.exitCode!==0)&&!r.stdout.trim()?{source:"ssh",cpuPct:0,load1:0,memUsedBytes:0,memFreeBytes:0,memTotalBytes:0,cores:1,diskUsedPct:0,diskUsedBytes:0,diskTotalBytes:0,diskMount:"/",gpuPct:null,gpuMemPct:null,gpuName:null,hostLabel:e,error:(r.timedOut?"Metrics timed out":r.stderr||`exit ${r.exitCode}`).trim().slice(0,200)}:wn(r.stdout||"",e)}catch(r){return{source:"ssh",cpuPct:0,load1:0,memUsedBytes:0,memFreeBytes:0,memTotalBytes:0,cores:1,diskUsedPct:0,diskUsedBytes:0,diskTotalBytes:0,diskMount:"/",gpuPct:null,gpuMemPct:null,gpuName:null,hostLabel:e,error:r instanceof Error?r.message:String(r)}}}const be=15e5,Ot=12e6,kn={".png":"image/png",".jpg":"image/jpeg",".jpeg":"image/jpeg",".gif":"image/gif",".webp":"image/webp",".bmp":"image/bmp",".ico":"image/x-icon",".avif":"image/avif",".svg":"image/svg+xml"};function Dt(t){return`'${t.replace(/'/g,`'"'"'`)}'`}function Ft(t){const e=u.extname(t).toLowerCase();return kn[e]??null}function Lt(t){const e=t.subarray(0,Math.min(t.length,8e3));if(e.includes(0))return!0;let r=0;for(const n of e)n===9||n===10||n===13||n<32&&(r+=1);return r>e.length*.05}function jt(t,e,r){return{path:t,kind:"image",mime:e,dataUrl:`data:${e};base64,${r.toString("base64")}`}}async function it(t){const e=u.resolve((t||"").trim());if(!e)return{error:"No path"};try{const r=await b.stat(e);if(!r.isFile())return{error:"Not a file"};const n=Ft(e),s=n?Ot:be;if(r.size>s)return{error:"too_large"};const o=await b.readFile(e);return n?jt(e,n,o):Lt(o)?{error:"binary"}:{path:e,kind:"text",content:o.toString("utf8")}}catch(r){return{error:r instanceof Error?r.message:String(r)}}}async function at(t,e){const r=u.resolve((t||"").trim());if(!r)return{error:"No path"};try{return Buffer.byteLength(e,"utf8")>be?{error:"too_large"}:(await b.writeFile(r,e,"utf8"),{ok:!0,path:r})}catch(n){return{error:n instanceof Error?n.message:String(n)}}}async function Sn(t,e){const r=(e||"").trim();if(!r)return{error:"No path"};const n=Dt(r),s=Ft(r),o=s?Ot:be;try{const a=await t.exec(`if [ -f ${n} ]; then wc -c < ${n}; else exit 41; fi`,{timeoutMs:12e3});if(a.exitCode===41)return{error:"Not a file"};const i=Number((a.stdout||"").trim());if(Number.isFinite(i)&&i>o)return{error:"too_large"};const d=await t.exec(`base64 < ${n}`,{timeoutMs:3e4});if(d.timedOut)return{error:"Read timed out"};if(d.exitCode!=null&&d.exitCode!==0)return{error:(d.stderr||"").trim()||"Read failed"};const c=Buffer.from((d.stdout||"").replace(/\s+/g,""),"base64");return s?jt(r,s,c):Lt(c)?{error:"binary"}:{path:r,kind:"text",content:c.toString("utf8")}}catch(a){return{error:a instanceof Error?a.message:String(a)}}}async function Mn(t,e,r){const n=(e||"").trim();if(!n)return{error:"No path"};if(Buffer.byteLength(r,"utf8")>be)return{error:"too_large"};const o=Dt(n),a=Buffer.from(r,"utf8").toString("base64");try{const i=await t.exec(`(base64 -d 2>/dev/null || base64 -D) > ${o} <<'DRIFT_B64'
-${a}
-DRIFT_B64`,{timeoutMs:3e4});return i.timedOut?{error:"Write timed out"}:i.exitCode!=null&&i.exitCode!==0?{error:(i.stderr||"").trim()||"Write failed"}:{ok:!0,path:n}}catch(i){return{error:i instanceof Error?i.message:String(i)}}}async function ct(t){const e=N.homedir(),r=u.resolve((t==null?void 0:t.trim())||e);try{if(!(await b.stat(r)).isDirectory())return{error:"Not a directory",path:r,entries:[]};const s=await b.readdir(r),o=[];for(const a of s){if(a==="."||a==="..")continue;const i=u.join(r,a);try{const d=await b.stat(i);o.push({name:a,path:i,kind:d.isDirectory()?"dir":"file",size:d.isDirectory()?void 0:d.size})}catch{}}return o.sort((a,i)=>a.kind!==i.kind?a.kind==="dir"?-1:1:a.name.localeCompare(i.name,void 0,{sensitivity:"base"})),{path:r,home:e,entries:o}}catch(n){return{error:n instanceof Error?n.message:String(n),path:r,home:e,entries:[]}}}async function xn(t,e){const r=((e==null?void 0:e.trim())||"~").replace(/\n/g,"")||"~",s=`cd -- ${`'${r.replace(/'/g,`'"'"'`)}'`} 2>/dev/null || exit 41; printf 'CTPWD:%s\\n' "$(pwd -P 2>/dev/null || pwd)"; printf 'CTHOME:%s\\n' "$HOME"; ls -1AF 2>/dev/null || ls -1Ap 2>/dev/null || ls -1A`;try{const o=await t.exec(s,{cwd:"~",timeoutMs:12e3}),a=o.stdout||"",i=(o.stderr||"").trim();return o.timedOut?{error:"Listing timed out",path:r,entries:[]}:o.exitCode===41||/exit 41/.test(i)?{error:`Cannot open ${r}`,path:r,entries:[]}:!a.trim()&&(o.exitCode==null||o.exitCode!==0||/Permission denied|Connection refused|Connection reset|Broken pipe|No such file/i.test(i))?{error:i||"SSH listing failed — keep the session connected (password sessions need the live tab)",path:r,entries:[]}:Cn(a,r)}catch(o){return{error:o instanceof Error?o.message:String(o),path:r,entries:[]}}}function Cn(t,e){const r=t.split(/\r?\n/);let n=e,s;const o=[];for(const i of r){if(i.startsWith("CTPWD:")){n=i.slice(6).trim()||n;continue}if(i.startsWith("CTHOME:")){s=i.slice(7).trim()||void 0;continue}!i||i==="."||i===".."||i.startsWith("CTPWD:")||i.startsWith("CTHOME:")||/^\S+@\S+[:#]/.test(i)||o.push(i)}const a=[];for(const i of o){const d=i.endsWith("/"),c=(d?i.slice(0,-1):i).replace(/[*@=|]$/,"");if(!c||c==="."||c==="..")continue;const f=n.endsWith("/")?`${n}${c}`:`${n}/${c}`;a.push({name:c,path:f,kind:d?"dir":"file"})}return a.sort((i,d)=>i.kind!==d.kind?i.kind==="dir"?-1:1:i.name.localeCompare(d.name,void 0,{sensitivity:"base"})),{path:n,home:s,entries:a}}function Pn(){l.ipcMain.handle("sessions:list",async()=>W.list()),l.ipcMain.handle("sessions:save",async(t,e)=>W.upsert(e)),l.ipcMain.handle("sessions:delete",async(t,e)=>W.remove(e)),l.ipcMain.handle("sessions:import-ssh-config",async()=>{const t=u.join(N.homedir(),".ssh","config");let e="";try{e=await b.readFile(t,"utf8")}catch{return{sessions:W.list(),created:0,updated:0,found:0,missingConfig:!0}}const r=tr(e);let n=0,s=0;for(const o of r){const a=o.sshConfigHost,i=W.list().find(d=>d.sshConfigHost===a);await W.upsert({id:i==null?void 0:i.id,name:a,host:o.host,user:o.user||N.userInfo().username,port:o.port,identityFile:o.identityFile,proxyJump:o.proxyJump,sshConfigHost:o.sshConfigHost}),i?s+=1:n+=1}return{sessions:W.list(),created:n,updated:s,found:r.length,missingConfig:!1}}),l.ipcMain.handle("term:create-local-tab",async()=>{const t=F(),e="Local";return E.set(t,{id:t,title:e,backend:null,ready:!1,buffer:[],scrollback:""}),{tabId:t,title:e}}),l.ipcMain.handle("term:start-local",async(t,e)=>{const r=E.get(e.tabId);if(!r)return{error:"Tab not found"};if(r.backend)return{ok:!0};try{const n=Math.max(2,Math.floor(e.cols)),s=Math.max(1,Math.floor(e.rows)),o=je(tt({cols:n,rows:s}));return r.backend=o,r.lastCols=n,r.lastRows=s,xe(r.id,o),{ok:!0}}catch(n){return{error:n instanceof Error?n.message:String(n)}}}),l.ipcMain.handle("term:open-local",async(t,e)=>{try{const r=Math.max(2,Math.floor((e==null?void 0:e.cols)??120)),n=Math.max(1,Math.floor((e==null?void 0:e.rows)??30)),s=je(tt({cols:r,rows:n})),o=F(),a="Local";return E.set(o,{id:o,title:a,backend:s,ready:!1,buffer:[],scrollback:"",lastCols:r,lastRows:n}),xe(o,s),{tabId:o,title:a}}catch(r){return{error:r instanceof Error?r.message:String(r)}}}),l.ipcMain.handle("term:open-ssh",async(t,e,r)=>{const n=W.get(e);if(!n)return{error:"Session not found"};try{const s=Math.max(2,Math.floor((r==null?void 0:r.cols)??120)),o=Math.max(1,Math.floor((r==null?void 0:r.rows)??30)),a=wr(n,{cols:s,rows:o}),i=F(),d=n.name;return E.set(i,{id:i,title:d,backend:a,ready:!1,buffer:[],scrollback:"",lastCols:s,lastRows:o}),xe(i,a),{tabId:i,title:d,kind:"ssh",label:`${n.user}@${n.host}`}}catch(s){return{error:s instanceof Error?s.message:String(s)}}}),l.ipcMain.handle("term:close",async(t,e)=>{var n,s,o;const r=E.get(e);r&&((n=r.unsub)==null||n.call(r),(s=r.unsubExit)==null||s.call(r),await((o=r.backend)==null?void 0:o.dispose()),E.delete(e))}),l.ipcMain.handle("term:ready",async(t,e)=>{const r=E.get(e);if(!r)return;r.ready=!0;const n=r.buffer.splice(0);for(const s of n)It(r,s),g==null||g.webContents.send("term:data",{tabId:e,data:s});ee(e)}),l.ipcMain.handle("term:write",async(t,e)=>{const r=E.get(e.tabId);r!=null&&r.backend&&(r.backend.write(e.data),(e.data.includes(`
-`)||e.data.includes("\r"))&&(setTimeout(()=>void ee(e.tabId),120),setTimeout(()=>void ee(e.tabId),400)))}),l.ipcMain.handle("term:get-cwd",async(t,e)=>{const r=E.get(e);if(!r)return{cwd:null};if(r.lastCwd)return{cwd:r.lastCwd};if(!r.backend)return{cwd:null};try{const n=await r.backend.getCwd();return n&&Le(e,n),{cwd:n}}catch{return{cwd:null}}}),l.ipcMain.handle("term:resize",async(t,e)=>{const r=E.get(e.tabId);if(!(r!=null&&r.backend))return;const n=Math.max(2,Math.floor(e.cols)),s=Math.max(1,Math.floor(e.rows));r.lastCols===n&&r.lastRows===s||(r.lastCols=n,r.lastRows=s,r.backend.resize(n,s))}),l.ipcMain.handle("settings:api-key-status",async()=>({hasKey:!!(await se()).trim()})),l.ipcMain.handle("settings:set-api-key",async(t,e)=>(await cn(e.trim()),{ok:!0})),l.ipcMain.handle("settings:clear-api-key",async()=>(await ln(),{ok:!0})),l.ipcMain.handle("settings:get",async()=>A),l.ipcMain.handle("board:get",async()=>{try{const t=await b.readFile(rt(),"utf8");return JSON.parse(t)}catch{return{cards:[],camera:{x:0,y:0,zoom:1}}}}),l.ipcMain.handle("board:save",async(t,e)=>(await b.mkdir(Y(),{recursive:!0}),await b.writeFile(rt(),JSON.stringify(e,null,2),"utf8"),{ok:!0})),l.ipcMain.handle("settings:set-model",async(t,e)=>(await de({...A,modelId:e.trim()||"composer-2.5"}),A)),l.ipcMain.handle("settings:set-chat-mode",async(t,e)=>{const r=At(e);return await de({...A,chatMode:r}),Tt(r),A}),l.ipcMain.handle("settings:set-locale",async(t,e)=>(await de({...A,locale:Nt(e)}),A)),l.ipcMain.handle("settings:set-local-shell",async(t,e)=>(await de({...A,localShell:vt(e)}),A)),l.ipcMain.handle("settings:list-local-shells",async()=>process.platform==="win32"?{platform:"win32",current:A.localShell,shells:ir()}:{platform:process.platform,current:A.localShell,shells:[]}),l.ipcMain.handle("settings:list-models",async()=>{const t=await se();return Mr(t)}),l.ipcMain.handle("usage:get-session",async()=>D),l.ipcMain.handle("usage:reset-session",async()=>(D=Et(),D)),l.ipcMain.handle("usage:get-account",async()=>{const t=await se(),e=await Dr(t);return e?{ok:!0,usage:e}:{ok:!1}}),l.ipcMain.handle("shell:open-external",async(t,e)=>/^https?:\/\//i.test(e)?(await l.shell.openExternal(e),{ok:!0}):{ok:!1}),l.ipcMain.handle("fs:home",async()=>N.homedir()),l.ipcMain.handle("metrics:local",async()=>fe()),l.ipcMain.handle("metrics:tab",async(t,e)=>{const r=typeof e=="string"?e.trim():"";if(!r)return fe();const n=E.get(r);return n!=null&&n.backend&&n.backend.target.kind==="ssh"&&"session"in n.backend?bn(n.backend):fe()}),l.ipcMain.handle("fs:list",async(t,e)=>ct(e)),l.ipcMain.handle("fs:list-tab",async(t,e)=>{const r=E.get(e.tabId);return r!=null&&r.backend?r.backend.target.kind==="local"?ct(e.dirPath):xn(r.backend,e.dirPath):{error:"No tab",path:"",entries:[]}}),l.ipcMain.handle("fs:read-file",async(t,e)=>it(e)),l.ipcMain.handle("fs:write-file",async(t,e)=>at(e==null?void 0:e.path,(e==null?void 0:e.content)??"")),l.ipcMain.handle("fs:read-tab-file",async(t,e)=>{const r=E.get(e.tabId);return r!=null&&r.backend?r.backend.target.kind==="local"?it(e.path):Sn(r.backend,e.path):{error:"No tab"}}),l.ipcMain.handle("fs:write-tab-file",async(t,e)=>{const r=E.get(e.tabId);return r!=null&&r.backend?r.backend.target.kind==="local"?at(e.path,e.content??""):Mn(r.backend,e.path,e.content??""):{error:"No tab"}}),l.ipcMain.handle("fs:copy-into",async(t,e)=>{const r=(e.destDir||"").trim(),n=(e.sources||[]).map(o=>o.trim()).filter(Boolean),s=(e.transferId||"").trim()||F();return r?n.length?hn(n,r,s):{error:"No files"}:{error:"No destination"}}),l.ipcMain.handle("fs:upload-tab",async(t,e)=>{const r=E.get(e.tabId),n=r==null?void 0:r.backend;if(!n||n.target.kind!=="ssh"||!("session"in n))return{error:"No SSH tab"};const s=(e.destDir||"").trim()||"~",o=(e.sources||[]).map(i=>i.trim()).filter(Boolean),a=(e.transferId||"").trim()||F();return o.length?br(n.session,o,s,{onProgress:i=>oe({transferId:a,percent:i.percent,transferred:i.transferred,total:i.total,currentName:i.currentName})}):{error:"No files"}}),l.ipcMain.handle("fs:download-tab",async(t,e)=>{const r=E.get(e.tabId),n=r==null?void 0:r.backend;if(!n||n.target.kind!=="ssh"||!("session"in n))return{error:"No SSH tab"};const s=(e.destDir||"").trim(),o=(e.sources||[]).map(i=>i.trim()).filter(Boolean),a=(e.transferId||"").trim()||F();if(!s)return{error:"No destination"};if(!o.length)return{error:"No files"};try{await b.mkdir(s,{recursive:!0})}catch(i){return{error:i instanceof Error?i.message:String(i)}}return kr(n.session,o,s,{onProgress:i=>oe({transferId:a,percent:i.percent,transferred:i.transferred,total:i.total,currentName:i.currentName})})}),l.ipcMain.handle("fs:rename",async(t,e)=>{const r=(e.fromPath||"").trim(),n=(e.toPath||"").trim();if(!r||!n)return{error:"Missing path"};if(r.includes("\0")||n.includes("\0"))return{error:"Invalid path"};try{return await b.rename(r,n),{ok:!0}}catch(s){return{error:s instanceof Error?s.message:String(s)}}}),l.ipcMain.handle("fs:delete",async(t,e)=>{const r=(e.targetPath||"").trim();if(!r)return{error:"Missing path"};if(r.includes("\0"))return{error:"Invalid path"};try{return await b.rm(r,{recursive:!0,force:!1}),{ok:!0}}catch(n){return{error:n instanceof Error?n.message:String(n)}}}),l.ipcMain.handle("fs:rename-tab",async(t,e)=>{const r=E.get(e.tabId);if(!(r!=null&&r.backend))return{error:"No tab"};const n=(e.fromPath||"").trim(),s=(e.toPath||"").trim();if(!n||!s)return{error:"Missing path"};if(n.includes("\0")||s.includes("\0"))return{error:"Invalid path"};if(r.backend.target.kind==="local")try{return await b.rename(n,s),{ok:!0}}catch(i){return{error:i instanceof Error?i.message:String(i)}}const o=i=>`'${i.replace(/'/g,`'"'"'`)}'`,a=await r.backend.exec(`mv -- ${o(n)} ${o(s)}`,{cwd:"~",timeoutMs:3e4});return a.timedOut?{error:"Rename timed out"}:a.exitCode!==0?{error:(a.stderr||a.stdout||"Rename failed").trim().slice(0,400)}:{ok:!0}}),l.ipcMain.handle("fs:delete-tab",async(t,e)=>{const r=E.get(e.tabId);if(!(r!=null&&r.backend))return{error:"No tab"};const n=(e.targetPath||"").trim();if(!n)return{error:"Missing path"};if(n.includes("\0"))return{error:"Invalid path"};if(n==="/"||n==="~"||n===".")return{error:"Refusing to delete that path"};if(r.backend.target.kind==="local")try{return await b.rm(n,{recursive:!0,force:!1}),{ok:!0}}catch(a){return{error:a instanceof Error?a.message:String(a)}}const s=a=>`'${a.replace(/'/g,`'"'"'`)}'`,o=await r.backend.exec(`rm -rf -- ${s(n)}`,{cwd:"~",timeoutMs:6e4});return o.timedOut?{error:"Delete timed out"}:o.exitCode!==0?{error:(o.stderr||o.stdout||"Delete failed").trim().slice(0,400)}:{ok:!0}}),l.ipcMain.handle("agent:send",async(t,e)=>{const r=E.get(e.tabId);if(!(r!=null&&r.backend))return{error:"No active terminal tab"};const n=r.backend,s=await se(),o=F(),a=new AbortController;Q.set(o,a);let i=!1,d=!1;return(async()=>{try{n.target.kind==="local"?await ee(e.tabId):r.lastCwd&&n.target.kind==="ssh"&&"setCwd"in n&&n.setCwd(r.lastCwd);const c=n.target,f=on(r),m=c.kind==="ssh"?`Active session is SSH (${c.hostLabel}). Remote working directory: ${c.cwd}. Shell proposes run on that remote host.`:`Active session is local. Working directory: ${c.cwd}.`;for await(const p of ze({message:e.message,target:c,apiKey:s,modelId:A.modelId,chatMode:A.chatMode,locale:A.locale,signal:a.signal,context:{notes:m,...f?{terminalTail:f}:{}}})){if(a.signal.aborted)break;if(p.type==="status"&&(p.status==="done"||p.status==="error"||p.status==="cancelled")&&(d=!0),p.type==="usage"&&!i){i=!0;const k=nt(p.usage,p.cost);g==null||g.webContents.send("usage:updated",{last:p,session:k})}if(g==null||g.webContents.send("agent:event",{runId:o,tabId:e.tabId,event:p}),p.type==="propose"){if(A.chatMode!=="agent")continue;if(a.signal.aborted)break;const k=await vn(o,e.tabId,p.action);if(a.signal.aborted)break;if(ae.remember(p.action,k),k.type==="deny"){g==null||g.webContents.send("agent:event",{runId:o,tabId:e.tabId,event:{type:"text",text:`
-Denied.${k.feedback?` Feedback: ${k.feedback}`:""}
-`}});continue}if(!p.action.command||ae.mode==="read-only"&&p.action.effect!=="read")continue;if(a.signal.aborted)break;n.write(`
-# agent: ${p.action.command}
-`);const y=await n.exec(p.action.command);if(a.signal.aborted)break;const h=[y.stdout,y.stderr,y.timedOut?"[timed out]":`[exit ${y.exitCode}]`].filter(Boolean).join("");g==null||g.webContents.send("agent:event",{runId:o,tabId:e.tabId,event:{type:"text",text:`
-${h}
-`}})}}a.signal.aborted&&!d&&(g==null||g.webContents.send("agent:event",{runId:o,tabId:e.tabId,event:{type:"status",status:"cancelled",detail:"Stopped"}}))}catch(c){const f=a.signal.aborted||c instanceof Error&&c.name==="AbortError";g==null||g.webContents.send("agent:event",{runId:o,tabId:e.tabId,event:f?{type:"status",status:"cancelled",detail:"Stopped"}:{type:"status",status:"error",detail:c instanceof Error?c.message:String(c)}})}finally{Q.delete(o)}})(),{runId:o}}),l.ipcMain.handle("agent:stop",async(t,e)=>({ok:!0,...an(e==null?void 0:e.runId)})),l.ipcMain.handle("agent:resolve-approval",async(t,e)=>{const r=ce.get(e.runId);r&&(ce.delete(e.runId),r.resolve(e.decision))}),l.ipcMain.handle("meeting:list",async()=>Lr()),l.ipcMain.handle("meeting:create",async(t,e)=>jr(e)),l.ipcMain.handle("meeting:get",async(t,e)=>te(e)),l.ipcMain.handle("meeting:save",async(t,e)=>{const{id:r,...n}=e;return Te(r,n)}),l.ipcMain.handle("meeting:save-audio",async(t,e)=>{const r=e.data instanceof Uint8Array?e.data:new Uint8Array(e.data);return Br(e.id,r)}),l.ipcMain.handle("meeting:delete",async(t,e)=>Ur(e)),l.ipcMain.handle("meeting:export",async(t,e)=>Hr(e,g)),l.ipcMain.handle("meeting:summarize",async(t,e)=>{const r=await te(e);if(!r)return{error:"not_found"};const n=await se();if(!n.trim())return{error:"no_api_key"};const s=r.transcript.trim(),o=r.notes.trim();if(!s&&!o)return{error:"no_content"};const i=A.locale==="ko"?["아래 회의 받아쓰기와 메모를 한국어로 요약하세요.","마크다운만 출력하세요. 셸 명령은 실행하지 마세요.","","## 받아쓰기",s||"(없음)","","## 메모",o||"(없음)","","포함할 내용:","- 한 줄 개요","- 핵심 결정","- 액션 아이템 (담당/기한 있으면 포함)","- 미결 질문"].join(`
-`):["Summarize the meeting transcript and notes below.","Reply with markdown only. Do not run shell commands.","","## Transcript",s||"(none)","","## Notes",o||"(none)","","Include:","- One-line overview","- Key decisions","- Action items (owner/due if present)","- Open questions"].join(`
-`),d=F(),c=new AbortController;Q.set(d,c);const f=[];let m=!1,p=null;try{for await(const h of ze({message:i,target:{kind:"local",cwd:N.homedir()},apiKey:n,modelId:A.modelId,chatMode:"ask",locale:A.locale,signal:c.signal,context:{notes:"Meeting summarization only. Do not propose or run shell commands."}})){if(c.signal.aborted)break;if(h.type==="text"&&f.push(h.text),h.type==="usage"&&!m){m=!0;const M=nt(h.usage,h.cost);g==null||g.webContents.send("usage:updated",{last:h,session:M})}if(h.type==="status"&&h.status==="error"&&(p=h.detail||"failed"),h.type==="status"&&h.status==="cancelled")return{error:"cancelled",runId:d}}}catch(h){return Q.delete(d),{error:h instanceof Error?h.message:String(h),runId:d}}finally{Q.delete(d)}if(p)return{error:/api key is not set|api key/i.test(p)&&/not set|settings/i.test(p)?"no_api_key":p,runId:d};const k=f.join("").trim();if(!k)return{error:"empty",runId:d};const y=await Te(e,{summary:k,status:"done"});return{ok:!0,summary:k,meeting:y,runId:d}})}function vn(t,e,r){return ae.needsApproval(r)?new Promise(n=>{ce.set(t,{resolve:n,action:r,tabId:e}),g==null||g.webContents.send("agent:approval",{runId:t,tabId:e,action:r})}):Promise.resolve({type:"allow-once"})}l.app.setName("Drift");process.platform==="win32"&&l.app.setAppUserModelId("app.drift.desktop");function Tn(){if(process.platform!=="win32")return;const t=l.app.isPackaged?u.join(process.resourcesPath,"win-openssh"):u.join(__dirname,"../resources/win-openssh");mr(t)}l.app.whenReady().then(async()=>{var r;const t=$t(),e=P.existsSync(G("icon.png"))?G("icon.png"):void 0;l.app.setAboutPanelOptions({applicationName:"Drift",applicationVersion:l.app.getVersion(),copyright:"Drift",...e?{iconPath:e}:{}}),process.platform==="darwin"&&t&&((r=l.app.dock)==null||r.setIcon(t)),Tn(),W=new er(Y()),await W.load(),A=await un(),Tt(A.chatMode),Pn(),dn(),ot(),nn(()=>g),l.app.on("activate",()=>{l.BrowserWindow.getAllWindows().length===0&&ot()})});l.app.on("window-all-closed",()=>{var t,e;for(const r of E.values())(t=r.unsub)==null||t.call(r),(e=r.backend)==null||e.dispose();E.clear(),process.platform!=="darwin"&&l.app.quit()});process.on("uncaughtException",t=>{l.dialog.showErrorBox("Drift error",t.message)});
+`;
+  await promises.writeFile(scriptPath, script, { mode: 493 });
+  await promises.chmod(scriptPath, 493);
+  const child = node_child_process.spawn("/bin/bash", [scriptPath], {
+    detached: true,
+    stdio: "ignore"
+  });
+  child.unref();
+  setTimeout(() => electron.app.quit(), 300);
+}
+function initAutoUpdater(getWindow) {
+  if (started) return;
+  started = true;
+  electron.ipcMain.handle("updater:get-version", () => ({
+    version: electron.app.getVersion(),
+    packaged: electron.app.isPackaged
+  }));
+  electron.ipcMain.handle("updater:check", async () => {
+    var _a;
+    if (!electron.app.isPackaged) return { ok: false, reason: "dev" };
+    try {
+      const result = await electronUpdater.autoUpdater.checkForUpdates();
+      return {
+        ok: true,
+        versionInfo: ((_a = result == null ? void 0 : result.updateInfo) == null ? void 0 : _a.version) ?? null
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: "error",
+        message: err instanceof Error ? err.message : String(err)
+      };
+    }
+  });
+  electron.ipcMain.handle("updater:download", async () => {
+    if (!electron.app.isPackaged) return { ok: false, reason: "dev" };
+    try {
+      if (process.platform === "darwin") {
+        await downloadMacUpdate(getWindow);
+      } else {
+        await electronUpdater.autoUpdater.downloadUpdate();
+      }
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: "error",
+        message: err instanceof Error ? err.message : String(err)
+      };
+    }
+  });
+  electron.ipcMain.handle("updater:install", async () => {
+    if (!electron.app.isPackaged) return { ok: false, reason: "dev" };
+    try {
+      if (process.platform === "darwin") {
+        await installMacUpdate();
+        return { ok: true, version: downloadedVersion };
+      }
+      electronUpdater.autoUpdater.quitAndInstall(false, true);
+      return { ok: true, version: downloadedVersion };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      send(getWindow(), "updater:error", { message });
+      return {
+        ok: false,
+        reason: "error",
+        message
+      };
+    }
+  });
+  electron.ipcMain.handle("updater:dismiss", (_e, version) => {
+    if (typeof version === "string" && version.length > 0) {
+      writeDismissed(version);
+    }
+    return { ok: true };
+  });
+  if (!electron.app.isPackaged) return;
+  electronUpdater.autoUpdater.autoDownload = false;
+  electronUpdater.autoUpdater.autoInstallOnAppQuit = process.platform !== "darwin";
+  electronUpdater.autoUpdater.allowPrerelease = false;
+  electronUpdater.autoUpdater.on("update-available", (info) => {
+    pendingInfo = info;
+    const dismissed = readDismissed();
+    if (dismissed.version && dismissed.version === info.version) {
+      return;
+    }
+    const payload = {
+      version: info.version,
+      currentVersion: electron.app.getVersion(),
+      releaseName: info.releaseName,
+      releaseNotes: toPlainReleaseNotes(info.releaseNotes)
+    };
+    send(getWindow(), "updater:available", payload);
+  });
+  electronUpdater.autoUpdater.on("download-progress", (progress) => {
+    if (process.platform === "darwin") return;
+    const payload = {
+      percent: progress.percent,
+      bytesPerSecond: progress.bytesPerSecond,
+      transferred: progress.transferred,
+      total: progress.total
+    };
+    send(getWindow(), "updater:progress", payload);
+  });
+  electronUpdater.autoUpdater.on("update-downloaded", (info) => {
+    if (process.platform === "darwin") return;
+    downloadedVersion = info.version;
+    clearDismissed();
+    send(getWindow(), "updater:downloaded", {
+      version: info.version,
+      currentVersion: electron.app.getVersion()
+    });
+  });
+  electronUpdater.autoUpdater.on("error", (err) => {
+    send(getWindow(), "updater:error", {
+      message: (err == null ? void 0 : err.message) || String(err)
+    });
+  });
+  const runCheck = () => {
+    void electronUpdater.autoUpdater.checkForUpdates().catch(() => {
+    });
+  };
+  setTimeout(runCheck, CHECK_DELAY_MS);
+  setInterval(runCheck, CHECK_INTERVAL_MS);
+}
+const PREFERRED = [
+  "id_ed25519",
+  "id_ecdsa",
+  "id_rsa",
+  "id_ed25519_sk",
+  "id_ecdsa_sk"
+];
+const SKIP_NAMES = /* @__PURE__ */ new Set([
+  "config",
+  "known_hosts",
+  "known_hosts.old",
+  "authorized_keys",
+  "authorized_keys2"
+]);
+function sshDir() {
+  return path.join(os.homedir(), ".ssh");
+}
+function toSshDisplayPath(absPath) {
+  const home = os.homedir();
+  const normalized = path.resolve(absPath);
+  if (normalized === home) return "~";
+  if (normalized.startsWith(home + path.sep)) {
+    return `~/${normalized.slice(home.length + 1).split(path.sep).join("/")}`;
+  }
+  return normalized;
+}
+function expandSshPath(p) {
+  const trimmed = p.trim();
+  if (!trimmed) return trimmed;
+  if (trimmed === "~") return os.homedir();
+  if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+    return path.join(os.homedir(), trimmed.slice(2));
+  }
+  return trimmed;
+}
+function preferredRank(name) {
+  const idx = PREFERRED.indexOf(name);
+  return idx === -1 ? PREFERRED.length + 1 : idx;
+}
+async function looksLikePrivateKey(filePath, name) {
+  if (PREFERRED.includes(name) || name.startsWith("id_")) {
+    return true;
+  }
+  try {
+    const head = (await promises.readFile(filePath, { encoding: "utf8" })).slice(0, 120);
+    return /BEGIN .*PRIVATE KEY|BEGIN OPENSSH PRIVATE KEY/i.test(head);
+  } catch {
+    return false;
+  }
+}
+async function listSshIdentities() {
+  const dir = sshDir();
+  if (!node_fs.existsSync(dir)) return [];
+  let names;
+  try {
+    names = await promises.readdir(dir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of names) {
+    if (name.endsWith(".pub") || name.startsWith(".")) continue;
+    if (SKIP_NAMES.has(name)) continue;
+    const full = path.join(dir, name);
+    try {
+      const st = await promises.stat(full);
+      if (!st.isFile()) continue;
+      if (!await looksLikePrivateKey(full, name)) continue;
+    } catch {
+      continue;
+    }
+    out.push({
+      path: toSshDisplayPath(full),
+      label: `~/.ssh/${name}`,
+      hasPublicKey: node_fs.existsSync(`${full}.pub`)
+    });
+  }
+  out.sort((a, b) => {
+    const an = path.basename(expandSshPath(a.path));
+    const bn = path.basename(expandSshPath(b.path));
+    const rank = preferredRank(an) - preferredRank(bn);
+    if (rank !== 0) return rank;
+    return an.localeCompare(bn);
+  });
+  return out;
+}
+async function defaultSshIdentity() {
+  var _a;
+  const list = await listSshIdentities();
+  return ((_a = list[0]) == null ? void 0 : _a.path) ?? null;
+}
+async function pickSshIdentity(parent) {
+  const dir = sshDir();
+  const opts = {
+    title: "Select SSH private key",
+    defaultPath: node_fs.existsSync(dir) ? dir : os.homedir(),
+    properties: ["openFile", "treatPackageAsDirectory"]
+  };
+  const result = parent ? await electron.dialog.showOpenDialog(parent, opts) : await electron.dialog.showOpenDialog(opts);
+  if (result.canceled || !result.filePaths[0]) return null;
+  return toSshDisplayPath(result.filePaths[0]);
+}
+async function readSshPublicKey(identityPath) {
+  const privatePath = expandSshPath(identityPath);
+  if (!privatePath) return { ok: false, reason: "empty" };
+  const pubPath = privatePath.endsWith(".pub") ? privatePath : `${privatePath}.pub`;
+  if (!node_fs.existsSync(pubPath)) return { ok: false, reason: "missing" };
+  try {
+    const content = (await promises.readFile(pubPath, "utf8")).trim();
+    if (!content) return { ok: false, reason: "empty" };
+    return { ok: true, content, path: toSshDisplayPath(pubPath) };
+  } catch {
+    return { ok: false, reason: "read_failed" };
+  }
+}
+function sshKeygenBinary() {
+  if (process.platform === "win32") {
+    const sysRoot = process.env.SystemRoot || "C:\\Windows";
+    const system = path.join(sysRoot, "System32", "OpenSSH", "ssh-keygen.exe");
+    if (node_fs.existsSync(system)) return system;
+    return "ssh-keygen";
+  }
+  return "/usr/bin/ssh-keygen";
+}
+function safeKeyStem(nameHint) {
+  const raw = (nameHint || "drift").trim().toLowerCase() || "drift";
+  const cleaned = raw.replace(/[^a-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+  return (cleaned || "drift").slice(0, 32);
+}
+async function generateSshIdentity(nameHint) {
+  var _a;
+  const dir = sshDir();
+  try {
+    node_fs.mkdirSync(dir, { recursive: true, mode: 448 });
+  } catch (err) {
+    return {
+      ok: false,
+      reason: "mkdir_failed",
+      detail: err instanceof Error ? err.message : String(err)
+    };
+  }
+  const stem = safeKeyStem(nameHint);
+  let base = path.join(dir, `drift_${stem}_ed25519`);
+  let n = 0;
+  while (node_fs.existsSync(base) || node_fs.existsSync(`${base}.pub`)) {
+    n += 1;
+    base = path.join(dir, `drift_${stem}_ed25519_${n}`);
+  }
+  const bin = sshKeygenBinary();
+  const result = node_child_process.spawnSync(
+    bin,
+    ["-t", "ed25519", "-N", "", "-f", base, "-C", `drift@${os.hostname()}`],
+    { encoding: "utf8", windowsHide: true }
+  );
+  if (result.status !== 0 || !node_fs.existsSync(base) || !node_fs.existsSync(`${base}.pub`)) {
+    return {
+      ok: false,
+      reason: "keygen_failed",
+      detail: (result.stderr || result.stdout || ((_a = result.error) == null ? void 0 : _a.message) || "").trim()
+    };
+  }
+  return {
+    ok: true,
+    path: toSshDisplayPath(base),
+    publicKeyPath: toSshDisplayPath(`${base}.pub`)
+  };
+}
+async function installSshPublicKey(input) {
+  const pub = await readSshPublicKey(input.identityPath);
+  if (!pub.ok) return { ok: false, reason: pub.reason };
+  const result = await installAuthorizedKey(
+    input.session,
+    pub.content,
+    input.password
+  );
+  if (result.ok) return { ok: true };
+  return { ok: false, reason: "install_failed", detail: result.message };
+}
+function secretsDir() {
+  return path.join(electron.app.getPath("userData"), "drift", "ssh-secrets");
+}
+function passwordPath(sessionId) {
+  const safe = sessionId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return path.join(secretsDir(), `${safe}.bin`);
+}
+async function hasSshPassword(sessionId) {
+  if (!sessionId.trim()) return false;
+  return node_fs.existsSync(passwordPath(sessionId));
+}
+async function loadSshPassword(sessionId) {
+  if (!sessionId.trim()) return "";
+  try {
+    const buf = await promises.readFile(passwordPath(sessionId));
+    if (electron.safeStorage.isEncryptionAvailable()) {
+      return electron.safeStorage.decryptString(buf);
+    }
+    return buf.toString("utf8");
+  } catch {
+    return "";
+  }
+}
+async function saveSshPassword(sessionId, password) {
+  const id = sessionId.trim();
+  if (!id) throw new Error("Missing session id");
+  const value = password.trim();
+  if (!value) {
+    await clearSshPassword(id);
+    return;
+  }
+  await promises.mkdir(secretsDir(), { recursive: true });
+  const file = passwordPath(id);
+  if (electron.safeStorage.isEncryptionAvailable()) {
+    await promises.writeFile(file, electron.safeStorage.encryptString(value));
+  } else {
+    await promises.writeFile(file, value, { encoding: "utf8", mode: 384 });
+  }
+}
+async function clearSshPassword(sessionId) {
+  if (!sessionId.trim()) return;
+  try {
+    await promises.unlink(passwordPath(sessionId));
+  } catch {
+  }
+}
+const SCROLLBACK_MAX_CHARS = 48e3;
+const AGENT_TAIL_MAX_CHARS = 8e3;
+function stripAnsi(s) {
+  return s.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/\x1b[PX^_][\s\S]*?\x1b\\/g, "").replace(/\x1b./g, "");
+}
+function appendScrollback(tab, data) {
+  tab.scrollback += data;
+  if (tab.scrollback.length > SCROLLBACK_MAX_CHARS) {
+    tab.scrollback = tab.scrollback.slice(-SCROLLBACK_MAX_CHARS);
+  }
+}
+function terminalTailForAgent(tab) {
+  const plain = stripAnsi(tab.scrollback).replace(/\r/g, "");
+  if (plain.length <= AGENT_TAIL_MAX_CHARS) return plain.trimEnd();
+  return plain.slice(-AGENT_TAIL_MAX_CHARS).replace(/^[^\n]*\n/, "").trimEnd();
+}
+let cwdPollTimer = null;
+let mainWindow = null;
+let sessionStore;
+const tabs = /* @__PURE__ */ new Map();
+const policy = new ApprovalPolicy("ask");
+const pendingApprovals = /* @__PURE__ */ new Map();
+const activeAgentRuns = /* @__PURE__ */ new Map();
+let appSettings = {
+  modelId: "composer-2.5",
+  chatMode: "agent",
+  locale: "ko",
+  localShell: "powershell"
+};
+function normalizeLocalShell(value) {
+  if (value === "cmd" || value === "gitbash" || value === "powershell") {
+    return value;
+  }
+  return "powershell";
+}
+function localPtyOpts(size) {
+  return {
+    cols: size == null ? void 0 : size.cols,
+    rows: size == null ? void 0 : size.rows,
+    shellKind: process.platform === "win32" ? appSettings.localShell : void 0
+  };
+}
+function stopAgentRuns(runId) {
+  const stopped = [];
+  for (const [id, pending] of [...pendingApprovals.entries()]) {
+    if (runId && id !== runId) continue;
+    pendingApprovals.delete(id);
+    pending.resolve({ type: "deny", feedback: "Stopped by user" });
+    if (!stopped.includes(id)) stopped.push(id);
+  }
+  for (const [id, controller] of [...activeAgentRuns.entries()]) {
+    if (runId && id !== runId) continue;
+    if (!controller.signal.aborted) controller.abort();
+    if (!stopped.includes(id)) stopped.push(id);
+  }
+  return { stopped };
+}
+function applyChatModeToPolicy(mode) {
+  policy.mode = mode === "ask" ? "read-only" : "ask";
+  if (mode !== "agent") {
+    policy.sessionRules = [];
+  }
+}
+let sessionUsage = emptySessionUsage();
+function emptySessionUsage() {
+  return {
+    turns: 0,
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 0
+    },
+    cost: { rawCostCents: 0, chargedCents: 0 }
+  };
+}
+function dataDir() {
+  return path.join(electron.app.getPath("userData"), "drift");
+}
+function brandAsset(...parts) {
+  return path.join(__dirname, "../resources/brand", ...parts);
+}
+function loadAppIcon() {
+  const candidates = process.platform === "win32" ? [brandAsset("icon.ico"), brandAsset("icon.png")] : [brandAsset("icon.icns"), brandAsset("icon.png"), brandAsset("icon.ico")];
+  for (const file of candidates) {
+    if (!node_fs.existsSync(file)) continue;
+    const image = electron.nativeImage.createFromPath(file);
+    if (!image.isEmpty()) return image;
+  }
+  return void 0;
+}
+function apiKeyPath() {
+  return path.join(dataDir(), "api-key.bin");
+}
+function settingsPath() {
+  return path.join(dataDir(), "settings.json");
+}
+function boardPath() {
+  return path.join(dataDir(), "board.json");
+}
+async function loadApiKey() {
+  try {
+    const { readFile: rf } = await import("node:fs/promises");
+    const buf = await rf(apiKeyPath());
+    if (electron.safeStorage.isEncryptionAvailable()) {
+      return electron.safeStorage.decryptString(buf);
+    }
+    return buf.toString("utf8");
+  } catch {
+    return "";
+  }
+}
+async function saveApiKey(key) {
+  const { mkdir: mkdir2, writeFile: writeFile2 } = await import("node:fs/promises");
+  await mkdir2(dataDir(), { recursive: true });
+  if (electron.safeStorage.isEncryptionAvailable()) {
+    await writeFile2(apiKeyPath(), electron.safeStorage.encryptString(key));
+  } else {
+    await writeFile2(apiKeyPath(), key, "utf8");
+  }
+}
+async function clearApiKey() {
+  const { unlink } = await import("node:fs/promises");
+  try {
+    await unlink(apiKeyPath());
+  } catch {
+  }
+}
+function normalizeChatMode(value) {
+  return value === "ask" || value === "plan" || value === "agent" ? value : "agent";
+}
+function normalizeLocale(value) {
+  return value === "en" ? "en" : "ko";
+}
+async function loadSettings() {
+  var _a;
+  try {
+    const raw = await promises.readFile(settingsPath(), "utf8");
+    const parsed = JSON.parse(raw);
+    return {
+      modelId: ((_a = parsed.modelId) == null ? void 0 : _a.trim()) || "composer-2.5",
+      chatMode: normalizeChatMode(parsed.chatMode),
+      locale: normalizeLocale(parsed.locale),
+      localShell: normalizeLocalShell(parsed.localShell)
+    };
+  } catch {
+    return {
+      modelId: "composer-2.5",
+      chatMode: "agent",
+      locale: "ko",
+      localShell: "powershell"
+    };
+  }
+}
+async function saveSettings(next) {
+  const { mkdir: mkdir2, writeFile: writeFile2 } = await import("node:fs/promises");
+  await mkdir2(dataDir(), { recursive: true });
+  appSettings = next;
+  await writeFile2(settingsPath(), JSON.stringify(next, null, 2), "utf8");
+}
+function addUsage(usage, cost) {
+  sessionUsage = {
+    turns: sessionUsage.turns + 1,
+    usage: {
+      inputTokens: sessionUsage.usage.inputTokens + usage.inputTokens,
+      outputTokens: sessionUsage.usage.outputTokens + usage.outputTokens,
+      cacheReadTokens: sessionUsage.usage.cacheReadTokens + usage.cacheReadTokens,
+      cacheWriteTokens: sessionUsage.usage.cacheWriteTokens + usage.cacheWriteTokens,
+      totalTokens: sessionUsage.usage.totalTokens + usage.totalTokens,
+      reasoningTokens: (sessionUsage.usage.reasoningTokens ?? 0) + (usage.reasoningTokens ?? 0)
+    },
+    cost: {
+      rawCostCents: sessionUsage.cost.rawCostCents + ((cost == null ? void 0 : cost.rawCostCents) ?? 0),
+      chargedCents: sessionUsage.cost.chargedCents + ((cost == null ? void 0 : cost.chargedCents) ?? 0)
+    }
+  };
+  return sessionUsage;
+}
+function sendShortcut(action, payload) {
+  mainWindow == null ? void 0 : mainWindow.webContents.send("app:shortcut", { action, ...payload });
+}
+function setWindowZoom(factor) {
+  const wc = mainWindow == null ? void 0 : mainWindow.webContents;
+  if (!wc) return;
+  const next = Math.min(2, Math.max(0.5, factor));
+  wc.setZoomFactor(next);
+  sendShortcut("refit-terminals");
+}
+function nudgeWindowZoom(delta) {
+  const wc = mainWindow == null ? void 0 : mainWindow.webContents;
+  if (!wc) return;
+  setWindowZoom(wc.getZoomFactor() + delta);
+}
+function buildApplicationMenu() {
+  const isMac = process.platform === "darwin";
+  const tabItems = [];
+  for (let i = 1; i <= 9; i++) {
+    tabItems.push({
+      label: `Tab ${i}`,
+      accelerator: `CmdOrCtrl+${i}`,
+      click: () => sendShortcut("focus-tab", { index: i - 1 })
+    });
+  }
+  const fileMenu = {
+    label: "File",
+    submenu: [
+      {
+        label: "Save",
+        accelerator: "CmdOrCtrl+S",
+        click: () => sendShortcut("save")
+      },
+      {
+        label: "Find",
+        accelerator: "CmdOrCtrl+F",
+        click: () => sendShortcut("find")
+      },
+      { type: "separator" },
+      {
+        label: "Close Tab",
+        accelerator: "CmdOrCtrl+W",
+        click: () => sendShortcut("close-tab")
+      }
+    ]
+  };
+  const editMenu = {
+    label: "Edit",
+    submenu: [
+      { role: "undo" },
+      { role: "redo" },
+      { type: "separator" },
+      { role: "cut" },
+      { role: "copy" },
+      { role: "paste" },
+      ...isMac ? [{ role: "pasteAndMatchStyle" }] : [],
+      { role: "delete" },
+      { role: "selectAll" },
+      { type: "separator" },
+      {
+        label: "Toggle Line Comment",
+        accelerator: "CmdOrCtrl+/",
+        click: () => sendShortcut("toggle-comment")
+      }
+    ]
+  };
+  const shellMenu = {
+    label: "Shell",
+    submenu: [
+      {
+        label: "New Local Terminal",
+        accelerator: "CmdOrCtrl+T",
+        click: () => sendShortcut("new-local")
+      },
+      { type: "separator" },
+      {
+        label: "Clear Scrollback",
+        accelerator: "CmdOrCtrl+K",
+        click: () => sendShortcut("clear")
+      },
+      { type: "separator" },
+      {
+        label: "Previous Tab",
+        accelerator: "CmdOrCtrl+Shift+[",
+        click: () => sendShortcut("prev-tab")
+      },
+      {
+        label: "Next Tab",
+        accelerator: "CmdOrCtrl+Shift+]",
+        click: () => sendShortcut("next-tab")
+      },
+      { type: "separator" },
+      ...tabItems
+    ]
+  };
+  const viewMenu = {
+    label: "View",
+    submenu: [
+      {
+        label: "Actual Size",
+        accelerator: "CmdOrCtrl+0",
+        click: () => setWindowZoom(1)
+      },
+      {
+        label: "Zoom In",
+        accelerator: "CmdOrCtrl+=",
+        click: () => nudgeWindowZoom(0.1)
+      },
+      {
+        label: "Zoom Out",
+        accelerator: "CmdOrCtrl+-",
+        click: () => nudgeWindowZoom(-0.1)
+      },
+      { type: "separator" },
+      { role: "reload" },
+      { role: "toggleDevTools" },
+      { type: "separator" },
+      { role: "togglefullscreen" }
+    ]
+  };
+  const template = [
+    ...isMac ? [
+      {
+        label: "Drift",
+        submenu: [
+          { role: "about" },
+          { type: "separator" },
+          {
+            label: "Settings…",
+            accelerator: "CmdOrCtrl+,",
+            click: () => sendShortcut("settings")
+          },
+          { type: "separator" },
+          { role: "services" },
+          { type: "separator" },
+          { role: "hide" },
+          { role: "hideOthers" },
+          { role: "unhide" },
+          { type: "separator" },
+          { role: "quit" }
+        ]
+      }
+    ] : [
+      {
+        label: "Drift",
+        submenu: [
+          {
+            label: "Settings…",
+            accelerator: "CmdOrCtrl+,",
+            click: () => sendShortcut("settings")
+          },
+          { type: "separator" },
+          { role: "quit" }
+        ]
+      }
+    ],
+    fileMenu,
+    editMenu,
+    shellMenu,
+    viewMenu,
+    {
+      label: "Window",
+      submenu: [
+        { role: "minimize" },
+        { role: "zoom" },
+        ...isMac ? [{ type: "separator" }, { role: "front" }] : [{ role: "close" }]
+      ]
+    }
+  ];
+  electron.Menu.setApplicationMenu(electron.Menu.buildFromTemplate(template));
+}
+function createWindow() {
+  const icon = loadAppIcon();
+  mainWindow = new electron.BrowserWindow({
+    width: 1280,
+    height: 800,
+    minWidth: 960,
+    minHeight: 600,
+    title: "Drift",
+    backgroundColor: "#000000",
+    show: false,
+    ...icon ? { icon } : {},
+    ...process.platform === "darwin" ? {
+      titleBarStyle: "hiddenInset",
+      trafficLightPosition: { x: 16, y: 14 }
+    } : {},
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+  mainWindow.once("ready-to-show", () => {
+    mainWindow == null ? void 0 : mainWindow.show();
+  });
+  electron.session.defaultSession.setPermissionRequestHandler(
+    (_wc, permission, callback) => {
+      callback(permission === "media");
+    }
+  );
+  electron.session.defaultSession.setPermissionCheckHandler(
+    (_wc, permission) => permission === "media"
+  );
+  if (process.env.VITE_DEV_SERVER_URL) {
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+    mainWindow.webContents.openDevTools({ mode: "detach" });
+  } else {
+    mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
+  }
+}
+function emitTabCwd(tabId, cwd) {
+  const tab = tabs.get(tabId);
+  if (!tab || !cwd) return;
+  if (tab.lastCwd === cwd) return;
+  tab.lastCwd = cwd;
+  if (tab.backend && tab.backend.target.kind === "ssh" && "setCwd" in tab.backend) {
+    tab.backend.setCwd(cwd);
+  }
+  mainWindow == null ? void 0 : mainWindow.webContents.send("term:cwd", { tabId, cwd });
+}
+function consumeOsc7(tab, chunk) {
+  const merged = (tab.oscBuf ?? "") + chunk;
+  tab.oscBuf = merged.length > 4e3 ? merged.slice(-2e3) : merged;
+  const re = /\x1b\]7;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+  let match;
+  let lastPath = null;
+  while (match = re.exec(tab.oscBuf)) {
+    const path2 = osc7ToPath(match[1] ?? "");
+    if (path2) lastPath = path2;
+  }
+  const lastBell = Math.max(
+    tab.oscBuf.lastIndexOf("\x07"),
+    tab.oscBuf.lastIndexOf("\x1B\\")
+  );
+  if (lastBell >= 0) {
+    tab.oscBuf = tab.oscBuf.slice(lastBell + 1);
+  }
+  if (lastPath) emitTabCwd(tab.id, lastPath);
+}
+function normalizeFsPath(p) {
+  try {
+    return p.normalize("NFC");
+  } catch {
+    return p;
+  }
+}
+function osc7ToPath(uri) {
+  const raw = uri.trim();
+  if (!raw) return null;
+  try {
+    if (raw.startsWith("file://")) {
+      const u = new URL(raw);
+      const decoded = decodeURIComponent(u.pathname || "");
+      return decoded ? normalizeFsPath(decoded) : null;
+    }
+  } catch {
+  }
+  const withoutScheme = raw.replace(/^file:\/\//, "");
+  const idx = withoutScheme.indexOf("/");
+  if (idx >= 0) return normalizeFsPath(withoutScheme.slice(idx));
+  return withoutScheme.startsWith("/") ? normalizeFsPath(withoutScheme) : null;
+}
+function attachBackend(tabId, backend) {
+  const tab = tabs.get(tabId);
+  if (!tab) return;
+  const unsub = backend.onData((data) => {
+    consumeOsc7(tab, data);
+    appendScrollback(tab, data);
+    if (!tab.ready) {
+      tab.buffer.push(data);
+      if (tab.buffer.length > 200) {
+        tab.buffer = tab.buffer.slice(-100);
+      }
+      return;
+    }
+    mainWindow == null ? void 0 : mainWindow.webContents.send("term:data", { tabId, data });
+  });
+  const unsubExit = backend.onExit(({ exitCode, signal }) => {
+    const msg = `\r
+\x1B[90m[session ended: exit ${exitCode}` + (signal != null ? `, signal ${signal}` : "") + `]\x1B[0m\r
+`;
+    appendScrollback(tab, msg);
+    if (!tab.ready) {
+      tab.buffer.push(msg);
+      return;
+    }
+    mainWindow == null ? void 0 : mainWindow.webContents.send("term:data", { tabId, data: msg });
+  });
+  tab.unsub = unsub;
+  tab.unsubExit = unsubExit;
+  void pollTabCwd(tabId);
+  ensureCwdPolling();
+}
+async function pollTabCwd(tabId) {
+  const tab = tabs.get(tabId);
+  if (!(tab == null ? void 0 : tab.backend) || tab.backend.target.kind !== "local") return;
+  try {
+    const cwd = await tab.backend.getCwd();
+    if (cwd) emitTabCwd(tabId, cwd);
+  } catch {
+  }
+}
+function ensureCwdPolling() {
+  if (cwdPollTimer) return;
+  cwdPollTimer = setInterval(() => {
+    if (tabs.size === 0) {
+      if (cwdPollTimer) clearInterval(cwdPollTimer);
+      cwdPollTimer = null;
+      return;
+    }
+    for (const id of tabs.keys()) {
+      void pollTabCwd(id);
+    }
+  }, 600);
+}
+function emitTransferProgress(payload) {
+  mainWindow == null ? void 0 : mainWindow.webContents.send("fs:transfer-progress", payload);
+}
+async function collectLocalCopyItems(sources, destDir) {
+  const items = [];
+  let total = 0;
+  async function walkFile(src, dest, name) {
+    const st = await promises.stat(src);
+    if (st.isFile()) {
+      items.push({ src, dest, size: st.size, name });
+      total += st.size;
+      return;
+    }
+    if (!st.isDirectory()) return;
+    await promises.mkdir(dest, { recursive: true });
+    const names = await promises.readdir(src);
+    for (const child of names) {
+      if (child === "." || child === "..") continue;
+      await walkFile(path.join(src, child), path.join(dest, child), child);
+    }
+  }
+  const destReal = path.resolve(destDir);
+  for (const src of sources) {
+    const base = path.basename(src);
+    if (!base || base === "." || base === "..") continue;
+    const dest = path.join(destReal, base);
+    const srcResolved = path.resolve(src);
+    const destResolved = path.resolve(dest);
+    if (srcResolved === destReal || destResolved === srcResolved || destResolved.startsWith(srcResolved + path.sep)) {
+      continue;
+    }
+    await walkFile(src, dest, base);
+  }
+  return { items, total };
+}
+async function copyLocalWithProgress(sources, destDir, transferId) {
+  var _a;
+  try {
+    await promises.mkdir(destDir, { recursive: true });
+    const destStat = await promises.stat(destDir);
+    if (!destStat.isDirectory()) return { error: "Not a directory" };
+    const destReal = path.resolve(destDir);
+    const { items, total } = await collectLocalCopyItems(sources, destDir);
+    if (!items.length) return { error: "No files" };
+    emitTransferProgress({
+      transferId,
+      percent: 0,
+      transferred: 0,
+      total: total || 1,
+      currentName: (_a = items[0]) == null ? void 0 : _a.name
+    });
+    let transferred = 0;
+    let lastEmitAt = 0;
+    const emit = (force = false, currentName) => {
+      const now = Date.now();
+      if (!force && now - lastEmitAt < 80) return;
+      lastEmitAt = now;
+      emitTransferProgress({
+        transferId,
+        percent: total > 0 ? Math.min(99, Math.round(transferred / total * 100)) : 0,
+        transferred: Math.min(transferred, total),
+        total: total || 1,
+        currentName
+      });
+    };
+    for (const item of items) {
+      await promises.mkdir(path.dirname(item.dest), { recursive: true });
+      if (item.size === 0) {
+        await promises$1.pipeline(node_fs.createReadStream(item.src), node_fs.createWriteStream(item.dest));
+        emit(true, item.name);
+      } else {
+        await new Promise((resolve, reject) => {
+          const read = node_fs.createReadStream(item.src);
+          const write = node_fs.createWriteStream(item.dest);
+          read.on("data", (chunk) => {
+            const n = typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
+            transferred += n;
+            emit(false, item.name);
+          });
+          read.on("error", reject);
+          write.on("error", reject);
+          write.on("finish", () => {
+            emit(true, item.name);
+            resolve();
+          });
+          read.pipe(write);
+        });
+      }
+    }
+    emitTransferProgress({
+      transferId,
+      percent: 100,
+      transferred: total || transferred,
+      total: total || Math.max(transferred, 1)
+    });
+    const copied = sources.map((s) => path.join(destReal, path.basename(s))).filter(
+      (dest) => items.some((i) => i.dest === dest || i.dest.startsWith(dest + path.sep))
+    );
+    return { ok: true, copied };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+async function readLocalDisk(mount = "/") {
+  try {
+    const s = await promises.statfs(mount);
+    const bsize = Number(s.bsize) || 0;
+    const total = Number(s.blocks) * bsize;
+    const free = Number(s.bavail) * bsize;
+    const used = Math.max(0, total - free);
+    const diskUsedPct = total > 0 ? Math.min(100, Math.round(used / total * 100)) : 0;
+    return {
+      diskUsedPct,
+      diskUsedBytes: used,
+      diskTotalBytes: total,
+      diskMount: mount
+    };
+  } catch {
+    return {
+      diskUsedPct: 0,
+      diskUsedBytes: 0,
+      diskTotalBytes: 0,
+      diskMount: mount
+    };
+  }
+}
+async function collectLocalMetrics() {
+  const cpus = os.cpus();
+  const load1 = os.loadavg()[0] ?? 0;
+  const cores = cpus.length || 1;
+  const cpuPct = Math.min(100, Math.round(load1 / cores * 100));
+  const memTotalBytes = os.totalmem();
+  const memFreeBytes = os.freemem();
+  const memUsedBytes = Math.max(0, memTotalBytes - memFreeBytes);
+  const disk = await readLocalDisk("/");
+  return {
+    source: "local",
+    cpuPct,
+    load1,
+    memUsedBytes,
+    memFreeBytes,
+    memTotalBytes,
+    cores,
+    ...disk,
+    gpuPct: null,
+    gpuMemPct: null,
+    gpuName: null
+  };
+}
+const REMOTE_METRICS_SCRIPT = [
+  "set +e",
+  "LOAD=$(awk '{print $1}' /proc/loadavg 2>/dev/null)",
+  "CORES=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)",
+  "MEM_TOTAL=$(awk '/^MemTotal:/ {print $2*1024}' /proc/meminfo 2>/dev/null)",
+  "MEM_AVAIL=$(awk '/^MemAvailable:/ {print $2*1024}' /proc/meminfo 2>/dev/null)",
+  `if [ -z "$MEM_AVAIL" ]; then MEM_AVAIL=$(awk '/^MemFree:/ {print $2*1024}' /proc/meminfo 2>/dev/null); fi`,
+  `DISK=$(df -PB1 / 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $2" "$3" "$5}')`,
+  "GPU=$(nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,name --format=csv,noheader,nounits 2>/dev/null | head -n 1)",
+  'printf "load=%s\\n" "${LOAD:-0}"',
+  'printf "cores=%s\\n" "${CORES:-1}"',
+  'printf "mem_total=%s\\n" "${MEM_TOTAL:-0}"',
+  'printf "mem_avail=%s\\n" "${MEM_AVAIL:-0}"',
+  'printf "disk=%s\\n" "${DISK:-}"',
+  'printf "gpu=%s\\n" "${GPU:-}"'
+].join("; ");
+function parseRemoteMetrics(stdout, hostLabel) {
+  const map = /* @__PURE__ */ new Map();
+  for (const line of stdout.split(/\r?\n/)) {
+    const i = line.indexOf("=");
+    if (i <= 0) continue;
+    map.set(line.slice(0, i).trim(), line.slice(i + 1).trim());
+  }
+  const load1 = Number(map.get("load") || 0) || 0;
+  const cores = Math.max(1, Number(map.get("cores") || 1) || 1);
+  const memTotalBytes = Math.max(0, Number(map.get("mem_total") || 0) || 0);
+  const memFreeBytes = Math.max(0, Number(map.get("mem_avail") || 0) || 0);
+  const memUsedBytes = Math.max(0, memTotalBytes - memFreeBytes);
+  const cpuPct = Math.min(100, Math.round(load1 / cores * 100));
+  let diskTotalBytes = 0;
+  let diskUsedBytes = 0;
+  let diskUsedPct = 0;
+  const diskRaw = map.get("disk") || "";
+  if (diskRaw) {
+    const [t, u, p] = diskRaw.split(/\s+/);
+    diskTotalBytes = Math.max(0, Number(t) || 0);
+    diskUsedBytes = Math.max(0, Number(u) || 0);
+    diskUsedPct = Math.min(100, Math.max(0, Number(p) || 0));
+    if (!diskUsedPct && diskTotalBytes > 0) {
+      diskUsedPct = Math.min(
+        100,
+        Math.round(diskUsedBytes / diskTotalBytes * 100)
+      );
+    }
+  }
+  let gpuPct = null;
+  let gpuMemPct = null;
+  let gpuName = null;
+  const gpuRaw = map.get("gpu") || "";
+  if (gpuRaw && !/error|not found|failed/i.test(gpuRaw)) {
+    const parts = gpuRaw.split(",").map((s) => s.trim());
+    if (parts.length >= 3) {
+      const util = Number(parts[0]);
+      const memUsed = Number(parts[1]);
+      const memTotal = Number(parts[2]);
+      if (Number.isFinite(util)) gpuPct = Math.min(100, Math.max(0, Math.round(util)));
+      if (Number.isFinite(memUsed) && Number.isFinite(memTotal) && memTotal > 0) {
+        gpuMemPct = Math.min(100, Math.round(memUsed / memTotal * 100));
+      }
+      if (parts[3]) gpuName = parts.slice(3).join(", ").trim() || null;
+    }
+  }
+  return {
+    source: "ssh",
+    cpuPct,
+    load1,
+    memUsedBytes,
+    memFreeBytes,
+    memTotalBytes,
+    cores,
+    diskUsedPct,
+    diskUsedBytes,
+    diskTotalBytes,
+    diskMount: "/",
+    gpuPct,
+    gpuMemPct,
+    gpuName,
+    hostLabel
+  };
+}
+async function collectRemoteMetrics(backend) {
+  const hostLabel = backend.session.name || `${backend.session.user}@${backend.session.host}`;
+  try {
+    const res = await backend.exec(REMOTE_METRICS_SCRIPT, {
+      cwd: "~",
+      timeoutMs: 8e3
+    });
+    if ((res.timedOut || res.exitCode !== 0) && !res.stdout.trim()) {
+      return {
+        source: "ssh",
+        cpuPct: 0,
+        load1: 0,
+        memUsedBytes: 0,
+        memFreeBytes: 0,
+        memTotalBytes: 0,
+        cores: 1,
+        diskUsedPct: 0,
+        diskUsedBytes: 0,
+        diskTotalBytes: 0,
+        diskMount: "/",
+        gpuPct: null,
+        gpuMemPct: null,
+        gpuName: null,
+        hostLabel,
+        error: (res.timedOut ? "Metrics timed out" : res.stderr || `exit ${res.exitCode}`).trim().slice(0, 200)
+      };
+    }
+    return parseRemoteMetrics(res.stdout || "", hostLabel);
+  } catch (err) {
+    return {
+      source: "ssh",
+      cpuPct: 0,
+      load1: 0,
+      memUsedBytes: 0,
+      memFreeBytes: 0,
+      memTotalBytes: 0,
+      cores: 1,
+      diskUsedPct: 0,
+      diskUsedBytes: 0,
+      diskTotalBytes: 0,
+      diskMount: "/",
+      gpuPct: null,
+      gpuMemPct: null,
+      gpuName: null,
+      hostLabel,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+const EDITOR_MAX_BYTES = 15e5;
+const IMAGE_MAX_BYTES = 12e6;
+const IMAGE_MIME_BY_EXT = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+  ".avif": "image/avif",
+  ".svg": "image/svg+xml"
+};
+function shellSingleQuote(value) {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+function imageMimeFromPath(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  return IMAGE_MIME_BY_EXT[ext] ?? null;
+}
+function looksBinary(buf) {
+  const sample = buf.subarray(0, Math.min(buf.length, 8e3));
+  if (sample.includes(0)) return true;
+  let weird = 0;
+  for (const b of sample) {
+    if (b === 9 || b === 10 || b === 13) continue;
+    if (b < 32) weird += 1;
+  }
+  return weird > sample.length * 0.05;
+}
+function toImageResult(target, mime, buf) {
+  return {
+    path: target,
+    kind: "image",
+    mime,
+    dataUrl: `data:${mime};base64,${buf.toString("base64")}`
+  };
+}
+async function readLocalTextFile(filePath) {
+  const target = path.resolve((filePath || "").trim());
+  if (!target) return { error: "No path" };
+  try {
+    const st = await promises.stat(target);
+    if (!st.isFile()) return { error: "Not a file" };
+    const mime = imageMimeFromPath(target);
+    const maxBytes = mime ? IMAGE_MAX_BYTES : EDITOR_MAX_BYTES;
+    if (st.size > maxBytes) return { error: "too_large" };
+    const buf = await promises.readFile(target);
+    if (mime) return toImageResult(target, mime, buf);
+    if (looksBinary(buf)) return { error: "binary" };
+    return { path: target, kind: "text", content: buf.toString("utf8") };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+async function writeLocalTextFile(filePath, content) {
+  const target = path.resolve((filePath || "").trim());
+  if (!target) return { error: "No path" };
+  try {
+    const bytes = Buffer.byteLength(content, "utf8");
+    if (bytes > EDITOR_MAX_BYTES) return { error: "too_large" };
+    await promises.writeFile(target, content, "utf8");
+    return { ok: true, path: target };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+async function readRemoteTextFile(backend, filePath) {
+  const target = (filePath || "").trim();
+  if (!target) return { error: "No path" };
+  const q = shellSingleQuote(target);
+  const mime = imageMimeFromPath(target);
+  const maxBytes = mime ? IMAGE_MAX_BYTES : EDITOR_MAX_BYTES;
+  try {
+    const probe = await backend.exec(
+      `if [ -f ${q} ]; then wc -c < ${q}; else exit 41; fi`,
+      { timeoutMs: 12e3 }
+    );
+    if (probe.exitCode === 41) return { error: "Not a file" };
+    const size = Number((probe.stdout || "").trim());
+    if (Number.isFinite(size) && size > maxBytes) {
+      return { error: "too_large" };
+    }
+    const result = await backend.exec(`base64 < ${q}`, { timeoutMs: 3e4 });
+    if (result.timedOut) return { error: "Read timed out" };
+    if (result.exitCode != null && result.exitCode !== 0) {
+      return {
+        error: (result.stderr || "").trim() || "Read failed"
+      };
+    }
+    const buf = Buffer.from((result.stdout || "").replace(/\s+/g, ""), "base64");
+    if (mime) return toImageResult(target, mime, buf);
+    if (looksBinary(buf)) return { error: "binary" };
+    return { path: target, kind: "text", content: buf.toString("utf8") };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+async function writeRemoteTextFile(backend, filePath, content) {
+  const target = (filePath || "").trim();
+  if (!target) return { error: "No path" };
+  const bytes = Buffer.byteLength(content, "utf8");
+  if (bytes > EDITOR_MAX_BYTES) return { error: "too_large" };
+  const q = shellSingleQuote(target);
+  const b64 = Buffer.from(content, "utf8").toString("base64");
+  try {
+    const result = await backend.exec(
+      `(base64 -d 2>/dev/null || base64 -D) > ${q} <<'DRIFT_B64'
+${b64}
+DRIFT_B64`,
+      { timeoutMs: 3e4 }
+    );
+    if (result.timedOut) return { error: "Write timed out" };
+    if (result.exitCode != null && result.exitCode !== 0) {
+      return {
+        error: (result.stderr || "").trim() || "Write failed"
+      };
+    }
+    return { ok: true, path: target };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+async function listLocalDir(dirPath) {
+  const home = os.homedir();
+  const target = path.resolve((dirPath == null ? void 0 : dirPath.trim()) || home);
+  try {
+    const info = await promises.stat(target);
+    if (!info.isDirectory()) {
+      return { error: "Not a directory", path: target, entries: [] };
+    }
+    const names = await promises.readdir(target);
+    const entries = [];
+    for (const name of names) {
+      if (name === "." || name === "..") continue;
+      const full = path.join(target, name);
+      try {
+        const st = await promises.stat(full);
+        entries.push({
+          name,
+          path: full,
+          kind: st.isDirectory() ? "dir" : "file",
+          size: st.isDirectory() ? void 0 : st.size
+        });
+      } catch {
+      }
+    }
+    entries.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === "dir" ? -1 : 1;
+      return a.name.localeCompare(b.name, void 0, { sensitivity: "base" });
+    });
+    return { path: target, home, entries };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : String(err),
+      path: target,
+      home,
+      entries: []
+    };
+  }
+}
+async function listRemoteDir(backend, dirPath) {
+  const target = ((dirPath == null ? void 0 : dirPath.trim()) || "~").replace(/\n/g, "") || "~";
+  const quoted = `'${target.replace(/'/g, `'"'"'`)}'`;
+  const command = `cd -- ${quoted} 2>/dev/null || exit 41; printf 'CTPWD:%s\\n' "$(pwd -P 2>/dev/null || pwd)"; printf 'CTHOME:%s\\n' "$HOME"; ls -1AF 2>/dev/null || ls -1Ap 2>/dev/null || ls -1A`;
+  try {
+    const result = await backend.exec(command, {
+      cwd: "~",
+      timeoutMs: 12e3
+    });
+    const text = result.stdout || "";
+    const errText = (result.stderr || "").trim();
+    if (result.timedOut) {
+      return { error: "Listing timed out", path: target, entries: [] };
+    }
+    if (result.exitCode === 41 || /exit 41/.test(errText)) {
+      return { error: `Cannot open ${target}`, path: target, entries: [] };
+    }
+    if (!text.trim() && (result.exitCode == null || result.exitCode !== 0 || /Permission denied|Connection refused|Connection reset|Broken pipe|No such file/i.test(
+      errText
+    ))) {
+      return {
+        error: errText || "SSH listing failed — keep the session connected (password sessions need the live tab)",
+        path: target,
+        entries: []
+      };
+    }
+    return parseRemoteLs(text, target);
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : String(err),
+      path: target,
+      entries: []
+    };
+  }
+}
+function parseRemoteLs(text, fallbackPath) {
+  const lines = text.split(/\r?\n/);
+  let abs = fallbackPath;
+  let home;
+  const names = [];
+  for (const line of lines) {
+    if (line.startsWith("CTPWD:")) {
+      abs = line.slice(6).trim() || abs;
+      continue;
+    }
+    if (line.startsWith("CTHOME:")) {
+      home = line.slice(7).trim() || void 0;
+      continue;
+    }
+    if (!line || line === "." || line === "..") continue;
+    if (line.startsWith("CTPWD:") || line.startsWith("CTHOME:")) continue;
+    if (/^\S+@\S+[:#]/.test(line)) continue;
+    names.push(line);
+  }
+  const entries = [];
+  for (const raw of names) {
+    const isDir = raw.endsWith("/");
+    const name = (isDir ? raw.slice(0, -1) : raw).replace(/[*@=|]$/, "");
+    if (!name || name === "." || name === "..") continue;
+    const full = abs.endsWith("/") ? `${abs}${name}` : `${abs}/${name}`;
+    entries.push({
+      name,
+      path: full,
+      kind: isDir ? "dir" : "file"
+    });
+  }
+  entries.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === "dir" ? -1 : 1;
+    return a.name.localeCompare(b.name, void 0, { sensitivity: "base" });
+  });
+  return { path: abs, home, entries };
+}
+function registerIpc() {
+  electron.ipcMain.handle("sessions:list", async () => sessionStore.list());
+  electron.ipcMain.handle(
+    "sessions:save",
+    async (_e, input) => sessionStore.upsert(input)
+  );
+  electron.ipcMain.handle("sessions:delete", async (_e, id) => {
+    const ok = await sessionStore.remove(id);
+    if (ok && typeof id === "string") await clearSshPassword(id);
+    return ok;
+  });
+  electron.ipcMain.handle("sessions:import-ssh-config", async () => {
+    const configPath = path.join(os.homedir(), ".ssh", "config");
+    let content = "";
+    try {
+      content = await promises.readFile(configPath, "utf8");
+    } catch {
+      return {
+        sessions: sessionStore.list(),
+        created: 0,
+        updated: 0,
+        found: 0,
+        missingConfig: true
+      };
+    }
+    const parsed = parseSshConfig(content);
+    let created = 0;
+    let updated = 0;
+    for (const item of parsed) {
+      const name = item.sshConfigHost;
+      const existing = sessionStore.list().find((s) => s.sshConfigHost === name);
+      await sessionStore.upsert({
+        id: existing == null ? void 0 : existing.id,
+        name,
+        host: item.host,
+        user: item.user || os.userInfo().username,
+        port: item.port,
+        identityFile: item.identityFile,
+        proxyJump: item.proxyJump,
+        sshConfigHost: item.sshConfigHost
+      });
+      if (existing) updated += 1;
+      else created += 1;
+    }
+    return {
+      sessions: sessionStore.list(),
+      created,
+      updated,
+      found: parsed.length,
+      missingConfig: false
+    };
+  });
+  electron.ipcMain.handle("term:create-local-tab", async () => {
+    const tabId = newId();
+    const title = "Local";
+    tabs.set(tabId, {
+      id: tabId,
+      title,
+      backend: null,
+      ready: false,
+      buffer: [],
+      scrollback: ""
+    });
+    return { tabId, title };
+  });
+  electron.ipcMain.handle(
+    "term:start-local",
+    async (_e, payload) => {
+      const tab = tabs.get(payload.tabId);
+      if (!tab) return { error: "Tab not found" };
+      if (tab.backend) return { ok: true };
+      try {
+        const cols = Math.max(2, Math.floor(payload.cols));
+        const rows = Math.max(1, Math.floor(payload.rows));
+        const backend = createLocalPty(localPtyOpts({ cols, rows }));
+        tab.backend = backend;
+        tab.lastCols = cols;
+        tab.lastRows = rows;
+        attachBackend(tab.id, backend);
+        return { ok: true };
+      } catch (err) {
+        return {
+          error: err instanceof Error ? err.message : String(err)
+        };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "term:open-local",
+    async (_e, size) => {
+      try {
+        const cols = Math.max(2, Math.floor((size == null ? void 0 : size.cols) ?? 120));
+        const rows = Math.max(1, Math.floor((size == null ? void 0 : size.rows) ?? 30));
+        const backend = createLocalPty(localPtyOpts({ cols, rows }));
+        const tabId = newId();
+        const title = "Local";
+        tabs.set(tabId, {
+          id: tabId,
+          title,
+          backend,
+          ready: false,
+          buffer: [],
+          scrollback: "",
+          lastCols: cols,
+          lastRows: rows
+        });
+        attachBackend(tabId, backend);
+        return { tabId, title };
+      } catch (err) {
+        return {
+          error: err instanceof Error ? err.message : String(err)
+        };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "term:open-ssh",
+    async (_e, sessionId, size) => {
+      var _a;
+      const session2 = sessionStore.get(sessionId);
+      if (!session2) return { error: "Session not found" };
+      try {
+        const cols = Math.max(2, Math.floor((size == null ? void 0 : size.cols) ?? 120));
+        const rows = Math.max(1, Math.floor((size == null ? void 0 : size.rows) ?? 30));
+        const password = ((_a = session2.identityFile) == null ? void 0 : _a.trim()) ? "" : await loadSshPassword(session2.id);
+        const backend = createSshPty(session2, {
+          cols,
+          rows,
+          password: password || void 0
+        });
+        const tabId = newId();
+        const title = session2.name;
+        tabs.set(tabId, {
+          id: tabId,
+          title,
+          backend,
+          ready: false,
+          buffer: [],
+          scrollback: "",
+          lastCols: cols,
+          lastRows: rows
+        });
+        attachBackend(tabId, backend);
+        return {
+          tabId,
+          title,
+          kind: "ssh",
+          label: `${session2.user}@${session2.host}`
+        };
+      } catch (err) {
+        return {
+          error: err instanceof Error ? err.message : String(err)
+        };
+      }
+    }
+  );
+  electron.ipcMain.handle("term:close", async (_e, tabId) => {
+    var _a, _b, _c;
+    const tab = tabs.get(tabId);
+    if (!tab) return;
+    (_a = tab.unsub) == null ? void 0 : _a.call(tab);
+    (_b = tab.unsubExit) == null ? void 0 : _b.call(tab);
+    await ((_c = tab.backend) == null ? void 0 : _c.dispose());
+    tabs.delete(tabId);
+  });
+  electron.ipcMain.handle("term:ready", async (_e, tabId) => {
+    const tab = tabs.get(tabId);
+    if (!tab) return;
+    tab.ready = true;
+    const pending = tab.buffer.splice(0);
+    for (const data of pending) {
+      consumeOsc7(tab, data);
+      mainWindow == null ? void 0 : mainWindow.webContents.send("term:data", { tabId, data });
+    }
+    void pollTabCwd(tabId);
+  });
+  electron.ipcMain.handle(
+    "term:write",
+    async (_e, payload) => {
+      const tab = tabs.get(payload.tabId);
+      if (!(tab == null ? void 0 : tab.backend)) return;
+      tab.backend.write(payload.data);
+      if (payload.data.includes("\n") || payload.data.includes("\r")) {
+        setTimeout(() => void pollTabCwd(payload.tabId), 120);
+        setTimeout(() => void pollTabCwd(payload.tabId), 400);
+      }
+    }
+  );
+  electron.ipcMain.handle("term:get-cwd", async (_e, tabId) => {
+    const tab = tabs.get(tabId);
+    if (!tab) return { cwd: null };
+    if (tab.lastCwd) return { cwd: tab.lastCwd };
+    if (!tab.backend) return { cwd: null };
+    try {
+      const cwd = await tab.backend.getCwd();
+      if (cwd) emitTabCwd(tabId, cwd);
+      return { cwd };
+    } catch {
+      return { cwd: null };
+    }
+  });
+  electron.ipcMain.handle(
+    "term:resize",
+    async (_e, payload) => {
+      const tab = tabs.get(payload.tabId);
+      if (!(tab == null ? void 0 : tab.backend)) return;
+      const cols = Math.max(2, Math.floor(payload.cols));
+      const rows = Math.max(1, Math.floor(payload.rows));
+      if (tab.lastCols === cols && tab.lastRows === rows) return;
+      tab.lastCols = cols;
+      tab.lastRows = rows;
+      tab.backend.resize(cols, rows);
+    }
+  );
+  electron.ipcMain.handle("settings:api-key-status", async () => {
+    const key = await loadApiKey();
+    return { hasKey: Boolean(key.trim()) };
+  });
+  electron.ipcMain.handle("settings:set-api-key", async (_e, key) => {
+    await saveApiKey(key.trim());
+    return { ok: true };
+  });
+  electron.ipcMain.handle("settings:clear-api-key", async () => {
+    await clearApiKey();
+    return { ok: true };
+  });
+  electron.ipcMain.handle("settings:get", async () => appSettings);
+  electron.ipcMain.handle("board:get", async () => {
+    try {
+      const raw = await promises.readFile(boardPath(), "utf8");
+      return JSON.parse(raw);
+    } catch {
+      return { cards: [], camera: { x: 0, y: 0, zoom: 1 } };
+    }
+  });
+  electron.ipcMain.handle("board:save", async (_e, state) => {
+    await promises.mkdir(dataDir(), { recursive: true });
+    await promises.writeFile(boardPath(), JSON.stringify(state, null, 2), "utf8");
+    return { ok: true };
+  });
+  electron.ipcMain.handle(
+    "settings:set-model",
+    async (_e, modelId) => {
+      await saveSettings({
+        ...appSettings,
+        modelId: modelId.trim() || "composer-2.5"
+      });
+      return appSettings;
+    }
+  );
+  electron.ipcMain.handle("settings:set-chat-mode", async (_e, chatMode) => {
+    const mode = normalizeChatMode(chatMode);
+    await saveSettings({ ...appSettings, chatMode: mode });
+    applyChatModeToPolicy(mode);
+    return appSettings;
+  });
+  electron.ipcMain.handle("settings:set-locale", async (_e, locale) => {
+    await saveSettings({
+      ...appSettings,
+      locale: normalizeLocale(locale)
+    });
+    return appSettings;
+  });
+  electron.ipcMain.handle(
+    "settings:set-local-shell",
+    async (_e, shell2) => {
+      await saveSettings({
+        ...appSettings,
+        localShell: normalizeLocalShell(shell2)
+      });
+      return appSettings;
+    }
+  );
+  electron.ipcMain.handle("settings:list-local-shells", async () => {
+    if (process.platform === "win32") {
+      return {
+        platform: "win32",
+        current: appSettings.localShell,
+        shells: detectWindowsShells()
+      };
+    }
+    return {
+      platform: process.platform,
+      current: appSettings.localShell,
+      shells: []
+    };
+  });
+  electron.ipcMain.handle("settings:list-models", async () => {
+    const apiKey = await loadApiKey();
+    return listModels(apiKey);
+  });
+  electron.ipcMain.handle("usage:get-session", async () => sessionUsage);
+  electron.ipcMain.handle("usage:reset-session", async () => {
+    sessionUsage = emptySessionUsage();
+    return sessionUsage;
+  });
+  electron.ipcMain.handle("usage:get-account", async () => {
+    const apiKey = await loadApiKey();
+    const usage = await fetchCursorAccountUsage(apiKey);
+    return usage ? { ok: true, usage } : { ok: false };
+  });
+  electron.ipcMain.handle("shell:open-external", async (_e, url) => {
+    if (!/^https?:\/\//i.test(url)) return { ok: false };
+    await electron.shell.openExternal(url);
+    return { ok: true };
+  });
+  electron.ipcMain.handle("fs:home", async () => os.homedir());
+  electron.ipcMain.handle("ssh:list-identities", async () => listSshIdentities());
+  electron.ipcMain.handle("ssh:default-identity", async () => defaultSshIdentity());
+  electron.ipcMain.handle(
+    "ssh:pick-identity",
+    async () => pickSshIdentity(mainWindow)
+  );
+  electron.ipcMain.handle("ssh:read-public-key", async (_e, identityPath) => {
+    if (typeof identityPath !== "string") {
+      return { ok: false, reason: "empty" };
+    }
+    return readSshPublicKey(identityPath);
+  });
+  electron.ipcMain.handle("ssh:copy-public-key", async (_e, identityPath) => {
+    if (typeof identityPath !== "string") {
+      return { ok: false, reason: "empty" };
+    }
+    const pub = await readSshPublicKey(identityPath);
+    if (!pub.ok) return pub;
+    try {
+      electron.clipboard.writeText(pub.content);
+      return { ok: true, path: pub.path };
+    } catch {
+      return { ok: false, reason: "clipboard_failed" };
+    }
+  });
+  electron.ipcMain.handle("clipboard:write-text", async (_e, text) => {
+    if (typeof text !== "string" || !text) {
+      return { ok: false };
+    }
+    try {
+      electron.clipboard.writeText(text);
+      return { ok: true };
+    } catch {
+      return { ok: false };
+    }
+  });
+  electron.ipcMain.handle(
+    "ssh:generate-identity",
+    async (_e, nameHint) => generateSshIdentity(typeof nameHint === "string" ? nameHint : void 0)
+  );
+  electron.ipcMain.handle(
+    "ssh:password-status",
+    async (_e, sessionId) => {
+      if (typeof sessionId !== "string" || !sessionId.trim()) {
+        return { hasPassword: false };
+      }
+      return { hasPassword: await hasSshPassword(sessionId) };
+    }
+  );
+  electron.ipcMain.handle(
+    "ssh:set-password",
+    async (_e, input) => {
+      const sessionId = typeof (input == null ? void 0 : input.sessionId) === "string" ? input.sessionId.trim() : "";
+      if (!sessionId) return { ok: false, reason: "missing_session" };
+      const password = typeof (input == null ? void 0 : input.password) === "string" ? input.password : "";
+      await saveSshPassword(sessionId, password);
+      return { ok: true };
+    }
+  );
+  electron.ipcMain.handle("ssh:clear-password", async (_e, sessionId) => {
+    if (typeof sessionId === "string") await clearSshPassword(sessionId);
+    return { ok: true };
+  });
+  electron.ipcMain.handle(
+    "ssh:install-public-key",
+    async (_e, input) => {
+      var _a;
+      const identityPath = typeof (input == null ? void 0 : input.identityPath) === "string" ? input.identityPath.trim() : "";
+      if (!identityPath) {
+        return { ok: false, reason: "empty" };
+      }
+      let password = typeof (input == null ? void 0 : input.password) === "string" ? input.password.trim() : "";
+      const sessionId = typeof (input == null ? void 0 : input.sessionId) === "string" ? input.sessionId.trim() : "";
+      let session2 = sessionId ? sessionStore.get(sessionId) : void 0;
+      if (!session2 && ((_a = input == null ? void 0 : input.session) == null ? void 0 : _a.host) && input.session.user) {
+        session2 = {
+          id: sessionId || "draft",
+          name: input.session.name || input.session.host,
+          host: input.session.host,
+          user: input.session.user,
+          port: input.session.port,
+          proxyJump: input.session.proxyJump,
+          identityFile: void 0,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        };
+      }
+      if (!session2) {
+        return { ok: false, reason: "missing_session" };
+      }
+      if (!password && sessionId) {
+        password = await loadSshPassword(sessionId);
+      }
+      if (!password) {
+        return { ok: false, reason: "empty_password" };
+      }
+      return installSshPublicKey({ session: session2, identityPath, password });
+    }
+  );
+  electron.ipcMain.handle("metrics:local", async () => collectLocalMetrics());
+  electron.ipcMain.handle("metrics:tab", async (_e, tabId) => {
+    const id = typeof tabId === "string" ? tabId.trim() : "";
+    if (!id) return collectLocalMetrics();
+    const tab = tabs.get(id);
+    if (!(tab == null ? void 0 : tab.backend)) return collectLocalMetrics();
+    if (tab.backend.target.kind === "ssh" && "session" in tab.backend) {
+      return collectRemoteMetrics(tab.backend);
+    }
+    return collectLocalMetrics();
+  });
+  electron.ipcMain.handle("fs:list", async (_e, dirPath) => {
+    return listLocalDir(dirPath);
+  });
+  electron.ipcMain.handle(
+    "fs:list-tab",
+    async (_e, input) => {
+      const tab = tabs.get(input.tabId);
+      if (!(tab == null ? void 0 : tab.backend)) {
+        return { error: "No tab", path: "", entries: [] };
+      }
+      if (tab.backend.target.kind === "local") {
+        return listLocalDir(input.dirPath);
+      }
+      return listRemoteDir(tab.backend, input.dirPath);
+    }
+  );
+  electron.ipcMain.handle("fs:read-file", async (_e, filePath) => {
+    return readLocalTextFile(filePath);
+  });
+  electron.ipcMain.handle(
+    "fs:write-file",
+    async (_e, input) => {
+      return writeLocalTextFile(input == null ? void 0 : input.path, (input == null ? void 0 : input.content) ?? "");
+    }
+  );
+  electron.ipcMain.handle(
+    "fs:read-tab-file",
+    async (_e, input) => {
+      const tab = tabs.get(input.tabId);
+      if (!(tab == null ? void 0 : tab.backend)) return { error: "No tab" };
+      if (tab.backend.target.kind === "local") {
+        return readLocalTextFile(input.path);
+      }
+      return readRemoteTextFile(tab.backend, input.path);
+    }
+  );
+  electron.ipcMain.handle(
+    "fs:write-tab-file",
+    async (_e, input) => {
+      const tab = tabs.get(input.tabId);
+      if (!(tab == null ? void 0 : tab.backend)) return { error: "No tab" };
+      if (tab.backend.target.kind === "local") {
+        return writeLocalTextFile(input.path, input.content ?? "");
+      }
+      return writeRemoteTextFile(tab.backend, input.path, input.content ?? "");
+    }
+  );
+  electron.ipcMain.handle(
+    "fs:copy-into",
+    async (_e, input) => {
+      const destDir = (input.destDir || "").trim();
+      const sources = (input.sources || []).map((s) => s.trim()).filter(Boolean);
+      const transferId = (input.transferId || "").trim() || newId();
+      if (!destDir) return { error: "No destination" };
+      if (!sources.length) return { error: "No files" };
+      return copyLocalWithProgress(sources, destDir, transferId);
+    }
+  );
+  electron.ipcMain.handle(
+    "fs:upload-tab",
+    async (_e, input) => {
+      const tab = tabs.get(input.tabId);
+      const backend = tab == null ? void 0 : tab.backend;
+      if (!backend || backend.target.kind !== "ssh" || !("session" in backend)) {
+        return { error: "No SSH tab" };
+      }
+      const destDir = (input.destDir || "").trim() || "~";
+      const sources = (input.sources || []).map((s) => s.trim()).filter(Boolean);
+      const transferId = (input.transferId || "").trim() || newId();
+      if (!sources.length) return { error: "No files" };
+      return uploadFilesViaScp(
+        backend.session,
+        sources,
+        destDir,
+        {
+          onProgress: (p) => emitTransferProgress({
+            transferId,
+            percent: p.percent,
+            transferred: p.transferred,
+            total: p.total,
+            currentName: p.currentName
+          })
+        }
+      );
+    }
+  );
+  electron.ipcMain.handle(
+    "fs:download-tab",
+    async (_e, input) => {
+      const tab = tabs.get(input.tabId);
+      const backend = tab == null ? void 0 : tab.backend;
+      if (!backend || backend.target.kind !== "ssh" || !("session" in backend)) {
+        return { error: "No SSH tab" };
+      }
+      const destDir = (input.destDir || "").trim();
+      const sources = (input.sources || []).map((s) => s.trim()).filter(Boolean);
+      const transferId = (input.transferId || "").trim() || newId();
+      if (!destDir) return { error: "No destination" };
+      if (!sources.length) return { error: "No files" };
+      try {
+        await promises.mkdir(destDir, { recursive: true });
+      } catch (err) {
+        return {
+          error: err instanceof Error ? err.message : String(err)
+        };
+      }
+      return downloadFilesViaScp(
+        backend.session,
+        sources,
+        destDir,
+        {
+          onProgress: (p) => emitTransferProgress({
+            transferId,
+            percent: p.percent,
+            transferred: p.transferred,
+            total: p.total,
+            currentName: p.currentName
+          })
+        }
+      );
+    }
+  );
+  electron.ipcMain.handle(
+    "fs:rename",
+    async (_e, input) => {
+      const fromPath = (input.fromPath || "").trim();
+      const toPath = (input.toPath || "").trim();
+      if (!fromPath || !toPath) return { error: "Missing path" };
+      if (fromPath.includes("\0") || toPath.includes("\0")) {
+        return { error: "Invalid path" };
+      }
+      try {
+        await promises.rename(fromPath, toPath);
+        return { ok: true };
+      } catch (err) {
+        return {
+          error: err instanceof Error ? err.message : String(err)
+        };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "fs:delete",
+    async (_e, input) => {
+      const targetPath = (input.targetPath || "").trim();
+      if (!targetPath) return { error: "Missing path" };
+      if (targetPath.includes("\0")) return { error: "Invalid path" };
+      try {
+        await promises.rm(targetPath, { recursive: true, force: false });
+        return { ok: true };
+      } catch (err) {
+        return {
+          error: err instanceof Error ? err.message : String(err)
+        };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "fs:rename-tab",
+    async (_e, input) => {
+      const tab = tabs.get(input.tabId);
+      if (!(tab == null ? void 0 : tab.backend)) return { error: "No tab" };
+      const fromPath = (input.fromPath || "").trim();
+      const toPath = (input.toPath || "").trim();
+      if (!fromPath || !toPath) return { error: "Missing path" };
+      if (fromPath.includes("\0") || toPath.includes("\0")) {
+        return { error: "Invalid path" };
+      }
+      if (tab.backend.target.kind === "local") {
+        try {
+          await promises.rename(fromPath, toPath);
+          return { ok: true };
+        } catch (err) {
+          return {
+            error: err instanceof Error ? err.message : String(err)
+          };
+        }
+      }
+      const q = (p) => `'${p.replace(/'/g, `'"'"'`)}'`;
+      const result = await tab.backend.exec(
+        `mv -- ${q(fromPath)} ${q(toPath)}`,
+        { cwd: "~", timeoutMs: 3e4 }
+      );
+      if (result.timedOut) return { error: "Rename timed out" };
+      if (result.exitCode !== 0) {
+        return {
+          error: (result.stderr || result.stdout || "Rename failed").trim().slice(0, 400)
+        };
+      }
+      return { ok: true };
+    }
+  );
+  electron.ipcMain.handle(
+    "fs:delete-tab",
+    async (_e, input) => {
+      const tab = tabs.get(input.tabId);
+      if (!(tab == null ? void 0 : tab.backend)) return { error: "No tab" };
+      const targetPath = (input.targetPath || "").trim();
+      if (!targetPath) return { error: "Missing path" };
+      if (targetPath.includes("\0")) return { error: "Invalid path" };
+      if (targetPath === "/" || targetPath === "~" || targetPath === ".") {
+        return { error: "Refusing to delete that path" };
+      }
+      if (tab.backend.target.kind === "local") {
+        try {
+          await promises.rm(targetPath, { recursive: true, force: false });
+          return { ok: true };
+        } catch (err) {
+          return {
+            error: err instanceof Error ? err.message : String(err)
+          };
+        }
+      }
+      const q = (p) => `'${p.replace(/'/g, `'"'"'`)}'`;
+      const result = await tab.backend.exec(`rm -rf -- ${q(targetPath)}`, {
+        cwd: "~",
+        timeoutMs: 6e4
+      });
+      if (result.timedOut) return { error: "Delete timed out" };
+      if (result.exitCode !== 0) {
+        return {
+          error: (result.stderr || result.stdout || "Delete failed").trim().slice(0, 400)
+        };
+      }
+      return { ok: true };
+    }
+  );
+  electron.ipcMain.handle(
+    "agent:send",
+    async (_e, input) => {
+      const tab = tabs.get(input.tabId);
+      if (!(tab == null ? void 0 : tab.backend)) return { error: "No active terminal tab" };
+      const backend = tab.backend;
+      const apiKey = await loadApiKey();
+      const runId = newId();
+      const abort = new AbortController();
+      activeAgentRuns.set(runId, abort);
+      let countedUsage = false;
+      let sawTerminalStatus = false;
+      void (async () => {
+        try {
+          if (backend.target.kind === "local") {
+            await pollTabCwd(input.tabId);
+          } else if (tab.lastCwd && backend.target.kind === "ssh" && "setCwd" in backend) {
+            backend.setCwd(tab.lastCwd);
+          }
+          const target = backend.target;
+          const terminalTail = terminalTailForAgent(tab);
+          const notes = target.kind === "ssh" ? `Active session is SSH (${target.hostLabel}). Remote working directory: ${target.cwd}. Shell proposes run on that remote host.` : `Active session is local. Working directory: ${target.cwd}.`;
+          for await (const event of sendAgent({
+            message: input.message,
+            target,
+            apiKey,
+            modelId: appSettings.modelId,
+            chatMode: appSettings.chatMode,
+            locale: appSettings.locale,
+            signal: abort.signal,
+            context: {
+              notes,
+              ...terminalTail ? { terminalTail } : {}
+            }
+          })) {
+            if (abort.signal.aborted) break;
+            if (event.type === "status" && (event.status === "done" || event.status === "error" || event.status === "cancelled")) {
+              sawTerminalStatus = true;
+            }
+            if (event.type === "usage" && !countedUsage) {
+              countedUsage = true;
+              const totals = addUsage(event.usage, event.cost);
+              mainWindow == null ? void 0 : mainWindow.webContents.send("usage:updated", {
+                last: event,
+                session: totals
+              });
+            }
+            mainWindow == null ? void 0 : mainWindow.webContents.send("agent:event", {
+              runId,
+              tabId: input.tabId,
+              event
+            });
+            if (event.type === "propose") {
+              if (appSettings.chatMode !== "agent") {
+                continue;
+              }
+              if (abort.signal.aborted) break;
+              const decision = await requestApproval(
+                runId,
+                input.tabId,
+                event.action
+              );
+              if (abort.signal.aborted) break;
+              policy.remember(event.action, decision);
+              if (decision.type === "deny") {
+                mainWindow == null ? void 0 : mainWindow.webContents.send("agent:event", {
+                  runId,
+                  tabId: input.tabId,
+                  event: {
+                    type: "text",
+                    text: `
+Denied.${decision.feedback ? ` Feedback: ${decision.feedback}` : ""}
+`
+                  }
+                });
+                continue;
+              }
+              if (!event.action.command) continue;
+              if (policy.mode === "read-only" && event.action.effect !== "read") {
+                continue;
+              }
+              if (abort.signal.aborted) break;
+              backend.write(`
+# agent: ${event.action.command}
+`);
+              const result = await backend.exec(event.action.command);
+              if (abort.signal.aborted) break;
+              const out = [
+                result.stdout,
+                result.stderr,
+                result.timedOut ? "[timed out]" : `[exit ${result.exitCode}]`
+              ].filter(Boolean).join("");
+              mainWindow == null ? void 0 : mainWindow.webContents.send("agent:event", {
+                runId,
+                tabId: input.tabId,
+                event: { type: "text", text: `
+${out}
+` }
+              });
+            }
+          }
+          if (abort.signal.aborted && !sawTerminalStatus) {
+            mainWindow == null ? void 0 : mainWindow.webContents.send("agent:event", {
+              runId,
+              tabId: input.tabId,
+              event: {
+                type: "status",
+                status: "cancelled",
+                detail: "Stopped"
+              }
+            });
+          }
+        } catch (err) {
+          const cancelled = abort.signal.aborted || err instanceof Error && err.name === "AbortError";
+          mainWindow == null ? void 0 : mainWindow.webContents.send("agent:event", {
+            runId,
+            tabId: input.tabId,
+            event: cancelled ? {
+              type: "status",
+              status: "cancelled",
+              detail: "Stopped"
+            } : {
+              type: "status",
+              status: "error",
+              detail: err instanceof Error ? err.message : String(err)
+            }
+          });
+        } finally {
+          activeAgentRuns.delete(runId);
+        }
+      })();
+      return { runId };
+    }
+  );
+  electron.ipcMain.handle(
+    "agent:stop",
+    async (_e, input) => {
+      const result = stopAgentRuns(input == null ? void 0 : input.runId);
+      return { ok: true, ...result };
+    }
+  );
+  electron.ipcMain.handle(
+    "agent:resolve-approval",
+    async (_e, input) => {
+      const pending = pendingApprovals.get(input.runId);
+      if (!pending) return;
+      pendingApprovals.delete(input.runId);
+      pending.resolve(input.decision);
+    }
+  );
+  electron.ipcMain.handle("meeting:list", async () => listMeetings());
+  electron.ipcMain.handle(
+    "meeting:create",
+    async (_e, title) => createMeeting(title)
+  );
+  electron.ipcMain.handle("meeting:get", async (_e, id) => getMeeting(id));
+  electron.ipcMain.handle(
+    "meeting:save",
+    async (_e, input) => {
+      const { id, ...patch } = input;
+      return saveMeeting(id, patch);
+    }
+  );
+  electron.ipcMain.handle(
+    "meeting:save-audio",
+    async (_e, input) => {
+      const bytes = input.data instanceof Uint8Array ? input.data : new Uint8Array(input.data);
+      return saveMeetingAudio(input.id, bytes);
+    }
+  );
+  electron.ipcMain.handle(
+    "meeting:delete",
+    async (_e, id) => deleteMeeting(id)
+  );
+  electron.ipcMain.handle(
+    "meeting:export",
+    async (_e, id) => exportMeeting(id, mainWindow)
+  );
+  electron.ipcMain.handle("meeting:summarize", async (_e, id) => {
+    const meeting = await getMeeting(id);
+    if (!meeting) return { error: "not_found" };
+    const apiKey = await loadApiKey();
+    if (!apiKey.trim()) {
+      return { error: "no_api_key" };
+    }
+    const transcript = meeting.transcript.trim();
+    const notes = meeting.notes.trim();
+    if (!transcript && !notes) {
+      return { error: "no_content" };
+    }
+    const locale = appSettings.locale;
+    const prompt = locale === "ko" ? [
+      "아래 회의 받아쓰기와 메모를 한국어로 요약하세요.",
+      "마크다운만 출력하세요. 셸 명령은 실행하지 마세요.",
+      "",
+      "## 받아쓰기",
+      transcript || "(없음)",
+      "",
+      "## 메모",
+      notes || "(없음)",
+      "",
+      "포함할 내용:",
+      "- 한 줄 개요",
+      "- 핵심 결정",
+      "- 액션 아이템 (담당/기한 있으면 포함)",
+      "- 미결 질문"
+    ].join("\n") : [
+      "Summarize the meeting transcript and notes below.",
+      "Reply with markdown only. Do not run shell commands.",
+      "",
+      "## Transcript",
+      transcript || "(none)",
+      "",
+      "## Notes",
+      notes || "(none)",
+      "",
+      "Include:",
+      "- One-line overview",
+      "- Key decisions",
+      "- Action items (owner/due if present)",
+      "- Open questions"
+    ].join("\n");
+    const runId = newId();
+    const abort = new AbortController();
+    activeAgentRuns.set(runId, abort);
+    const parts = [];
+    let countedUsage = false;
+    let errorDetail = null;
+    try {
+      for await (const event of sendAgent({
+        message: prompt,
+        target: { kind: "local", cwd: os.homedir() },
+        apiKey,
+        modelId: appSettings.modelId,
+        chatMode: "ask",
+        locale: appSettings.locale,
+        signal: abort.signal,
+        context: {
+          notes: "Meeting summarization only. Do not propose or run shell commands."
+        }
+      })) {
+        if (abort.signal.aborted) break;
+        if (event.type === "text") parts.push(event.text);
+        if (event.type === "usage" && !countedUsage) {
+          countedUsage = true;
+          const totals = addUsage(event.usage, event.cost);
+          mainWindow == null ? void 0 : mainWindow.webContents.send("usage:updated", {
+            last: event,
+            session: totals
+          });
+        }
+        if (event.type === "status" && event.status === "error") {
+          errorDetail = event.detail || "failed";
+        }
+        if (event.type === "status" && event.status === "cancelled") {
+          return { error: "cancelled", runId };
+        }
+      }
+    } catch (err) {
+      activeAgentRuns.delete(runId);
+      return {
+        error: err instanceof Error ? err.message : String(err),
+        runId
+      };
+    } finally {
+      activeAgentRuns.delete(runId);
+    }
+    if (errorDetail) {
+      const keyMissing = /api key is not set|api key/i.test(errorDetail) && /not set|settings/i.test(errorDetail);
+      return {
+        error: keyMissing ? "no_api_key" : errorDetail,
+        runId
+      };
+    }
+    const summary = parts.join("").trim();
+    if (!summary) return { error: "empty", runId };
+    const saved = await saveMeeting(id, { summary, status: "done" });
+    return { ok: true, summary, meeting: saved, runId };
+  });
+}
+function requestApproval(runId, tabId, action) {
+  if (!policy.needsApproval(action)) {
+    return Promise.resolve({ type: "allow-once" });
+  }
+  return new Promise((resolve) => {
+    pendingApprovals.set(runId, { resolve, action, tabId });
+    mainWindow == null ? void 0 : mainWindow.webContents.send("agent:approval", { runId, tabId, action });
+  });
+}
+electron.app.setName("Drift");
+if (process.platform === "win32") {
+  electron.app.setAppUserModelId("app.drift.desktop");
+}
+function configureWinOpenSsh() {
+  if (process.platform !== "win32") return;
+  const dir = electron.app.isPackaged ? path.join(process.resourcesPath, "win-openssh") : path.join(__dirname, "../resources/win-openssh");
+  setWinOpenSshDir(dir);
+}
+electron.app.whenReady().then(async () => {
+  var _a;
+  const icon = loadAppIcon();
+  const iconPath = node_fs.existsSync(brandAsset("icon.png")) ? brandAsset("icon.png") : void 0;
+  electron.app.setAboutPanelOptions({
+    applicationName: "Drift",
+    applicationVersion: electron.app.getVersion(),
+    copyright: "Drift",
+    ...iconPath ? { iconPath } : {}
+  });
+  if (process.platform === "darwin" && icon) {
+    (_a = electron.app.dock) == null ? void 0 : _a.setIcon(icon);
+  }
+  configureWinOpenSsh();
+  sessionStore = new SessionStore(dataDir());
+  await sessionStore.load();
+  appSettings = await loadSettings();
+  applyChatModeToPolicy(appSettings.chatMode);
+  registerIpc();
+  buildApplicationMenu();
+  createWindow();
+  initAutoUpdater(() => mainWindow);
+  electron.app.on("activate", () => {
+    if (electron.BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+electron.app.on("window-all-closed", () => {
+  var _a, _b;
+  for (const tab of tabs.values()) {
+    (_a = tab.unsub) == null ? void 0 : _a.call(tab);
+    void ((_b = tab.backend) == null ? void 0 : _b.dispose());
+  }
+  tabs.clear();
+  if (process.platform !== "darwin") electron.app.quit();
+});
+process.on("uncaughtException", (err) => {
+  electron.dialog.showErrorBox("Drift error", err.message);
+});
