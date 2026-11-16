@@ -137,6 +137,15 @@ export interface SshPtyBackend {
   dispose(): Promise<void>;
 }
 
+/**
+ * Connection multiplexing (ControlMaster) reuses the interactive tab's auth
+ * for exec/scp. Windows OpenSSH's mux sockets are unreliable and commonly
+ * fail with `getsockname failed: Not a socket`, so keep mux off there.
+ */
+export function sshMuxSupported(): boolean {
+  return process.platform !== "win32";
+}
+
 /** Shared control socket so password/key auth from the live PTY is reused by exec. */
 export function sshControlPath(session: SavedSession): string {
   const dir = path.join(homeDir(), ".ssh", "drift");
@@ -145,6 +154,18 @@ export function sshControlPath(session: SavedSession): string {
   // OpenSSH on Windows accepts forward slashes in ControlPath more reliably.
   const raw = path.join(dir, "cm-%C");
   return process.platform === "win32" ? raw.replace(/\\/g, "/") : raw;
+}
+
+function pushMuxOptions(args: string[], session: SavedSession): void {
+  if (sshMuxSupported()) {
+    args.push("-o", "ControlMaster=auto");
+    args.push("-o", `ControlPath=${sshControlPath(session)}`);
+    args.push("-o", "ControlPersist=600");
+    return;
+  }
+  // Explicitly disable in case a user ssh_config enables ControlMaster.
+  // Windows OpenSSH mux often dies with: getsockname failed: Not a socket
+  args.push("-o", "ControlMaster=no");
 }
 
 export function buildSshArgs(
@@ -157,9 +178,7 @@ export function buildSshArgs(
   if (session.identityFile) args.push("-i", expandHome(session.identityFile));
   if (session.proxyJump) args.push("-J", session.proxyJump);
   args.push("-o", "StrictHostKeyChecking=accept-new");
-  args.push("-o", "ControlMaster=auto");
-  args.push("-o", `ControlPath=${sshControlPath(session)}`);
-  args.push("-o", "ControlPersist=600");
+  pushMuxOptions(args, session);
   if (opts?.batch) args.push("-o", "BatchMode=yes");
   args.push(`${session.user}@${session.host}`);
   return args;
@@ -304,9 +323,7 @@ export function buildScpArgs(session: SavedSession): string[] {
   if (session.identityFile) args.push("-i", expandHome(session.identityFile));
   if (session.proxyJump) args.push("-o", `ProxyJump=${session.proxyJump}`);
   args.push("-o", "StrictHostKeyChecking=accept-new");
-  args.push("-o", "ControlMaster=auto");
-  args.push("-o", `ControlPath=${sshControlPath(session)}`);
-  args.push("-o", "ControlPersist=600");
+  pushMuxOptions(args, session);
   args.push("-o", "BatchMode=yes");
   return args;
 }
@@ -352,9 +369,7 @@ function buildRsyncShell(session: SavedSession): string {
   if (session.identityFile) parts.push("-i", expandHome(session.identityFile));
   if (session.proxyJump) parts.push("-o", `ProxyJump=${session.proxyJump}`);
   parts.push("-o", "StrictHostKeyChecking=accept-new");
-  parts.push("-o", "ControlMaster=auto");
-  parts.push("-o", `ControlPath=${sshControlPath(session)}`);
-  parts.push("-o", "ControlPersist=600");
+  pushMuxOptions(parts, session);
   parts.push("-o", "BatchMode=yes");
   return parts.map((p) => (/\s/.test(p) ? `"${p.replace(/"/g, '\\"')}"` : p)).join(" ");
 }
