@@ -38,6 +38,7 @@ import { createLocalPty, type LocalPtyBackend } from "@drift/host-local";
 import {
   createSshPty,
   downloadFilesViaScp,
+  setWinOpenSshDir,
   uploadFilesViaScp,
   type SshPtyBackend,
 } from "@drift/host-ssh";
@@ -2284,6 +2285,14 @@ if (process.platform === "win32") {
   app.setAppUserModelId("app.drift.desktop");
 }
 
+function configureWinOpenSsh(): void {
+  if (process.platform !== "win32") return;
+  const dir = app.isPackaged
+    ? path.join(process.resourcesPath, "win-openssh")
+    : path.join(__dirname, "../resources/win-openssh");
+  setWinOpenSshDir(dir);
+}
+
 app.whenReady().then(async () => {
   const icon = loadAppIcon();
   const iconPath = existsSync(brandAsset("icon.png"))
@@ -2299,6 +2308,7 @@ app.whenReady().then(async () => {
     app.dock?.setIcon(icon);
   }
 
+  configureWinOpenSsh();
   sessionStore = new SessionStore(dataDir());
   await sessionStore.load();
   appSettings = await loadSettings();

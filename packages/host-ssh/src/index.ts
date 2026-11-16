@@ -11,17 +11,113 @@ import {
   type TargetRef,
 } from "@drift/core";
 
+/** Directory with portable Win32-OpenSSH binaries (set by the desktop app). */
+let winOpenSshDir: string | null = null;
+
+/** Tell host-ssh where bundled Windows OpenSSH lives (`…/win-openssh`). */
+export function setWinOpenSshDir(dir: string | null): void {
+  winOpenSshDir = dir && dir.trim() ? dir : null;
+  sshPathCache = undefined;
+  scpPathCache = undefined;
+}
+
+function homeDir(): string {
+  if (process.platform === "win32") {
+    return process.env.USERPROFILE || process.env.HOME || os.homedir();
+  }
+  return process.env.HOME || os.homedir();
+}
+
 function cleanEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === "string") env[key] = value;
   }
-  if (!env.PATH) {
+  if (process.platform === "win32") {
+    const sysRoot = process.env.SystemRoot || "C:\\Windows";
+    const pathKey =
+      Object.keys(env).find((k) => k.toLowerCase() === "path") ?? "Path";
+    const current = env[pathKey] || env.PATH || env.Path || "";
+    const extras = [
+      winOpenSshDir,
+      path.join(sysRoot, "System32", "OpenSSH"),
+      path.join(sysRoot, "System32"),
+    ].filter((p): p is string => Boolean(p));
+    const parts = [
+      ...extras,
+      ...current.split(";").map((p) => p.trim()).filter(Boolean),
+    ];
+    env[pathKey] = [...new Set(parts)].join(";");
+    if (!env.HOME) env.HOME = homeDir();
+    if (!env.USERPROFILE) env.USERPROFILE = homeDir();
+  } else if (!env.PATH) {
     env.PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
   }
   if (!env.TERM) env.TERM = "xterm-256color";
-  if (!env.HOME) env.HOME = os.homedir();
+  if (!env.HOME) env.HOME = homeDir();
   return env;
+}
+
+function systemOpenSshDir(): string | null {
+  if (process.platform !== "win32") return null;
+  const sysRoot = process.env.SystemRoot || "C:\\Windows";
+  const dir = path.join(sysRoot, "System32", "OpenSSH");
+  return existsSync(path.join(dir, "ssh.exe")) ? dir : null;
+}
+
+function whichOnPath(exe: string): string | null {
+  if (process.platform !== "win32") {
+    const probe = spawnSync("which", [exe], { encoding: "utf8" });
+    const line = (probe.stdout || "").trim().split("\n")[0];
+    return line && existsSync(line) ? line : null;
+  }
+  const probe = spawnSync("where.exe", [exe], {
+    encoding: "utf8",
+    env: cleanEnv(),
+    windowsHide: true,
+  });
+  const line = (probe.stdout || "")
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .find((s) => s.length > 0 && existsSync(s));
+  return line || null;
+}
+
+let sshPathCache: string | undefined;
+let scpPathCache: string | undefined;
+
+function resolveWinClient(kind: "ssh" | "scp"): string {
+  const cached = kind === "ssh" ? sshPathCache : scpPathCache;
+  if (cached) return cached;
+
+  const exe = `${kind}.exe`;
+  const candidates: string[] = [];
+
+  const systemDir = systemOpenSshDir();
+  if (systemDir) candidates.push(path.join(systemDir, exe));
+
+  if (winOpenSshDir) candidates.push(path.join(winOpenSshDir, exe));
+
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
+    .resourcesPath;
+  if (typeof resourcesPath === "string") {
+    candidates.push(path.join(resourcesPath, "win-openssh", exe));
+  }
+
+  let resolved: string | undefined;
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      resolved = candidate;
+      break;
+    }
+  }
+  if (!resolved) {
+    resolved = whichOnPath(exe) || whichOnPath(kind) || exe;
+  }
+
+  if (kind === "ssh") sshPathCache = resolved;
+  else scpPathCache = resolved;
+  return resolved;
 }
 
 export interface SshPtyBackend {
@@ -43,10 +139,12 @@ export interface SshPtyBackend {
 
 /** Shared control socket so password/key auth from the live PTY is reused by exec. */
 export function sshControlPath(session: SavedSession): string {
-  const dir = path.join(os.homedir(), ".ssh", "drift");
+  const dir = path.join(homeDir(), ".ssh", "drift");
   mkdirSync(dir, { recursive: true });
   // %C = hash(local, host, port, user) — keeps the path short for sockaddr limits.
-  return path.join(dir, "cm-%C");
+  // OpenSSH on Windows accepts forward slashes in ControlPath more reliably.
+  const raw = path.join(dir, "cm-%C");
+  return process.platform === "win32" ? raw.replace(/\\/g, "/") : raw;
 }
 
 export function buildSshArgs(
@@ -68,15 +166,16 @@ export function buildSshArgs(
 }
 
 function expandHome(p: string): string {
-  if (p === "~") return process.env.HOME || os.homedir();
-  if (p.startsWith("~/")) {
-    return `${process.env.HOME || os.homedir()}${p.slice(1)}`;
+  if (p === "~") return homeDir();
+  if (p.startsWith("~/") || p.startsWith("~\\")) {
+    return path.join(homeDir(), p.slice(2));
   }
   return p;
 }
 
 function sshBinary(): string {
-  return process.platform === "win32" ? "ssh" : "/usr/bin/ssh";
+  if (process.platform === "win32") return resolveWinClient("ssh");
+  return "/usr/bin/ssh";
 }
 
 /** Remote command that keeps an interactive shell and emits OSC 7 on each prompt. */
@@ -102,13 +201,25 @@ export function createSshPty(
   const args = buildSshArgs(session, { tty: true });
   args.push(buildRemoteShellCommand(session.startDir));
 
-  const pty: IPty = ptySpawn(sshBinary(), args, {
-    name: "xterm-256color",
-    cols: opts?.cols ?? 120,
-    rows: opts?.rows ?? 30,
-    cwd: process.env.HOME || os.homedir(),
-    env: cleanEnv(),
-  });
+  const bin = sshBinary();
+  let pty: IPty;
+  try {
+    pty = ptySpawn(bin, args, {
+      name: "xterm-256color",
+      cols: opts?.cols ?? 120,
+      rows: opts?.rows ?? 30,
+      cwd: homeDir(),
+      env: cleanEnv(),
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Could not start SSH client (${bin}): ${detail}` +
+        (process.platform === "win32"
+          ? ". Reinstall Drift so the bundled OpenSSH client is present."
+          : "")
+    );
+  }
 
   let disposed = false;
   let cwdGuess = session.startDir || "~";
@@ -182,7 +293,8 @@ function shellQuote(s: string): string {
 }
 
 function scpBinary(): string {
-  return process.platform === "win32" ? "scp" : "/usr/bin/scp";
+  if (process.platform === "win32") return resolveWinClient("scp");
+  return "/usr/bin/scp";
 }
 
 /** Shared options with the interactive tab's ControlMaster (no remote argv). */

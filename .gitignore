@@ -9,3 +9,6 @@ out
 release
 apps/desktop/release
 *.iconset
+apps/desktop/resources/win-openssh/*
+!apps/desktop/resources/win-openssh/README.md
+!apps/desktop/resources/win-openssh/.gitkeep

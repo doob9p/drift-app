@@ -99,6 +99,6 @@ Packaged apps check for updates on launch (and every 4 hours). When a newer vers
 ## Notes
 
 - Set your Cursor API key in **Settings** (gear). Stored encrypted in the OS keychain / credential store.
-- SSH sessions are saved without passwords; uses system `ssh` + IdentityFile / agent (Windows: OpenSSH).
+- SSH sessions are saved without passwords; uses OpenSSH + IdentityFile / agent. Windows builds bundle a portable OpenSSH client so the optional Windows feature is not required (system OpenSSH is still preferred when present).
 - Agent proposes commands → approve once / for session / deny → runs on the active host.
 - Dev mode (`npm run dev`) does not check for updates.

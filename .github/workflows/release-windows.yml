@@ -25,6 +25,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Fetch bundled Win32-OpenSSH
+        run: npm run fetch:win-openssh -w @drift/desktop
+
       - name: Rebuild native modules for Electron
         run: npm run rebuild:native
 

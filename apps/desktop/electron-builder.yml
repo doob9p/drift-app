@@ -39,6 +39,14 @@ win:
     - target: zip
       arch:
         - x64
+  # Portable OpenSSH so SSH works without the Windows optional feature.
+  extraResources:
+    - from: resources/win-openssh
+      to: win-openssh
+      filter:
+        - "**/*"
+        - "!README.md"
+        - "!.gitkeep"
 nsis:
   oneClick: false
   perMachine: false
