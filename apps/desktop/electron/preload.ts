@@ -85,6 +85,8 @@ export type DesktopApi = {
     }>;
   }>;
   listModels: () => Promise<ModelOption[]>;
+  getBoard: () => Promise<unknown>;
+  saveBoard: (state: unknown) => Promise<{ ok: true }>;
 
   getSessionUsage: () => Promise<SessionUsageView>;
   resetSessionUsage: () => Promise<SessionUsageView>;
@@ -484,6 +486,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("settings:set-local-shell", shell),
   listLocalShells: () => ipcRenderer.invoke("settings:list-local-shells"),
   listModels: () => ipcRenderer.invoke("settings:list-models"),
+  getBoard: () => ipcRenderer.invoke("board:get"),
+  saveBoard: (state) => ipcRenderer.invoke("board:save", state),
 
   getSessionUsage: () => ipcRenderer.invoke("usage:get-session"),
   resetSessionUsage: () => ipcRenderer.invoke("usage:reset-session"),

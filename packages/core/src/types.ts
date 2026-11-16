@@ -91,6 +91,12 @@ export type AgentEvent =
   | { type: "plan"; steps: string[] }
   | { type: "propose"; action: ProposedAction }
   | {
+      /** Ask Drift to open a child prompt card and run this task in parallel. */
+      type: "spawn";
+      title: string;
+      task: string;
+    }
+  | {
       type: "usage";
       usage: TokenUsageSnapshot;
       cost?: UsageCostSnapshot;

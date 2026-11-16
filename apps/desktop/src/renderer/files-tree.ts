@@ -358,10 +358,14 @@ type PaneApi = {
   setRoot: (rootPath: string) => Promise<void>;
   refresh: () => Promise<void>;
   rootPath: () => string;
+  /** Collapse open/closed is remembered per terminal session. */
+  setSessionKey: (sessionKey: string | null) => void;
 };
 
-function collapseStorageKey(scope: PaneScope): string {
-  return `drift.files.collapsed.${scope}`;
+function collapseStorageKey(scope: PaneScope, sessionKey: string): string {
+  return sessionKey
+    ? `drift.files.collapsed.${scope}.${sessionKey}`
+    : `drift.files.collapsed.${scope}`;
 }
 
 const SHOW_HIDDEN_KEY = "drift.files.showHidden";
@@ -415,6 +419,9 @@ function createPane(
   const expanded = new Set<string>();
   const cache = new Map<string, FsEntry[]>();
   const errors = new Map<string, string>();
+  /** In-memory tree expand state per terminal, survives tab switches. */
+  const sessionExpanded = new Map<string, string[]>();
+  let sessionKey = "";
   let home = "";
   let rootPath = "";
   let filter = "";
@@ -496,29 +503,51 @@ function createPane(
     return rootPath || null;
   }
 
-  function applyCollapsed(on: boolean): void {
+  function readCollapsed(key: string): boolean {
+    try {
+      return localStorage.getItem(collapseStorageKey(scope, key)) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  function applyCollapsed(on: boolean, persist = true): void {
     root.classList.toggle("collapsed", on);
     if (headBtn) {
       headBtn.title = on ? t("files.expand") : t("files.collapse");
       headBtn.setAttribute("aria-expanded", on ? "false" : "true");
     }
+    if (!persist || !sessionKey) return;
     try {
-      localStorage.setItem(collapseStorageKey(scope), on ? "1" : "0");
+      localStorage.setItem(
+        collapseStorageKey(scope, sessionKey),
+        on ? "1" : "0"
+      );
     } catch {
       /* ignore */
     }
   }
 
-  try {
-    if (localStorage.getItem(collapseStorageKey(scope)) === "1") {
-      applyCollapsed(true);
+  function setSessionKey(next: string | null): void {
+    const key = next || "";
+    if (sessionKey && sessionKey !== key) {
+      sessionExpanded.set(sessionKey, [...expanded]);
     }
-  } catch {
-    /* ignore */
+    if (key === sessionKey) {
+      applyCollapsed(key ? readCollapsed(key) : false, false);
+      return;
+    }
+    sessionKey = key;
+    expanded.clear();
+    const saved = key ? sessionExpanded.get(key) : undefined;
+    if (saved) {
+      for (const p of saved) expanded.add(p);
+    }
+    applyCollapsed(key ? readCollapsed(key) : false, false);
   }
 
   headBtn?.addEventListener("click", () => {
-    applyCollapsed(!root.classList.contains("collapsed"));
+    applyCollapsed(!root.classList.contains("collapsed"), true);
   });
 
   function goToDir(next: string): void {
@@ -1151,16 +1180,22 @@ function createPane(
       restoreHostMeta();
       titleEl.dataset.scope = scope;
     },
+    setSessionKey,
     async setRoot(next) {
       if (!next) return;
       if (rootPath === next && cache.has(next) && !errors.has(next)) {
         // Same path — still re-render so a prior showEmpty() is cleared.
+        if (expanded.size === 0) expanded.add(next);
         await render();
         return;
       }
       rootPath = next;
-      expanded.clear();
-      expanded.add(next);
+      // Keep per-session expanded dirs when switching back to the same terminal.
+      if (expanded.size === 0) {
+        expanded.add(next);
+      } else if (![...expanded].some((p) => p === next || p.startsWith(next + "/"))) {
+        expanded.add(next);
+      }
       cache.clear();
       errors.clear();
       const res = await opts.listDir(next);
@@ -1188,6 +1223,11 @@ function createPane(
 export type FilesBrowser = {
   refresh: () => Promise<void>;
   setLocalRoot: (path: string) => Promise<void>;
+  setLocal: (opts: {
+    enabled: boolean;
+    rootPath?: string;
+    message?: string;
+  }) => Promise<void>;
   localRootPath: () => string;
   setServer: (opts: {
     enabled: boolean;
@@ -1195,6 +1235,8 @@ export type FilesBrowser = {
     rootPath?: string;
     message?: string;
   }) => Promise<void>;
+  /** Bind pane collapse/expand memory to a terminal tab id. */
+  setFollowSession: (tabId: string | null) => void;
 };
 
 export function createFilesBrowser(opts: {
@@ -1323,13 +1365,32 @@ export function createFilesBrowser(opts: {
     refresh: async () => {
       await Promise.all([local.refresh(), server.refresh()]);
     },
-    setLocalRoot: (path) => local.setRoot(path),
+    setFollowSession: (tabId) => {
+      local.setSessionKey(tabId);
+      server.setSessionKey(tabId);
+    },
+    setLocalRoot: async (path) => {
+      local.setEnabled(true);
+      await local.setRoot(path);
+    },
+    setLocal: async ({ enabled, rootPath, message }) => {
+      if (!enabled) {
+        local.setEnabled(false, message ?? t("files.noTerminal"));
+        return;
+      }
+      local.setEnabled(true);
+      if (rootPath) await local.setRoot(rootPath);
+      else await local.refresh();
+    },
     localRootPath: () => local.rootPath(),
     setServer: async ({ enabled, label, rootPath, message }) => {
       if (label != null) server.setMeta(label);
       opts.root.classList.toggle("has-server", enabled);
       if (!enabled) {
-        server.setEnabled(false, message ?? "Connect an SSH session to browse the server");
+        server.setEnabled(
+          false,
+          message ?? t("files.serverEmpty")
+        );
         return;
       }
       server.setEnabled(true);

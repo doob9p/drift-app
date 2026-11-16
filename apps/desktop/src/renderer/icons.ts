@@ -39,6 +39,13 @@ import {
   Terminal,
   Trash2,
   X,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  Plus,
+  BotMessageSquare,
+  Grid2x2,
+  GitBranch,
 } from "lucide";
 
 type IconOpts = {
@@ -111,4 +118,12 @@ export const icons = {
   play: (size = 14) => lucideSvg(Play, { size }),
   stopRec: (size = 14) => lucideSvg(Square, { size, strokeWidth: 2.25 }),
   export: (size = 14) => lucideSvg(Download, { size }),
+  zoomIn: (size = 14) => lucideSvg(ZoomIn, { size }),
+  zoomOut: (size = 14) => lucideSvg(ZoomOut, { size }),
+  zoomFit: (size = 14) => lucideSvg(Maximize2, { size }),
+  plus: (size = 14) => lucideSvg(Plus, { size }),
+  /** Open / attach an AI prompt card. */
+  addPrompt: (size = 14) => lucideSvg(BotMessageSquare, { size }),
+  arrange: (size = 14) => lucideSvg(Grid2x2, { size }),
+  addSub: (size = 14) => lucideSvg(GitBranch, { size }),
 };

@@ -94,7 +94,7 @@ Windows artifacts:
 
 Unsigned Windows builds may show SmartScreen warnings until Authenticode signing is added.
 
-Packaged apps check for updates on launch (and every 4 hours). When a newer version exists, Drift shows an in-app modal: **Later** / **Update** → download progress → **Restart & install**.
+Packaged apps check for updates on launch (and every 4 hours). When a newer version exists, Drift shows the intro splash: **Later** / **Update** → download progress → **Restart & install**.
 
 ## Notes
 

@@ -100,6 +100,105 @@
         min-width: 2.6em;
         text-align: right;
       }
+      #app-splash .splash-update {
+        display: none;
+        width: min(360px, 84vw);
+        gap: 0.85rem;
+        justify-items: stretch;
+        text-align: center;
+      }
+      #app-splash.is-updating .splash-update {
+        display: grid;
+        animation: splash-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+      #app-splash.is-updating .splash-meta {
+        display: none;
+      }
+      #app-splash.is-updating .splash-bar {
+        width: min(360px, 84vw);
+      }
+      #app-splash .splash-update-title {
+        margin: 0;
+        font: 650 1rem/1.35 Pretendard Variable, Pretendard, -apple-system,
+          BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+        letter-spacing: -0.02em;
+        color: rgba(232, 234, 240, 0.92);
+      }
+      #app-splash .splash-update-lead {
+        margin: 0;
+        font: 500 0.8rem/1.45 Pretendard Variable, Pretendard, -apple-system,
+          BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+        color: rgba(232, 234, 240, 0.55);
+      }
+      #app-splash .splash-update-versions {
+        display: flex;
+        justify-content: center;
+        gap: 1.1rem;
+        font: 500 0.72rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: rgba(232, 234, 240, 0.48);
+      }
+      #app-splash .splash-update-versions strong {
+        color: rgba(232, 234, 240, 0.88);
+        font-weight: 600;
+      }
+      #app-splash .splash-update-notes {
+        max-height: 7.5rem;
+        overflow: auto;
+        margin: 0;
+        padding: 0.65rem 0.75rem;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        text-align: left;
+        white-space: pre-wrap;
+        font: 450 0.72rem/1.45 Pretendard Variable, Pretendard, -apple-system,
+          BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+        color: rgba(232, 234, 240, 0.62);
+      }
+      #app-splash .splash-update-notes.hidden,
+      #app-splash .splash-update-error.hidden {
+        display: none;
+      }
+      #app-splash .splash-update-error {
+        margin: 0;
+        font: 500 0.74rem/1.4 Pretendard Variable, Pretendard, -apple-system,
+          BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+        color: #f07178;
+      }
+      #app-splash .splash-update-actions {
+        display: flex;
+        justify-content: center;
+        gap: 0.55rem;
+        margin-top: 0.15rem;
+      }
+      #app-splash .splash-update-actions button {
+        min-width: 6.5rem;
+        height: 2.05rem;
+        padding: 0 0.9rem;
+        border-radius: 999px;
+        border: 0;
+        cursor: pointer;
+        font: 600 0.78rem/1 Pretendard Variable, Pretendard, -apple-system,
+          BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+      }
+      #app-splash .splash-update-actions button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      #app-splash .splash-btn-later {
+        background: rgba(255, 255, 255, 0.06);
+        color: rgba(232, 234, 240, 0.72);
+      }
+      #app-splash .splash-btn-later:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.1);
+      }
+      #app-splash .splash-btn-action {
+        background: linear-gradient(90deg, #d5d8f2, #8b92f5);
+        color: #0b0c12;
+      }
+      #app-splash .splash-btn-action:hover:not(:disabled) {
+        filter: brightness(1.05);
+      }
       @keyframes splash-in {
         from {
           opacity: 0;
@@ -138,6 +237,20 @@
           <div class="splash-meta">
             <p class="splash-status" id="app-splash-status">Starting…</p>
             <p class="splash-pct" id="app-splash-pct">0%</p>
+          </div>
+          <div class="splash-update" id="app-splash-update" hidden>
+            <p class="splash-update-title" id="app-splash-update-title">Update available</p>
+            <p class="splash-update-lead" id="app-splash-update-lead">A new version of Drift is ready.</p>
+            <div class="splash-update-versions">
+              <span><span id="app-splash-update-current-label">Current</span> <strong id="app-splash-update-current">—</strong></span>
+              <span><span id="app-splash-update-latest-label">Latest</span> <strong id="app-splash-update-latest">—</strong></span>
+            </div>
+            <pre class="splash-update-notes hidden" id="app-splash-update-notes"></pre>
+            <p class="splash-update-error hidden" id="app-splash-update-error"></p>
+            <div class="splash-update-actions">
+              <button type="button" class="splash-btn-later" id="btn-splash-update-later">Later</button>
+              <button type="button" class="splash-btn-action" id="btn-splash-update-action">Update</button>
+            </div>
           </div>
         </div>
       </div>

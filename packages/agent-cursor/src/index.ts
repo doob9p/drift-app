@@ -121,6 +121,13 @@ function buildPrompt(input: AgentSendInput): string {
             "summary: short reason",
             "command: exact shell command",
             "```",
+            "To split work into parallel subagent prompt cards on the Drift board, emit one or more:",
+            "```spawn",
+            "title: short card title",
+            "task: full instructions for the subagent",
+            "```",
+            "Use spawn when the user asks to divide work, run parallel checks, or hand off a subtask.",
+            "Do not spawn from inside a subagent task unless the user explicitly asks.",
             "Otherwise answer briefly in plain text.",
           ];
 
@@ -373,6 +380,14 @@ async function* runWithCursorSdk(
       const steps = extractPlanSteps(text);
       if (steps) yield { type: "plan", steps };
     } else if (chatMode === "agent") {
+      const spawns = extractSpawns(text);
+      for (const spawn of spawns) {
+        if (isAborted(input.signal)) {
+          yield { type: "status", status: "cancelled", detail: "Stopped" };
+          return;
+        }
+        yield { type: "spawn", title: spawn.title, task: spawn.task };
+      }
       const proposed = extractPropose(text, input.target);
       if (proposed) {
         if (isAborted(input.signal)) {
@@ -484,6 +499,26 @@ function extractPropose(
     summary,
     command,
   };
+}
+
+function extractSpawns(text: string): Array<{ title: string; task: string }> {
+  const out: Array<{ title: string; task: string }> = [];
+  const re = /```spawn\s*([\s\S]*?)```/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) != null) {
+    const body = match[1] ?? "";
+    const title =
+      body.match(/title:\s*(.+)/i)?.[1]?.trim() ||
+      body.match(/summary:\s*(.+)/i)?.[1]?.trim() ||
+      "Subagent";
+    const taskMatch = body.match(/task:\s*([\s\S]+)/i);
+    let task = taskMatch?.[1]?.trim() || "";
+    // Stop task body before a nested key if model stacked fields oddly.
+    task = task.replace(/\n(?:title|summary|command)\s*:[\s\S]*$/i, "").trim();
+    if (!task) continue;
+    out.push({ title: title.slice(0, 80), task });
+  }
+  return out;
 }
 
 function guessReadonlyCommand(message: string): string {

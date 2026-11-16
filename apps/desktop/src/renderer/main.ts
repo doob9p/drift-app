@@ -13,7 +13,7 @@ import type {
   SavedSession,
   TokenUsageSnapshot,
 } from "@drift/core";
-import { createChatController } from "./chat.js";
+import { createChatController, type ChatController } from "./chat.js";
 import {
   applyDomI18n,
   normalizeLocale,
@@ -33,6 +33,17 @@ import {
   openCursorApiKeysPage,
 } from "./cursor-api-key.js";
 import { showToast } from "./toast.js";
+import {
+  createBoardPane,
+  MAX_PROMPT_SUBS,
+  type BoardPane,
+} from "./board-pane.js";
+import type {
+  BoardFocus,
+  BoardPersistedState,
+  PromptCard,
+  TerminalCard,
+} from "./board-types.js";
 
 declare global {
   interface Window {
@@ -105,8 +116,15 @@ const SPLASH_AT = {
   ready: 100,
 } as const;
 
-function setSplashProgress(percent: number, message?: string): void {
-  splashPercent = Math.max(splashPercent, Math.min(100, Math.round(percent)));
+let splashHeldForUpdate = false;
+
+function setSplashProgress(
+  percent: number,
+  message?: string,
+  opts?: { absolute?: boolean }
+): void {
+  const next = Math.min(100, Math.round(percent));
+  splashPercent = opts?.absolute ? next : Math.max(splashPercent, next);
   const fill = document.getElementById("app-splash-fill");
   const bar = document.getElementById("app-splash-bar");
   const pct = document.getElementById("app-splash-pct");
@@ -120,6 +138,8 @@ function setSplashProgress(percent: number, message?: string): void {
 async function dismissSplash(): Promise<void> {
   const root = document.getElementById("app-splash");
   if (!root || root.classList.contains("is-done")) return;
+  // Keep the intro visible when an update is already on screen.
+  if (splashHeldForUpdate || root.classList.contains("is-updating")) return;
   setSplashProgress(100);
   const wait = Math.max(0, SPLASH_MIN_MS - (performance.now() - splashStartedAt));
   if (wait > 0) await new Promise((r) => window.setTimeout(r, wait));
@@ -127,7 +147,6 @@ async function dismissSplash(): Promise<void> {
   await new Promise((r) => window.setTimeout(r, 180));
   root.classList.add("is-done");
   root.setAttribute("aria-busy", "false");
-  window.setTimeout(() => root.remove(), 480);
 }
 
 const state = {
@@ -143,11 +162,6 @@ const state = {
   lastUsage: null as TokenUsageSnapshot | null,
   lastCostCents: null as number | null,
   sessionUsage: null as SessionUsageView | null,
-  pendingApproval: null as null | {
-    runId: string;
-    tabId: string;
-    action: ProposedAction;
-  },
   generating: false,
   activeRunId: null as string | null,
   turnTokens: null as number | null,
@@ -205,11 +219,6 @@ app.innerHTML = `
           <span class="strip-bar"><span id="strip-api-bar"></span></span>
           <span class="strip-metric-val" id="strip-api-val">—</span>
         </div>
-      </div>
-      <div class="strip-right">
-        <button type="button" class="chrome-btn" id="btn-toggle-agent" data-i18n-title="chrome.toggleAgent" title="Toggle chat panel" aria-label="Toggle chat panel" aria-pressed="true">
-          ${icons.panelRight(16)}
-        </button>
       </div>
     </header>
 
@@ -383,15 +392,7 @@ app.innerHTML = `
         <div class="main-stage" id="main-stage">
           <div class="editor-pane hidden" id="editor-pane"></div>
           <div class="main-split hidden" id="main-split" role="separator" aria-orientation="horizontal"></div>
-          <div class="terminal-stage" id="terminal-stage">
-            <div class="tabstrip">
-              <div class="tabs" id="tabs"></div>
-              <div class="tabs-empty" id="tabs-empty" data-i18n="tabs.empty"></div>
-            </div>
-            <div class="terminal-frame">
-              <div class="terminal-host" id="terminal-host"></div>
-            </div>
-          </div>
+          <div class="board-stage" id="board-stage"></div>
           <div class="meeting-stage hidden" id="meeting-stage">
             <div class="meeting-stage-empty" id="meeting-stage-empty">
               <div class="meeting-stage-empty-ico">${icons.mic(28)}</div>
@@ -401,98 +402,9 @@ app.innerHTML = `
           </div>
         </div>
       </section>
-
-      <div
-        class="col-split"
-        id="split-agent"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize agent panel"
-      ></div>
-
-      <aside class="agent" id="agent-panel">
-        <div class="panel-head agent-top">
-          <span class="usage-mini hidden" id="usage-mini"></span>
-          <div class="agent-tools">
-            <button type="button" class="agent-tool" id="btn-new-chat" data-i18n-title="chat.new" title="Reset chat" aria-label="Reset chat">${icons.restartChat(16)}</button>
-          </div>
-        </div>
-        <div class="chat-thread" id="chat-thread"></div>
-        <div class="agent-compose">
-          <div class="composer" id="composer">
-            <button type="button" class="composer-context is-empty" id="composer-context" title="">
-              <span class="composer-context-ico" id="composer-context-ico" aria-hidden="true">${icons.terminal(12)}</span>
-              <span class="composer-context-kind" id="composer-context-kind"></span>
-              <span class="composer-context-sep hidden" id="composer-context-sep" aria-hidden="true">·</span>
-              <span class="composer-context-path" id="composer-context-path"></span>
-            </button>
-            <div class="composer-input-wrap is-empty" id="composer-input-wrap">
-              <div
-                class="composer-placeholder"
-                id="composer-placeholder"
-                data-i18n="chat.placeholder"
-                aria-hidden="true"
-              >Plan, search, build anything…</div>
-              <div
-                id="agent-input"
-                class="composer-editor"
-                contenteditable="true"
-                role="textbox"
-                aria-multiline="true"
-                aria-label="Plan, search, build anything…"
-              ></div>
-              <div class="mention-menu hidden" id="mention-menu" role="listbox"></div>
-            </div>
-            <div class="composer-foot">
-              <div class="composer-left">
-                <div class="mode-wrap">
-                  <button type="button" class="mode-chip" id="btn-mode" aria-haspopup="listbox" aria-expanded="false">
-                    <span class="mode-icon" id="mode-icon" aria-hidden="true"></span>
-                    <span id="mode-label">Agent</span>
-                    <span class="mode-caret" aria-hidden="true">${icons.chevronDown(12)}</span>
-                  </button>
-                  <div class="mode-popover hidden" id="mode-popover" role="listbox">
-                    <button type="button" role="option" data-mode="agent" data-desc-key="mode.agent.desc">
-                      <span class="mode-ico" data-ico="agent"></span>
-                      <span class="mode-copy"><strong data-i18n="mode.agent">Agent</strong></span>
-                      <span class="mode-check" data-check="agent"></span>
-                    </button>
-                    <button type="button" role="option" data-mode="plan" data-desc-key="mode.plan.desc">
-                      <span class="mode-ico" data-ico="plan"></span>
-                      <span class="mode-copy"><strong data-i18n="mode.plan">Plan</strong></span>
-                      <span class="mode-check" data-check="plan"></span>
-                    </button>
-                    <button type="button" role="option" data-mode="ask" data-desc-key="mode.ask.desc">
-                      <span class="mode-ico" data-ico="ask"></span>
-                      <span class="mode-copy"><strong data-i18n="mode.ask">Ask</strong></span>
-                      <span class="mode-check" data-check="ask"></span>
-                    </button>
-                    <div class="mode-tip hidden" id="mode-tip" role="tooltip"></div>
-                  </div>
-                </div>
-                <div class="model-wrap">
-                  <button type="button" class="model-chip" id="btn-model" aria-haspopup="listbox" aria-expanded="false">
-                    <span id="model-label">Auto</span>
-                    <span class="mode-caret" aria-hidden="true">${icons.chevronDown(12)}</span>
-                  </button>
-                  <div class="model-popover hidden" id="model-popover">
-                    <div class="model-search">
-                      ${icons.search(14)}
-                      <input id="model-search" type="search" data-i18n-placeholder="model.search" placeholder="Search models" autocomplete="off" />
-                    </div>
-                    <div class="model-list" id="model-list" role="listbox"></div>
-                  </div>
-                </div>
-              </div>
-              <div class="composer-right">
-                <button class="send-btn" id="btn-send" data-i18n-title="chat.send" title="Send" aria-label="Send">${icons.send(16)}</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </aside>
     </div>
   </div>
+  <div class="mention-menu hidden" id="mention-menu" role="listbox"></div>
 
   <div class="toast-host" id="toast-host" aria-live="polite"></div>
 
@@ -543,24 +455,31 @@ app.innerHTML = `
     </div>
   </div>
 
-  <div class="modal-backdrop hidden" id="modal-update" role="dialog" aria-modal="true" aria-labelledby="update-title">
-    <div class="modal modal-update">
-      <h2 id="update-title" data-i18n="update.title">Update available</h2>
-      <p class="lead" data-i18n="update.lead">A new version of Drift is ready.</p>
-      <div class="update-versions">
-        <div><span data-i18n="update.current">Current</span> <strong id="update-current">—</strong></div>
-        <div><span data-i18n="update.latest">Latest</span> <strong id="update-latest">—</strong></div>
+  <div id="composer-popovers" class="composer-popovers-host" aria-hidden="true">
+    <div class="mode-popover hidden" id="mode-popover" role="listbox">
+      <button type="button" role="option" data-mode="agent" data-desc-key="mode.agent.desc">
+        <span class="mode-ico" data-ico="agent"></span>
+        <span class="mode-copy"><strong data-i18n="mode.agent">Agent</strong></span>
+        <span class="mode-check" data-check="agent"></span>
+      </button>
+      <button type="button" role="option" data-mode="plan" data-desc-key="mode.plan.desc">
+        <span class="mode-ico" data-ico="plan"></span>
+        <span class="mode-copy"><strong data-i18n="mode.plan">Plan</strong></span>
+        <span class="mode-check" data-check="plan"></span>
+      </button>
+      <button type="button" role="option" data-mode="ask" data-desc-key="mode.ask.desc">
+        <span class="mode-ico" data-ico="ask"></span>
+        <span class="mode-copy"><strong data-i18n="mode.ask">Ask</strong></span>
+        <span class="mode-check" data-check="ask"></span>
+      </button>
+      <div class="mode-tip hidden" id="mode-tip" role="tooltip"></div>
+    </div>
+    <div class="model-popover hidden" id="model-popover">
+      <div class="model-search">
+        ${icons.search(14)}
+        <input id="model-search" type="search" data-i18n-placeholder="model.search" placeholder="Search models" autocomplete="off" />
       </div>
-      <p class="update-notes hidden" id="update-notes"></p>
-      <div class="update-progress hidden" id="update-progress">
-        <div class="update-progress-bar"><span id="update-progress-fill"></span></div>
-        <div class="update-progress-label" id="update-progress-label"></div>
-      </div>
-      <p class="update-error hidden" id="update-error"></p>
-      <div class="actions">
-        <button type="button" class="ghost" id="btn-update-later" data-i18n="update.later">Later</button>
-        <button type="button" class="primary" id="btn-update-action" data-i18n="update.download">Update</button>
-      </div>
+      <div class="model-list" id="model-list" role="listbox"></div>
     </div>
   </div>
 
@@ -569,27 +488,13 @@ app.innerHTML = `
 const els = {
   sessionList: document.getElementById("session-list")!,
   sessionEmpty: document.getElementById("session-empty")!,
-  tabs: document.getElementById("tabs")!,
-  tabsEmpty: document.getElementById("tabs-empty")!,
-  terminalHost: document.getElementById("terminal-host")!,
-  terminalStage: document.getElementById("terminal-stage")!,
+  boardStage: document.getElementById("board-stage")!,
   meetingStage: document.getElementById("meeting-stage")!,
   meetingStageHost: document.getElementById("meeting-stage-host")!,
   meetingStageEmpty: document.getElementById("meeting-stage-empty")!,
   meetingList: document.getElementById("meeting-list")!,
   meetingListEmpty: document.getElementById("meeting-list-empty")!,
-  chatThread: document.getElementById("chat-thread")!,
-  agentInput: document.getElementById("agent-input") as HTMLDivElement,
-  composerInputWrap: document.getElementById("composer-input-wrap")!,
-  composerPlaceholder: document.getElementById("composer-placeholder")!,
-  composer: document.getElementById("composer")!,
-  composerContext: document.getElementById("composer-context") as HTMLButtonElement,
-  composerContextIco: document.getElementById("composer-context-ico")!,
-  composerContextKind: document.getElementById("composer-context-kind")!,
-  composerContextSep: document.getElementById("composer-context-sep")!,
-  composerContextPath: document.getElementById("composer-context-path")!,
   mentionMenu: document.getElementById("mention-menu")!,
-  btnSend: document.getElementById("btn-send") as HTMLButtonElement,
   stripPath: document.getElementById("strip-path") as HTMLButtonElement,
   stripPathText: document.getElementById("strip-path-text")!,
   stripCpu: document.getElementById("strip-cpu")!,
@@ -608,19 +513,24 @@ const els = {
   stripApiBar: document.getElementById("strip-api-bar")!,
   stripApiVal: document.getElementById("strip-api-val")!,
   modalSsh: document.getElementById("modal-ssh")!,
-  modalUpdate: document.getElementById("modal-update")!,
-  updateCurrent: document.getElementById("update-current")!,
-  updateLatest: document.getElementById("update-latest")!,
-  updateNotes: document.getElementById("update-notes")!,
-  updateProgress: document.getElementById("update-progress")!,
-  updateProgressFill: document.getElementById("update-progress-fill")!,
-  updateProgressLabel: document.getElementById("update-progress-label")!,
-  updateError: document.getElementById("update-error")!,
-  btnUpdateLater: document.getElementById(
-    "btn-update-later"
+  splashUpdate: document.getElementById("app-splash-update")!,
+  splashUpdateTitle: document.getElementById("app-splash-update-title")!,
+  splashUpdateLead: document.getElementById("app-splash-update-lead")!,
+  splashUpdateCurrentLabel: document.getElementById(
+    "app-splash-update-current-label"
+  )!,
+  splashUpdateLatestLabel: document.getElementById(
+    "app-splash-update-latest-label"
+  )!,
+  splashUpdateCurrent: document.getElementById("app-splash-update-current")!,
+  splashUpdateLatest: document.getElementById("app-splash-update-latest")!,
+  splashUpdateNotes: document.getElementById("app-splash-update-notes")!,
+  splashUpdateError: document.getElementById("app-splash-update-error")!,
+  btnSplashUpdateLater: document.getElementById(
+    "btn-splash-update-later"
   ) as HTMLButtonElement,
-  btnUpdateAction: document.getElementById(
-    "btn-update-action"
+  btnSplashUpdateAction: document.getElementById(
+    "btn-splash-update-action"
   ) as HTMLButtonElement,
   apiKeyInput: document.getElementById("api-key-input") as HTMLInputElement,
   apiKeyUnset: document.getElementById("api-key-unset")!,
@@ -631,8 +541,6 @@ const els = {
   btnOpenApiKeys: document.getElementById(
     "btn-open-api-keys"
   ) as HTMLButtonElement,
-  btnModel: document.getElementById("btn-model") as HTMLButtonElement,
-  modelLabel: document.getElementById("model-label")!,
   modelPopover: document.getElementById("model-popover")!,
   modelSearch: document.getElementById("model-search") as HTMLInputElement,
   modelList: document.getElementById("model-list")!,
@@ -641,12 +549,140 @@ const els = {
   settingsLocalShell: document.getElementById(
     "settings-local-shell"
   ) as HTMLSelectElement,
-  usageMini: document.getElementById("usage-mini")!,
-  btnMode: document.getElementById("btn-mode") as HTMLButtonElement,
   modePopover: document.getElementById("mode-popover")!,
   modeTip: document.getElementById("mode-tip")!,
-  modeLabel: document.getElementById("mode-label")!,
-  modeIcon: document.getElementById("mode-icon")!,
+  composerPopovers: document.getElementById("composer-popovers")!,
+};
+
+const promptChats = new Map<string, ChatController>();
+let activePromptCardId: string | null = null;
+const runToPrompt = new Map<string, string>();
+const generatingCards = new Set<string>();
+type RunTurnState = {
+  startedAssistant: boolean;
+  turnTokens: number | null;
+  turnModel: string | null;
+  turnCost: string | null;
+};
+const runTurns = new Map<string, RunTurnState>();
+let boardSaveTimer: number | undefined;
+let board!: BoardPane;
+let mentionCardId: string | null = null;
+
+function isCardGenerating(cardId: string): boolean {
+  return generatingCards.has(cardId);
+}
+
+function runIdForCard(cardId: string): string | null {
+  for (const [runId, cid] of runToPrompt) {
+    if (cid === cardId) return runId;
+  }
+  return null;
+}
+
+function ensureRunTurn(runId: string): RunTurnState {
+  let turn = runTurns.get(runId);
+  if (!turn) {
+    turn = {
+      startedAssistant: false,
+      turnTokens: null,
+      turnModel: state.modelId,
+      turnCost: null,
+    };
+    runTurns.set(runId, turn);
+  }
+  return turn;
+}
+
+const pendingApprovalsByRun = new Map<
+  string,
+  { runId: string; tabId: string; action: ProposedAction }
+>();
+
+function clearRun(runId: string | null | undefined): void {
+  if (!runId) return;
+  runToPrompt.delete(runId);
+  runTurns.delete(runId);
+  pendingApprovalsByRun.delete(runId);
+  if (state.activeRunId === runId) state.activeRunId = null;
+}
+
+const noopChat: ChatController = {
+  clear: () => {},
+  showEmpty: () => {},
+  addUser: () => {},
+  beginAssistant: () => {},
+  appendAssistant: () => {},
+  finishAssistant: () => {},
+  setThinking: () => {},
+  setActivity: () => {},
+  addSystem: () => {},
+  addError: (text, opts) => {
+    showToast(text, "error");
+    opts?.action?.onClick();
+  },
+  addPlan: () => {},
+  addApproval: () => {},
+  resolveApprovalCard: () => {},
+  scrollToBottom: () => {},
+};
+
+function getPromptTabId(cardId: string): string {
+  return board.findCard(cardId)?.tabId ?? "";
+}
+
+function activeChat(): ChatController | null {
+  if (!activePromptCardId) return null;
+  return promptChats.get(activePromptCardId) ?? null;
+}
+
+function activePromptInput(): HTMLDivElement | null {
+  if (!activePromptCardId) return null;
+  return board.getPromptEls(activePromptCardId)?.input ?? null;
+}
+
+function promptEls(cardId: string) {
+  return board.getPromptEls(cardId);
+}
+
+function chatForRun(runId?: string | null): ChatController {
+  const cardId = runId ? runToPrompt.get(runId) : undefined;
+  if (cardId && promptChats.has(cardId)) return promptChats.get(cardId)!;
+  return activeChat() ?? noopChat;
+}
+
+function scheduleBoardSave(): void {
+  if (boardSaveTimer != null) window.clearTimeout(boardSaveTimer);
+  boardSaveTimer = window.setTimeout(() => {
+    boardSaveTimer = undefined;
+    void api.saveBoard(board.toPersisted());
+  }, 400);
+}
+
+const chat: ChatController = {
+  clear: () => activeChat()?.clear(),
+  showEmpty: (suggestions) => activeChat()?.showEmpty(suggestions),
+  addUser: (text, refs) => activeChat()?.addUser(text, refs),
+  beginAssistant: () => activeChat()?.beginAssistant(),
+  appendAssistant: (chunk) => activeChat()?.appendAssistant(chunk),
+  finishAssistant: (meta) => activeChat()?.finishAssistant(meta),
+  setThinking: (on, label) => activeChat()?.setThinking(on, label),
+  setActivity: (activity) => activeChat()?.setActivity(activity),
+  addSystem: (text) => {
+    const c = activeChat();
+    if (c) c.addSystem(text);
+  },
+  addError: (text, opts) => {
+    const c = activeChat();
+    if (c) c.addError(text, opts);
+    else showToast(text, "error");
+  },
+  addPlan: (steps) => activeChat()?.addPlan(steps),
+  addApproval: (payload, onDecision) =>
+    activeChat()?.addApproval(payload, onDecision),
+  resolveApprovalCard: (decision) =>
+    activeChat()?.resolveApprovalCard(decision),
+  scrollToBottom: () => activeChat()?.scrollToBottom(),
 };
 
 const MODE_ICONS: Record<ChatMode, string> = {
@@ -657,9 +693,17 @@ const MODE_ICONS: Record<ChatMode, string> = {
 
 const CHECK_ICON = icons.check(12);
 
+let modeAnchorBtn: HTMLButtonElement | null = null;
+let modelAnchorBtn: HTMLButtonElement | null = null;
+
 function renderModeChip(): void {
-  els.modeLabel.textContent = t(`mode.${state.chatMode}`);
-  els.modeIcon.innerHTML = MODE_ICONS[state.chatMode];
+  const label = t(`mode.${state.chatMode}`);
+  document.querySelectorAll("[data-mode-label]").forEach((el) => {
+    el.textContent = label;
+  });
+  document.querySelectorAll("[data-mode-icon]").forEach((el) => {
+    el.innerHTML = MODE_ICONS[state.chatMode];
+  });
   els.modePopover.querySelectorAll<HTMLElement>("[data-ico]").forEach((el) => {
     const key = el.dataset.ico as ChatMode;
     el.innerHTML = MODE_ICONS[key] ?? "";
@@ -668,6 +712,13 @@ function renderModeChip(): void {
     const on = el.dataset.check === state.chatMode;
     el.classList.toggle("on", on);
     el.innerHTML = on ? CHECK_ICON : "";
+  });
+}
+
+function syncModelChipLabels(): void {
+  const label = currentModelLabel();
+  document.querySelectorAll("[data-model-label]").forEach((el) => {
+    el.textContent = label;
   });
 }
 
@@ -699,25 +750,25 @@ function applyUiLocale(): void {
   renderModeChip();
   setKeyBadge(state.hasKey);
   refreshStatusStrip();
-  if (state.generating) {
-    els.btnSend.innerHTML = icons.stop(16);
-    els.btnSend.title = t("strip.stop");
-    els.btnSend.setAttribute("aria-label", t("strip.stop"));
-  } else {
-    els.btnSend.innerHTML = icons.send(16);
-    els.btnSend.title = t("chat.send");
-    els.btnSend.setAttribute("aria-label", t("chat.send"));
-  }
   els.settingsLocale.value = state.locale;
   if (!els.settingsShellRow.hidden) {
     els.settingsLocalShell.value = state.localShell;
   }
-  els.composerPlaceholder.textContent = t("chat.placeholder");
-  els.agentInput.setAttribute("aria-label", t("chat.placeholder"));
+  if (board) {
+    applyDomI18n(board.root);
+    for (const card of board.getCards()) {
+      if (card.kind !== "prompt") continue;
+      const pe = board.getPromptEls(card.id);
+      pe?.input.setAttribute("aria-label", t("chat.placeholder"));
+    }
+    for (const id of generatingCards) {
+      board.setPromptSendBusy(id, true);
+    }
+  }
   hideMentionMenu();
   refreshChatEmptyIfNeeded();
   updateSessionEmpty();
-  updateTabsEmpty();
+  board?.syncEmpty();
 }
 
 async function applyLocale(next: AppLocale): Promise<void> {
@@ -734,9 +785,7 @@ async function applyChatMode(mode: ChatMode): Promise<void> {
   state.chatMode = mode;
   await api.setChatMode(mode);
   renderModeChip();
-  els.modePopover.classList.add("hidden");
-  els.btnMode.setAttribute("aria-expanded", "false");
-  hideModeTip();
+  closeModePopover();
   chat.addSystem(t("mode.changed", { mode: t(`mode.${mode}`) }));
 }
 
@@ -744,26 +793,19 @@ function updateSessionEmpty(): void {
   els.sessionEmpty.classList.toggle("hidden", state.sessions.length > 0);
 }
 
-function updateTabsEmpty(): void {
-  els.tabsEmpty.classList.toggle("hidden", state.tabs.size > 0);
-  syncMainStageLayout();
-}
-
-const chat = createChatController(els.chatThread);
-chat.showEmpty();
-
-function setGenerating(on: boolean): void {
-  state.generating = on;
-  els.composer.classList.toggle("generating", on);
-  els.btnSend.innerHTML = on ? icons.stop(16) : icons.send(16);
-  els.btnSend.classList.toggle("busy", on);
-  els.btnSend.classList.toggle("is-stop", on);
-  els.btnSend.disabled = false;
-  els.btnSend.title = on ? t("strip.stop") : t("chat.send");
-  els.btnSend.setAttribute("aria-label", on ? t("strip.stop") : t("chat.send"));
-  els.btnSend.dataset.i18nTitle = on ? "strip.stop" : "chat.send";
-  els.agentInput.contentEditable = on ? "false" : "true";
-  els.agentInput.classList.toggle("is-disabled", on);
+function setGenerating(on: boolean, cardId?: string | null): void {
+  const id = cardId ?? activePromptCardId;
+  if (id) {
+    if (on) generatingCards.add(id);
+    else generatingCards.delete(id);
+    board.setPromptSendBusy(id, on);
+    const input = board.getPromptEls(id)?.input;
+    if (input) {
+      input.contentEditable = on ? "false" : "true";
+      input.classList.toggle("is-disabled", on);
+    }
+  }
+  state.generating = generatingCards.size > 0;
 }
 
 let homeDirCache = "";
@@ -803,7 +845,7 @@ function updateStripPath(): void {
       t("nav.meetings");
     els.stripPathText.textContent = title;
     els.stripPath.title = title;
-    updateComposerContext();
+    syncPromptContexts();
     return;
   }
   const active = state.activeTabId
@@ -813,47 +855,33 @@ function updateStripPath(): void {
   const label = cwd ? formatStripPath(cwd) : active ? active.title : "—";
   els.stripPathText.textContent = label;
   els.stripPath.title = cwd || active?.title || "";
-  updateComposerContext();
+  syncPromptContexts();
 }
 
-function updateComposerContext(): void {
+function promptContextForTab(
+  tabId: string
+): { kind: string; path: string; title: string } {
   if (activeNav === "meetings") {
     const title =
       meetingState.pane?.title ||
       meetingState.list.find((m) => m.id === meetingState.activeId)?.title ||
       "";
     const sessionLabel = t("chat.context.meeting");
-    els.composerContext.classList.toggle("is-empty", !title);
-    els.composerContext.classList.remove("is-ssh");
-    els.composerContextIco.innerHTML = icons.mic(12);
-    els.composerContextKind.textContent = title
-      ? sessionLabel
-      : t("chat.context.none");
-    if (title) {
-      els.composerContextPath.textContent = title;
-      els.composerContextSep.classList.remove("hidden");
-      els.composerContext.title = `${sessionLabel} · ${title}`;
-    } else {
-      els.composerContextPath.textContent = "";
-      els.composerContextSep.classList.add("hidden");
-      els.composerContext.title = t("chat.context.none");
-    }
-    refreshChatEmptyIfNeeded();
-    return;
+    return {
+      kind: title ? sessionLabel : t("chat.context.none"),
+      path: title,
+      title: title
+        ? `${sessionLabel} · ${title}`
+        : t("chat.context.none"),
+    };
   }
-  const active = state.activeTabId
-    ? state.tabs.get(state.activeTabId)
-    : undefined;
+  const active = state.tabs.get(tabId);
   if (!active) {
-    els.composerContext.classList.add("is-empty");
-    els.composerContext.classList.remove("is-ssh");
-    els.composerContextIco.innerHTML = icons.terminal(12);
-    els.composerContextKind.textContent = t("chat.context.none");
-    els.composerContextPath.textContent = "";
-    els.composerContextSep.classList.add("hidden");
-    els.composerContext.title = t("chat.context.none");
-    refreshChatEmptyIfNeeded();
-    return;
+    return {
+      kind: t("chat.context.none"),
+      path: "",
+      title: t("chat.context.none"),
+    };
   }
   const cwd = tabCwds.get(active.id);
   const pathLabel = cwd ? formatStripPath(cwd) : "";
@@ -861,21 +889,19 @@ function updateComposerContext(): void {
     active.kind === "ssh"
       ? t("chat.context.sshSession", { name: active.title })
       : t("chat.context.localSession");
-  els.composerContext.classList.remove("is-empty");
-  els.composerContext.classList.toggle("is-ssh", active.kind === "ssh");
-  els.composerContextIco.innerHTML =
-    active.kind === "ssh" ? icons.server(12) : icons.monitor(12);
-  els.composerContextKind.textContent = sessionLabel;
-  if (pathLabel) {
-    els.composerContextPath.textContent = pathLabel;
-    els.composerContextSep.classList.remove("hidden");
-  } else {
-    els.composerContextPath.textContent = "";
-    els.composerContextSep.classList.add("hidden");
+  const title = cwd ? `${sessionLabel} · ${cwd}` : sessionLabel;
+  return { kind: sessionLabel, path: pathLabel, title };
+}
+
+function syncPromptContextForCard(cardId: string): void {
+  const tabId = getPromptTabId(cardId);
+  board.updatePromptContext(cardId, promptContextForTab(tabId));
+}
+
+function syncPromptContexts(): void {
+  for (const card of board.getCards()) {
+    if (card.kind === "prompt") syncPromptContextForCard(card.id);
   }
-  els.composerContext.title = cwd
-    ? `${sessionLabel} · ${cwd}`
-    : sessionLabel;
   refreshChatEmptyIfNeeded();
 }
 
@@ -899,11 +925,11 @@ type AtMentionState = {
   query: string;
 };
 
-function getAtMention(): AtMentionState | null {
+function getAtMention(input: HTMLDivElement): AtMentionState | null {
   const sel = window.getSelection();
   if (!sel || !sel.rangeCount || !sel.isCollapsed) return null;
   const range = sel.getRangeAt(0);
-  if (!els.agentInput.contains(range.startContainer)) return null;
+  if (!input.contains(range.startContainer)) return null;
   let textNode: Text | null = null;
   let caretOffset = 0;
   if (range.startContainer.nodeType === Node.TEXT_NODE) {
@@ -924,10 +950,9 @@ function invalidateMentionCache(): void {
   cwdMentionCache = null;
 }
 
-async function loadCwdMentions(): Promise<MentionItem[]> {
-  const active = state.activeTabId
-    ? state.tabs.get(state.activeTabId)
-    : undefined;
+async function loadCwdMentions(forTabId?: string | null): Promise<MentionItem[]> {
+  const tabId = forTabId ?? state.activeTabId;
+  const active = tabId ? state.tabs.get(tabId) : undefined;
   if (!active) return [];
   const cwd = tabCwds.get(active.id);
   if (!cwd) return [];
@@ -974,6 +999,7 @@ let activeAtMention: AtMentionState | null = null;
 
 function hideMentionMenu(): void {
   activeAtMention = null;
+  mentionCardId = null;
   mentionItems = [];
   mentionIndex = 0;
   mentionLoadToken += 1;
@@ -1018,8 +1044,15 @@ function renderMentionMenu(loading = false): void {
   els.mentionMenu.classList.remove("hidden");
 }
 
-async function refreshMentionMenu(): Promise<void> {
-  const at = getAtMention();
+async function refreshMentionMenu(cardId: string): Promise<void> {
+  const pe = promptEls(cardId);
+  const input = pe?.input;
+  if (!input) {
+    hideMentionMenu();
+    return;
+  }
+  mentionCardId = cardId;
+  const at = getAtMention(input);
   if (!at) {
     hideMentionMenu();
     return;
@@ -1031,7 +1064,7 @@ async function refreshMentionMenu(): Promise<void> {
     state.activeTabId &&
     cwdMentionCache.key.startsWith(`${state.activeTabId}:`);
   if (!cached) renderMentionMenu(true);
-  const items = await loadCwdMentions();
+  const items = await loadCwdMentions(getPromptTabId(cardId));
   if (token !== mentionLoadToken) return;
   mentionItems = filterMentions(items, at.query);
   mentionIndex = Math.min(
@@ -1047,33 +1080,43 @@ type AttachedRef = {
   kind: "file" | "dir";
 };
 
-function normalizeEmptyComposer(): boolean {
+function normalizeEmptyComposer(input: HTMLDivElement): boolean {
   // Browsers often insert <br> / ZWSP into an empty contenteditable.
-  if (els.agentInput.querySelector(".composer-inline-chip")) return false;
-  const text = (els.agentInput.textContent || "")
+  if (input.querySelector(".composer-inline-chip")) return false;
+  const text = (input.textContent || "")
     .replace(/\u200b/g, "")
     .replace(/\u00a0/g, " ")
     .trim();
   if (text) return false;
-  if (els.agentInput.innerHTML !== "") {
-    els.agentInput.innerHTML = "";
+  if (input.innerHTML !== "") {
+    input.innerHTML = "";
   }
   return true;
 }
 
-function syncComposerEmpty(): void {
-  const empty = normalizeEmptyComposer();
-  els.composerInputWrap.classList.toggle("is-empty", empty);
+function syncComposerEmpty(cardId: string): void {
+  const pe = promptEls(cardId);
+  if (!pe) return;
+  const empty = normalizeEmptyComposer(pe.input);
+  pe.input
+    .closest("[data-prompt-wrap]")
+    ?.classList.toggle("is-empty", empty);
+  const wrap = pe.input.parentElement;
+  if (wrap?.matches("[data-prompt-wrap]")) {
+    wrap.classList.toggle("is-empty", empty);
+  }
 }
 
-function clearComposer(): void {
-  els.agentInput.innerHTML = "";
-  syncComposerEmpty();
-  autoGrowInput();
+function clearComposer(cardId: string): void {
+  const pe = promptEls(cardId);
+  if (!pe) return;
+  pe.input.innerHTML = "";
+  syncComposerEmpty(cardId);
+  autoGrowInput(pe.input);
 }
 
-function readComposerChips(): AttachedRef[] {
-  return [...els.agentInput.querySelectorAll(".composer-inline-chip")].map(
+function readComposerChips(input: HTMLDivElement): AttachedRef[] {
+  return [...input.querySelectorAll(".composer-inline-chip")].map(
     (el) => {
       const node = el as HTMLElement;
       return {
@@ -1085,8 +1128,10 @@ function readComposerChips(): AttachedRef[] {
   );
 }
 
-function readComposer(): { text: string; refs: AttachedRef[] } {
-  const refs = readComposerChips();
+function readComposerFrom(
+  input: HTMLDivElement
+): { text: string; refs: AttachedRef[] } {
+  const refs = readComposerChips(input);
   let text = "";
   const walk = (node: Node) => {
     if (node.nodeType === Node.TEXT_NODE) {
@@ -1105,7 +1150,7 @@ function readComposer(): { text: string; refs: AttachedRef[] } {
     }
     for (const child of el.childNodes) walk(child);
   };
-  for (const child of els.agentInput.childNodes) walk(child);
+  for (const child of input.childNodes) walk(child);
   return { text: text.replace(/\n{3,}/g, "\n\n").trim(), refs };
 }
 
@@ -1116,7 +1161,11 @@ function enrichPromptWithRefs(message: string, refs: AttachedRef[]): string {
   return message.trim() ? `${message}\n\n${block}` : block;
 }
 
-function createInlineChip(item: MentionItem): HTMLSpanElement {
+function createInlineChip(
+  item: MentionItem,
+  input: HTMLDivElement,
+  cardId: string
+): HTMLSpanElement {
   const chip = document.createElement("span");
   chip.className = "composer-inline-chip";
   chip.contentEditable = "false";
@@ -1140,7 +1189,7 @@ function createInlineChip(item: MentionItem): HTMLSpanElement {
     e.stopPropagation();
     const after = chip.nextSibling;
     chip.remove();
-    els.agentInput.focus();
+    input.focus();
     if (after?.nodeType === Node.TEXT_NODE) {
       const sel = window.getSelection();
       if (sel) {
@@ -1151,10 +1200,10 @@ function createInlineChip(item: MentionItem): HTMLSpanElement {
         sel.addRange(range);
       }
     } else {
-      placeCaretAtEnd(els.agentInput);
+      placeCaretAtEnd(input);
     }
-    syncComposerEmpty();
-    autoGrowInput();
+    syncComposerEmpty(cardId);
+    autoGrowInput(input);
   });
   return chip;
 }
@@ -1170,7 +1219,10 @@ function placeCaretAtEnd(el: HTMLElement): void {
 }
 
 function applyMention(item: MentionItem): void {
-  const at = activeAtMention || getAtMention();
+  const cardId = mentionCardId;
+  const input = cardId ? promptEls(cardId)?.input : null;
+  if (!cardId || !input) return;
+  const at = activeAtMention || getAtMention(input);
   if (!at) return;
   const { textNode, atOffset, caretOffset } = at;
   const before = textNode.data.slice(0, atOffset);
@@ -1180,14 +1232,14 @@ function applyMention(item: MentionItem): void {
 
   const beforeNode = document.createTextNode(before || "\u200b");
   const afterNode = document.createTextNode(after || "\u200b");
-  const chip = createInlineChip(item);
+  const chip = createInlineChip(item, input, cardId);
   parent.insertBefore(beforeNode, textNode);
   parent.insertBefore(chip, textNode);
   parent.insertBefore(afterNode, textNode);
   parent.removeChild(textNode);
 
   hideMentionMenu();
-  els.agentInput.focus();
+  input.focus();
   const sel = window.getSelection();
   if (sel) {
     const range = document.createRange();
@@ -1196,13 +1248,16 @@ function applyMention(item: MentionItem): void {
     sel.removeAllRanges();
     sel.addRange(range);
   }
-  syncComposerEmpty();
-  autoGrowInput();
+  syncComposerEmpty(cardId);
+  autoGrowInput(input);
 }
 
-function buildChatSuggestions(): { label: string; prompt: string }[] {
-  const active = state.activeTabId
-    ? state.tabs.get(state.activeTabId)
+function buildChatSuggestions(
+  tabId?: string | null
+): { label: string; prompt: string }[] {
+  const effectiveTabId = tabId ?? state.activeTabId;
+  const active = effectiveTabId
+    ? state.tabs.get(effectiveTabId)
     : undefined;
   if (!active) {
     return [
@@ -1251,8 +1306,12 @@ function buildChatSuggestions(): { label: string; prompt: string }[] {
 }
 
 function refreshChatEmptyIfNeeded(): void {
-  if (!els.chatThread.querySelector(".chat-empty")) return;
-  chat.showEmpty(buildChatSuggestions());
+  const id = activePromptCardId;
+  if (!id) return;
+  const ctrl = promptChats.get(id);
+  const pe = board.getPromptEls(id);
+  if (!ctrl || !pe?.thread.querySelector(".chat-empty")) return;
+  ctrl.showEmpty(buildChatSuggestions(getPromptTabId(id)));
 }
 
 let metricsInFlight = false;
@@ -1378,22 +1437,7 @@ function formatCents(cents: number): string {
 }
 
 function renderUsage(): void {
-  if (!state.sessionUsage || state.sessionUsage.turns === 0) {
-    els.usageMini.textContent = "";
-    els.usageMini.title = "";
-    els.usageMini.classList.add("hidden");
-    return;
-  }
-  const tok = formatTokens(state.sessionUsage.usage.totalTokens);
-  const cost =
-    state.sessionUsage.cost.chargedCents > 0
-      ? ` · ${formatCents(state.sessionUsage.cost.chargedCents)}`
-      : "";
-  els.usageMini.textContent = `${tok}${cost}`;
-  els.usageMini.title = `Session ${state.sessionUsage.turns} turns · last ${
-    state.lastUsage ? formatTokens(state.lastUsage.totalTokens) : "-"
-  }`;
-  els.usageMini.classList.remove("hidden");
+  /* usage mini UI removed from titlebar */
 }
 
 function modelOptions(): ModelOption[] {
@@ -1414,7 +1458,7 @@ function modelBadge(m: ModelOption): string {
 }
 
 function renderModelPicker(filter = ""): void {
-  els.modelLabel.textContent = currentModelLabel();
+  syncModelChipLabels();
   const q = filter.trim().toLowerCase();
   const options = modelOptions().filter((m) => {
     if (!q) return true;
@@ -1453,58 +1497,110 @@ function renderModelPicker(filter = ""): void {
   }
 }
 
-const modelPopoverHome = els.modelPopover.parentElement;
+const popoverHome = els.composerPopovers;
 
-function positionModelPopover(): void {
-  if (els.modelPopover.classList.contains("hidden")) return;
+function positionAboveChip(
+  pop: HTMLElement,
+  chip: DOMRect,
+  width: number,
+  maxHeight: number
+): void {
   const gap = 8;
   const margin = 8;
-  const chip = els.btnModel.getBoundingClientRect();
-  const agent = document.getElementById("agent-panel");
-  const agentRect = agent?.getBoundingClientRect();
-  const width = Math.min(320, window.innerWidth - margin * 2);
-  const maxHeight = Math.min(420, window.innerHeight * 0.6);
-
-  // Cursor-style: sit above the chip, prefer spilling left over the main pane.
-  let left = chip.right - width;
-  if (agentRect) {
-    left = Math.min(left, agentRect.right - width - 10);
-  }
-  left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
-
+  const w = Math.min(width, window.innerWidth - margin * 2);
+  let left = chip.left;
+  left = Math.max(margin, Math.min(left, window.innerWidth - w - margin));
   const bottom = Math.max(margin, window.innerHeight - chip.top + gap);
   const availableUp = window.innerHeight - bottom - margin;
+  pop.style.left = `${Math.round(left)}px`;
+  pop.style.right = "auto";
+  pop.style.bottom = `${Math.round(bottom)}px`;
+  pop.style.top = "auto";
+  pop.style.width = `${Math.round(w)}px`;
+  pop.style.maxHeight = `${Math.round(Math.min(maxHeight, availableUp))}px`;
+}
 
-  els.modelPopover.style.left = `${Math.round(left)}px`;
-  els.modelPopover.style.right = "auto";
-  els.modelPopover.style.bottom = `${Math.round(bottom)}px`;
-  els.modelPopover.style.top = "auto";
-  els.modelPopover.style.width = `${Math.round(width)}px`;
-  els.modelPopover.style.maxHeight = `${Math.round(Math.min(maxHeight, availableUp))}px`;
+function positionModelPopover(): void {
+  if (els.modelPopover.classList.contains("hidden") || !modelAnchorBtn) return;
+  positionAboveChip(
+    els.modelPopover,
+    modelAnchorBtn.getBoundingClientRect(),
+    320,
+    420
+  );
+}
+
+function positionModePopover(): void {
+  if (els.modePopover.classList.contains("hidden") || !modeAnchorBtn) return;
+  positionAboveChip(
+    els.modePopover,
+    modeAnchorBtn.getBoundingClientRect(),
+    176,
+    280
+  );
+}
+
+function closeModePopover(): void {
+  els.modePopover.classList.add("hidden");
+  modeAnchorBtn?.setAttribute("aria-expanded", "false");
+  modeAnchorBtn = null;
+  hideModeTip();
+  els.modePopover.style.left = "";
+  els.modePopover.style.bottom = "";
+  els.modePopover.style.width = "";
+  els.modePopover.style.maxHeight = "";
+  if (popoverHome && els.modePopover.parentElement !== popoverHome) {
+    popoverHome.appendChild(els.modePopover);
+  }
 }
 
 function closeModelPopover(): void {
   els.modelPopover.classList.add("hidden");
-  els.btnModel.setAttribute("aria-expanded", "false");
+  modelAnchorBtn?.setAttribute("aria-expanded", "false");
+  modelAnchorBtn = null;
   els.modelSearch.value = "";
   els.modelPopover.style.left = "";
   els.modelPopover.style.bottom = "";
   els.modelPopover.style.width = "";
   els.modelPopover.style.maxHeight = "";
-  if (modelPopoverHome && els.modelPopover.parentElement !== modelPopoverHome) {
-    modelPopoverHome.appendChild(els.modelPopover);
+  if (popoverHome && els.modelPopover.parentElement !== popoverHome) {
+    popoverHome.appendChild(els.modelPopover);
   }
 }
 
-function openModelPopover(): void {
-  els.modePopover.classList.add("hidden");
-  els.btnMode.setAttribute("aria-expanded", "false");
+function openModePopover(btn: HTMLButtonElement): void {
+  closeModelPopover();
+  hideModeTip();
+  if (modeAnchorBtn === btn && !els.modePopover.classList.contains("hidden")) {
+    closeModePopover();
+    return;
+  }
+  modeAnchorBtn?.setAttribute("aria-expanded", "false");
+  modeAnchorBtn = btn;
+  if (els.modePopover.parentElement !== document.body) {
+    document.body.appendChild(els.modePopover);
+  }
+  els.modePopover.classList.remove("hidden");
+  btn.setAttribute("aria-expanded", "true");
+  renderModeChip();
+  positionModePopover();
+  requestAnimationFrame(() => positionModePopover());
+}
+
+function openModelPopover(btn: HTMLButtonElement): void {
+  closeModePopover();
+  if (modelAnchorBtn === btn && !els.modelPopover.classList.contains("hidden")) {
+    closeModelPopover();
+    return;
+  }
+  modelAnchorBtn?.setAttribute("aria-expanded", "false");
+  modelAnchorBtn = btn;
   renderModelPicker();
   if (els.modelPopover.parentElement !== document.body) {
     document.body.appendChild(els.modelPopover);
   }
   els.modelPopover.classList.remove("hidden");
-  els.btnModel.setAttribute("aria-expanded", "true");
+  btn.setAttribute("aria-expanded", "true");
   positionModelPopover();
   requestAnimationFrame(() => {
     positionModelPopover();
@@ -1516,6 +1612,7 @@ window.addEventListener(
   "resize",
   () => {
     if (!els.modelPopover.classList.contains("hidden")) positionModelPopover();
+    if (!els.modePopover.classList.contains("hidden")) positionModePopover();
   },
   { passive: true }
 );
@@ -1595,7 +1692,8 @@ async function refreshSessions(): Promise<void> {
     li.className = "session-item";
     const open = document.createElement("button");
     open.className = "row";
-    open.innerHTML = `<strong>${escapeHtml(s.name)}</strong><span class="meta">${escapeHtml(s.user)}@${escapeHtml(s.host)}${s.port && s.port !== 22 ? `:${s.port}` : ""}</span>`;
+    const hostMeta = `${s.user}@${s.host}${s.port && s.port !== 22 ? `:${s.port}` : ""}`;
+    open.innerHTML = `<strong title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</strong><span class="meta" title="${escapeHtml(hostMeta)}">${escapeHtml(hostMeta)}</span>`;
     open.onclick = () => void openSsh(s.id);
     const actions = document.createElement("div");
     actions.className = "session-actions";
@@ -1632,29 +1730,260 @@ function escapeHtml(s: string): string {
     .replaceAll('"', "&quot;");
 }
 
-function renderTabs(): void {
-  els.tabs.innerHTML = "";
-  updateTabsEmpty();
-  for (const tab of state.tabs.values()) {
-    const btn = document.createElement("button");
-    btn.className = `tab${tab.id === state.activeTabId ? " active" : ""}`;
-    btn.innerHTML = `<span class="tab-title">${escapeHtml(tab.title)}</span>`;
-    const close = document.createElement("span");
-    close.className = "close";
-    close.textContent = "×";
-    close.onclick = (e) => {
-      e.stopPropagation();
-      void closeTab(tab.id);
-    };
-    btn.append(close);
-    btn.onclick = () => activateTab(tab.id);
-    els.tabs.append(btn);
+function deleteChipBeforeCaret(input: HTMLDivElement, cardId: string): boolean {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount || !sel.isCollapsed) return false;
+  const range = sel.getRangeAt(0);
+  const node = range.startContainer;
+  if (node.nodeType === Node.TEXT_NODE && range.startOffset === 0) {
+    const prev = node.previousSibling as HTMLElement | null;
+    if (prev?.classList?.contains("composer-inline-chip")) {
+      prev.remove();
+      syncComposerEmpty(cardId);
+      autoGrowInput(input);
+      return true;
+    }
+  }
+  if (node === input && range.startOffset > 0) {
+    const prev = input.childNodes[range.startOffset - 1] as
+      | HTMLElement
+      | undefined;
+    if (prev?.classList?.contains("composer-inline-chip")) {
+      prev.remove();
+      syncComposerEmpty(cardId);
+      autoGrowInput(input);
+      return true;
+    }
+  }
+  return false;
+}
+
+function wirePromptComposer(cardId: string): void {
+  const pe = promptEls(cardId);
+  if (!pe) return;
+  const { input, thread } = pe;
+  const cardEl = input.closest(".board-card-prompt");
+  const modeBtn = cardEl?.querySelector(
+    "[data-prompt-mode]"
+  ) as HTMLButtonElement | null;
+  const modelBtn = cardEl?.querySelector(
+    "[data-prompt-model]"
+  ) as HTMLButtonElement | null;
+  modeBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openModePopover(modeBtn);
+  });
+  modelBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openModelPopover(modelBtn);
+  });
+  renderModeChip();
+  syncModelChipLabels();
+  thread.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest(
+      "[data-suggest]"
+    ) as HTMLElement | null;
+    if (!btn?.dataset.suggest) return;
+    clearComposer(cardId);
+    input.textContent = btn.dataset.suggest;
+    syncComposerEmpty(cardId);
+    autoGrowInput(input);
+    input.focus();
+    placeCaretAtEnd(input);
+  });
+  input.addEventListener("focus", () => {
+    activePromptCardId = cardId;
+    if (normalizeEmptyComposer(input)) {
+      input.parentElement?.classList.add("is-empty");
+      placeCaretAtEnd(input);
+    }
+  });
+  input.addEventListener("input", () => {
+    syncComposerEmpty(cardId);
+    autoGrowInput(input);
+    void refreshMentionMenu(cardId);
+  });
+  input.addEventListener("keyup", () => {
+    void refreshMentionMenu(cardId);
+  });
+  input.addEventListener("click", () => {
+    void refreshMentionMenu(cardId);
+  });
+  input.addEventListener("blur", () => {
+    syncComposerEmpty(cardId);
+    window.setTimeout(() => hideMentionMenu(), 120);
+  });
+  const ctx = pe.context;
+  ctx.onclick = () => {
+    if (ctx.classList.contains("is-empty")) return;
+    setNav("files");
+  };
+}
+
+function restoreSavedPrompts(saved: BoardPersistedState): void {
+  board.applyPersisted(saved, new Set(state.tabs.keys()));
+  for (const card of board.getCards()) {
+    if (card.kind !== "prompt") continue;
+    attachPromptCard(card);
   }
 }
 
+function attachPromptCard(card: PromptCard): void {
+  const pe = board.getPromptEls(card.id);
+  if (!pe) return;
+  const ctrl = createChatController(pe.thread);
+  ctrl.showEmpty(buildChatSuggestions(card.tabId));
+  promptChats.set(card.id, ctrl);
+  wirePromptComposer(card.id);
+  syncPromptContextForCard(card.id);
+}
+
+function terminalCardForTab(tabId: string): TerminalCard | undefined {
+  return board
+    .getCards()
+    .find(
+      (c): c is TerminalCard => c.kind === "terminal" && c.tabId === tabId
+    );
+}
+
+function isTabTerminalExpanded(tabId: string): boolean {
+  const card = terminalCardForTab(tabId);
+  return Boolean(card && !card.minimized);
+}
+
+board = createBoardPane(els.boardStage, {
+  onFocus(focus: BoardFocus) {
+    if (!focus) {
+      filesFollowTabId = null;
+      void syncFilesPanel();
+      refreshStatusStrip();
+      return;
+    }
+    state.activeTabId = focus.tabId;
+    if (focus.kind === "prompt") {
+      activePromptCardId = focus.cardId;
+      // Prompt focus is not a terminal selection — clear the files tree.
+      filesFollowTabId = null;
+      void syncFilesPanel();
+    }
+    syncPromptContexts();
+    refreshStatusStrip();
+    void refreshStripMetrics();
+    // Files panel follows board terminal selection only.
+    if (focus.kind === "terminal") {
+      filesFollowTabId = focus.tabId;
+      void syncFilesPanel();
+      const tab = state.tabs.get(focus.tabId);
+      if (tab) {
+        requestAnimationFrame(() => {
+          syncTerminalSize(tab, { force: true });
+          tab.term.focus();
+        });
+      }
+    }
+  },
+  onToggleMinimize(cardId) {
+    const card = board.findCard(cardId);
+    if (!card || card.kind !== "terminal") return;
+    const minimized = !card.minimized;
+    board.setMinimized(cardId, minimized);
+    if (!minimized) activateTab(card.tabId);
+  },
+  onCloseTerminal(tabId) {
+    void closeTab(tabId);
+  },
+  onClosePrompt(cardId) {
+    const childIds = board
+      .getCards()
+      .filter((c) => c.kind === "prompt" && c.parentId === cardId)
+      .map((c) => c.id);
+    for (const id of [cardId, ...childIds]) {
+      if (isCardGenerating(id)) stopPromptAgent(id);
+      promptChats.delete(id);
+      for (const [runId, cid] of [...runToPrompt]) {
+        if (cid === id) clearRun(runId);
+      }
+      generatingCards.delete(id);
+      if (activePromptCardId === id) activePromptCardId = null;
+    }
+    board.removeCard(cardId);
+  },
+  onAddSub(parentCardId) {
+    void addManualSubPrompt(parentCardId);
+  },
+  onPromptSend(cardId) {
+    if (isCardGenerating(cardId)) {
+      stopPromptAgent(cardId);
+      return;
+    }
+    void sendPrompt(cardId);
+  },
+  onPromptInputKeydown(cardId, e) {
+    if (isCardGenerating(cardId)) {
+      e.preventDefault();
+      if (e.key === "Enter" && !e.shiftKey) stopPromptAgent(cardId);
+      return;
+    }
+    const pe = promptEls(cardId);
+    const input = pe?.input;
+    if (!input) return;
+    const mentionOpen = !els.mentionMenu.classList.contains("hidden");
+    if (mentionOpen && mentionCardId === cardId) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (mentionItems.length) {
+          mentionIndex = (mentionIndex + 1) % mentionItems.length;
+          renderMentionMenu();
+        }
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (mentionItems.length) {
+          mentionIndex =
+            (mentionIndex - 1 + mentionItems.length) % mentionItems.length;
+          renderMentionMenu();
+        }
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const item = mentionItems[mentionIndex];
+        if (item) applyMention(item);
+        else hideMentionMenu();
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        hideMentionMenu();
+        return;
+      }
+    }
+    if (e.key === "Backspace" && deleteChipBeforeCaret(input, cardId)) {
+      e.preventDefault();
+      return;
+    }
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (isCardGenerating(cardId)) {
+        stopPromptAgent(cardId);
+        return;
+      }
+      void sendPrompt(cardId);
+    }
+  },
+  onLayoutChange: () => scheduleBoardSave(),
+});
+
+board.root.addEventListener("board:add-prompt", ((e: CustomEvent<{ tabId: string }>) => {
+  const tabId = e.detail?.tabId;
+  if (!tabId) return;
+  attachPromptCard(board.addPrompt(tabId));
+}) as EventListener);
+
 /** Keep xterm + PTY sizes locked together — never resize one without the other. */
 function syncTerminalSize(tab: TabView, opts?: { force?: boolean }): void {
-  if (tab.el.classList.contains("hidden")) return;
+  if (!isTabTerminalExpanded(tab.id)) return;
   if (
     !opts?.force &&
     tab.sizeFreezeUntil != null &&
@@ -1686,20 +2015,19 @@ function scheduleTerminalFit(tab: TabView, immediate = false): void {
 
 function activateTab(tabId: string): void {
   state.activeTabId = tabId;
-  for (const tab of state.tabs.values()) {
-    tab.el.classList.toggle("hidden", tab.id !== tabId);
-  }
-  renderTabs();
+  filesFollowTabId = tabId;
+  board.expandTerminal(tabId);
   const active = state.tabs.get(tabId);
   if (active) {
     requestAnimationFrame(() => {
-      syncTerminalSize(active);
+      syncTerminalSize(active, { force: true });
       active.term.focus();
     });
   }
   invalidateMentionCache();
   void syncFilesPanel();
   refreshStatusStrip();
+  syncPromptContexts();
   void refreshStripMetrics();
 }
 
@@ -1747,7 +2075,7 @@ function setNav(id: NavId): void {
     view.classList.toggle("hidden", view.dataset.view !== id);
   });
   const meetings = id === "meetings";
-  els.terminalStage.classList.toggle("hidden", meetings);
+  els.boardStage.classList.toggle("hidden", meetings);
   els.meetingStage.classList.toggle("hidden", !meetings);
   document.getElementById("main-stage")?.classList.toggle("mode-meetings", meetings);
   if (id === "files") void syncFilesPanel(true);
@@ -1765,8 +2093,10 @@ function openSettings(): void {
 }
 
 function closeTopModal(): boolean {
-  if (!els.modalUpdate.classList.contains("hidden")) {
-    void dismissUpdateModal();
+  const splash = document.getElementById("app-splash");
+  if (splash && !splash.classList.contains("is-done") && splash.classList.contains("is-updating")) {
+    if (updateSplash.phase === "downloading") return true;
+    void dismissUpdateSplash();
     return true;
   }
   if (!els.modalSsh.classList.contains("hidden")) {
@@ -1776,51 +2106,16 @@ function closeTopModal(): boolean {
   return false;
 }
 
-type UpdateModalPhase = "available" | "downloading" | "ready" | "error";
+type UpdateSplashPhase = "available" | "downloading" | "ready" | "error";
 
-let updateModal = {
+let updateSplash = {
   version: "",
   currentVersion: "",
-  phase: "available" as UpdateModalPhase,
+  phase: "available" as UpdateSplashPhase,
 };
 
-function setUpdateProgress(percent: number): void {
-  const pct = Math.max(0, Math.min(100, Math.round(percent)));
-  els.updateProgress.classList.remove("hidden");
-  els.updateProgressFill.style.width = `${pct}%`;
-  els.updateProgressLabel.textContent = t("update.downloading", {
-    percent: String(pct),
-  });
-}
-
-function renderUpdateAction(): void {
-  els.btnUpdateLater.disabled = updateModal.phase === "downloading";
-  els.btnUpdateAction.disabled = updateModal.phase === "downloading";
-  if (updateModal.phase === "ready") {
-    els.btnUpdateAction.textContent = t("update.install");
-  } else if (updateModal.phase === "downloading") {
-    els.btnUpdateAction.textContent = t("update.downloading", {
-      percent: "…",
-    });
-  } else {
-    els.btnUpdateAction.textContent = t("update.download");
-  }
-}
-
-function showUpdateModal(payload: {
-  version: string;
-  currentVersion: string;
-  releaseNotes?: string | null;
-}): void {
-  updateModal = {
-    version: payload.version,
-    currentVersion: payload.currentVersion,
-    phase: "available",
-  };
-  els.updateCurrent.textContent = payload.currentVersion;
-  els.updateLatest.textContent = payload.version;
-  // Always plain text (never innerHTML) — release notes may still contain markup.
-  const notes = (payload.releaseNotes ?? "")
+function plainReleaseNotes(raw: string | null | undefined): string {
+  return (raw ?? "")
     .replace(/<\s*br\s*\/?\s*>/gi, "\n")
     .replace(/<\/\s*p\s*>/gi, "\n")
     .replace(/<[^>]+>/g, "")
@@ -1835,89 +2130,169 @@ function showUpdateModal(payload: {
     .filter((line) => !/^\s*Co-authored-by:/i.test(line))
     .join("\n")
     .trim();
-  if (notes) {
-    els.updateNotes.textContent = notes;
-    els.updateNotes.classList.remove("hidden");
-  } else {
-    els.updateNotes.textContent = "";
-    els.updateNotes.classList.add("hidden");
-  }
-  els.updateProgress.classList.add("hidden");
-  els.updateProgressFill.style.width = "0%";
-  els.updateError.classList.add("hidden");
-  els.updateError.textContent = "";
-  renderUpdateAction();
-  els.modalUpdate.classList.remove("hidden");
 }
 
-async function dismissUpdateModal(): Promise<void> {
-  const version = updateModal.version;
-  els.modalUpdate.classList.add("hidden");
-  if (version && updateModal.phase !== "ready") {
+function setUpdateSplashProgress(percent: number): void {
+  const pct = Math.max(0, Math.min(100, Math.round(percent)));
+  setSplashProgress(pct, undefined, { absolute: true });
+  if (updateSplash.phase === "downloading") {
+    els.splashUpdateLead.textContent = t("update.downloading", {
+      percent: String(pct),
+    });
+    els.btnSplashUpdateAction.textContent = t("update.downloading", {
+      percent: String(pct),
+    });
+  }
+}
+
+function renderUpdateSplashAction(): void {
+  const busy = updateSplash.phase === "downloading";
+  els.btnSplashUpdateLater.disabled = busy;
+  els.btnSplashUpdateAction.disabled = busy;
+  if (updateSplash.phase === "ready") {
+    els.btnSplashUpdateAction.textContent = t("update.install");
+    els.splashUpdateLead.textContent = t("update.ready");
+  } else if (updateSplash.phase === "downloading") {
+    els.btnSplashUpdateAction.textContent = t("update.downloading", {
+      percent: String(splashPercent),
+    });
+  } else {
+    els.btnSplashUpdateAction.textContent = t("update.download");
+    els.splashUpdateLead.textContent = t("update.lead");
+  }
+}
+
+function showUpdateSplash(payload: {
+  version: string;
+  currentVersion: string;
+  releaseNotes?: string | null;
+}): void {
+  splashHeldForUpdate = true;
+  updateSplash = {
+    version: payload.version,
+    currentVersion: payload.currentVersion,
+    phase: "available",
+  };
+  const root = document.getElementById("app-splash");
+  if (!root) return;
+  root.classList.remove("is-done");
+  root.classList.add("is-updating");
+  root.setAttribute("aria-busy", "true");
+  els.splashUpdate.hidden = false;
+  els.splashUpdateTitle.textContent = t("update.title");
+  els.splashUpdateLead.textContent = t("update.lead");
+  els.splashUpdateCurrentLabel.textContent = t("update.current");
+  els.splashUpdateLatestLabel.textContent = t("update.latest");
+  els.splashUpdateCurrent.textContent = payload.currentVersion;
+  els.splashUpdateLatest.textContent = payload.version;
+  els.btnSplashUpdateLater.textContent = t("update.later");
+  const notes = plainReleaseNotes(payload.releaseNotes);
+  if (notes) {
+    els.splashUpdateNotes.textContent = notes;
+    els.splashUpdateNotes.classList.remove("hidden");
+  } else {
+    els.splashUpdateNotes.textContent = "";
+    els.splashUpdateNotes.classList.add("hidden");
+  }
+  els.splashUpdateError.classList.add("hidden");
+  els.splashUpdateError.textContent = "";
+  setSplashProgress(0, undefined, { absolute: true });
+  renderUpdateSplashAction();
+}
+
+async function dismissUpdateSplash(): Promise<void> {
+  const version = updateSplash.version;
+  const phase = updateSplash.phase;
+  splashHeldForUpdate = false;
+  const root = document.getElementById("app-splash");
+  if (root) {
+    root.classList.remove("is-updating");
+    root.classList.add("is-done");
+    root.setAttribute("aria-busy", "false");
+  }
+  els.splashUpdate.hidden = true;
+  if (version && phase !== "ready") {
     await api.dismissUpdate(version);
   }
 }
 
-els.btnUpdateLater.onclick = () => {
-  void dismissUpdateModal();
+els.btnSplashUpdateLater.onclick = () => {
+  void dismissUpdateSplash();
 };
 
-els.btnUpdateAction.onclick = () => {
+els.btnSplashUpdateAction.onclick = () => {
   void (async () => {
-    els.updateError.classList.add("hidden");
-    if (updateModal.phase === "ready") {
+    els.splashUpdateError.classList.add("hidden");
+    if (updateSplash.phase === "ready") {
       const result = await api.installUpdate();
       if (!result.ok) {
-        els.updateError.textContent = t("update.error", {
-          error: "message" in result && result.message ? result.message : result.reason,
+        updateSplash.phase = "error";
+        renderUpdateSplashAction();
+        els.splashUpdateError.textContent = t("update.error", {
+          error:
+            "message" in result && result.message
+              ? result.message
+              : result.reason,
         });
-        els.updateError.classList.remove("hidden");
+        els.splashUpdateError.classList.remove("hidden");
       }
       return;
     }
-    updateModal.phase = "downloading";
-    renderUpdateAction();
-    setUpdateProgress(0);
+    updateSplash.phase = "downloading";
+    renderUpdateSplashAction();
+    setUpdateSplashProgress(0);
     const result = await api.downloadUpdate();
     if (!result.ok) {
-      updateModal.phase = "error";
-      renderUpdateAction();
-      els.updateError.textContent = t("update.error", {
+      updateSplash.phase = "error";
+      renderUpdateSplashAction();
+      els.splashUpdateError.textContent = t("update.error", {
         error: result.message ?? result.reason,
       });
-      els.updateError.classList.remove("hidden");
+      els.splashUpdateError.classList.remove("hidden");
     }
   })();
 };
 
 api.onUpdateAvailable((payload) => {
-  showUpdateModal(payload);
+  showUpdateSplash(payload);
 });
 
 api.onUpdateProgress((payload) => {
-  if (els.modalUpdate.classList.contains("hidden")) return;
-  updateModal.phase = "downloading";
-  renderUpdateAction();
-  setUpdateProgress(payload.percent);
+  const root = document.getElementById("app-splash");
+  if (!root || !root.classList.contains("is-updating")) return;
+  updateSplash.phase = "downloading";
+  setUpdateSplashProgress(payload.percent);
+  els.btnSplashUpdateLater.disabled = true;
+  els.btnSplashUpdateAction.disabled = true;
 });
 
 api.onUpdateDownloaded((payload) => {
-  updateModal.version = payload.version;
-  updateModal.currentVersion = payload.currentVersion;
-  updateModal.phase = "ready";
-  els.updateLatest.textContent = payload.version;
-  setUpdateProgress(100);
-  els.updateProgressLabel.textContent = t("update.install");
-  renderUpdateAction();
-  els.modalUpdate.classList.remove("hidden");
+  const root = document.getElementById("app-splash");
+  if (!root || !root.classList.contains("is-updating")) {
+    showUpdateSplash({
+      version: payload.version,
+      currentVersion: payload.currentVersion,
+      releaseNotes: null,
+    });
+  }
+  updateSplash.version = payload.version;
+  updateSplash.currentVersion = payload.currentVersion;
+  updateSplash.phase = "ready";
+  els.splashUpdateLatest.textContent = payload.version;
+  els.splashUpdateTitle.textContent = t("update.title");
+  setUpdateSplashProgress(100);
+  renderUpdateSplashAction();
 });
 
 api.onUpdateError((payload) => {
-  if (els.modalUpdate.classList.contains("hidden")) return;
-  updateModal.phase = "error";
-  renderUpdateAction();
-  els.updateError.textContent = t("update.error", { error: payload.message });
-  els.updateError.classList.remove("hidden");
+  const root = document.getElementById("app-splash");
+  if (!root || !root.classList.contains("is-updating")) return;
+  updateSplash.phase = "error";
+  renderUpdateSplashAction();
+  els.splashUpdateError.textContent = t("update.error", {
+    error: payload.message,
+  });
+  els.splashUpdateError.classList.remove("hidden");
 });
 
 function handleShortcut(payload: {
@@ -1969,6 +2344,10 @@ function handleShortcut(payload: {
 }
 
 async function ensureActiveLocalTab(): Promise<TabView> {
+  const followed = filesFollowTabId
+    ? state.tabs.get(filesFollowTabId)
+    : undefined;
+  if (followed?.kind === "local") return followed;
   const active = state.activeTabId
     ? state.tabs.get(state.activeTabId)
     : undefined;
@@ -2057,9 +2436,12 @@ function mountTabView(
   title: string,
   kind: "local" | "ssh"
 ): TabView {
+  board.upsertTerminal({ tabId, title, activate: true });
+  const host = board.getTerminalHost(tabId);
+  if (!host) throw new Error("Terminal host missing");
   const el = document.createElement("div");
   el.style.height = "100%";
-  els.terminalHost.append(el);
+  host.append(el);
 
   const term = new Terminal(createTermTheme());
   const fit = new FitAddon();
@@ -2254,6 +2636,7 @@ async function openLocal(): Promise<void> {
     await ensureTermFont();
     const created = await api.createLocalTab();
     const view = mountTabView(created.tabId, created.title, "local");
+    board.refreshTitles(created.tabId, created.title);
     // Fit the real tab xterm, then start the PTY at that exact size — no later SIGWINCH
     // before the first prompt (that was wiping agnoster on the first long wrap).
     await waitFrames(2);
@@ -2282,8 +2665,9 @@ async function openSsh(sessionId: string): Promise<void> {
   await ensureTermFont();
   await waitFrames(1);
   const probeEl = document.createElement("div");
-  probeEl.style.height = "100%";
-  els.terminalHost.append(probeEl);
+  probeEl.style.cssText =
+    "position:fixed;left:-9999px;top:0;width:800px;height:400px;visibility:hidden;";
+  document.body.append(probeEl);
   const probeTerm = new Terminal(createTermTheme());
   const probeFit = new FitAddon();
   probeTerm.loadAddon(probeFit);
@@ -2302,6 +2686,7 @@ async function openSsh(sessionId: string): Promise<void> {
     return;
   }
   const view = mountTabView(res.tabId, res.title, "ssh");
+  board.refreshTitles(res.tabId, res.title);
   view.lastCols = size.cols;
   view.lastRows = size.rows;
   view.sizeFreezeUntil = Date.now() + 2500;
@@ -2332,15 +2717,31 @@ async function closeTab(tabId: string): Promise<void> {
   tab.el.remove();
   state.tabs.delete(tabId);
   tabCwds.delete(tabId);
+  const promptIds = board
+    .getCards()
+    .filter((c) => c.kind === "prompt" && c.tabId === tabId)
+    .map((c) => c.id);
+  for (const cardId of promptIds) {
+    if (isCardGenerating(cardId)) stopPromptAgent(cardId);
+    promptChats.delete(cardId);
+    for (const [runId, cid] of [...runToPrompt]) {
+      if (cid === cardId) clearRun(runId);
+    }
+    generatingCards.delete(cardId);
+    if (activePromptCardId === cardId) activePromptCardId = null;
+  }
+  board.removeTab(tabId);
   await api.closeTab(tabId);
+  if (filesFollowTabId === tabId) filesFollowTabId = null;
   const next = state.tabs.keys().next().value as string | undefined;
   state.activeTabId = next ?? null;
   if (next) activateTab(next);
   else {
-    renderTabs();
+    board.syncEmpty();
     refreshStatusStrip();
     void syncFilesPanel(true);
   }
+  scheduleBoardSave();
 }
 
 function showApproval(payload: {
@@ -2348,33 +2749,47 @@ function showApproval(payload: {
   tabId: string;
   action: ProposedAction;
 }): void {
-  state.pendingApproval = payload;
-  if (state.startedAssistant) {
-    chat.finishAssistant({
-      tokens: state.turnTokens ?? undefined,
-      modelId: state.turnModel ?? undefined,
-      cost: state.turnCost ?? undefined,
+  pendingApprovalsByRun.set(payload.runId, payload);
+  const cardId = runToPrompt.get(payload.runId);
+  if (cardId) board.setPromptRunStatus(cardId, "waiting");
+  const runChat = chatForRun(payload.runId);
+  const turn = ensureRunTurn(payload.runId);
+  if (turn.startedAssistant) {
+    runChat.finishAssistant({
+      tokens: turn.turnTokens ?? undefined,
+      modelId: turn.turnModel ?? undefined,
+      cost: turn.turnCost ?? undefined,
     });
-    state.startedAssistant = false;
+    turn.startedAssistant = false;
   }
-  chat.setThinking(false);
-  chat.addApproval({ runId: payload.runId, action: payload.action }, (d) => {
-    void resolveApproval(d);
-  });
+  runChat.setThinking(false);
+  runChat.addApproval(
+    { runId: payload.runId, action: payload.action },
+    (d) => {
+      void resolveApproval(payload.runId, d);
+    }
+  );
 }
 
 async function resolveApproval(
+  runId: string,
   decision: "allow-once" | "allow-session" | "deny"
 ): Promise<void> {
-  const pending = state.pendingApproval;
-  if (!pending) return;
-  state.pendingApproval = null;
-  chat.resolveApprovalCard(decision);
+  if (!pendingApprovalsByRun.has(runId)) return;
+  pendingApprovalsByRun.delete(runId);
+  const cardId = runToPrompt.get(runId);
+  if (cardId) {
+    board.setPromptRunStatus(
+      cardId,
+      decision === "deny" ? "error" : "running"
+    );
+  }
+  chatForRun(runId).resolveApprovalCard(decision);
   if (decision !== "deny") {
-    chat.setThinking(true, t("thinking.running"));
+    chatForRun(runId).setThinking(true, t("thinking.running"));
   }
   await api.resolveApproval({
-    runId: pending.runId,
+    runId,
     decision:
       decision === "deny"
         ? { type: "deny" }
@@ -2384,7 +2799,90 @@ async function resolveApproval(
   });
 }
 
+function notifyParentOfSub(
+  childCardId: string,
+  kind: "spawned" | "finished" | "failed"
+): void {
+  const child = board.findCard(childCardId);
+  if (!child || child.kind !== "prompt" || !child.parentId) return;
+  const parentChat = promptChats.get(child.parentId);
+  if (!parentChat) return;
+  const title = child.title || t("board.subPrompt");
+  if (kind === "spawned") {
+    parentChat.addSystem(t("board.subSpawned", { title }));
+  } else if (kind === "finished") {
+    parentChat.addSystem(t("board.subFinished", { title }));
+  } else {
+    parentChat.addSystem(t("board.subFailed", { title }));
+  }
+}
+
+async function addManualSubPrompt(parentCardId: string): Promise<void> {
+  const parent = board.findCard(parentCardId);
+  if (!parent || parent.kind !== "prompt") return;
+  if (parent.parentId) return;
+  if (board.countPromptChildren(parentCardId) >= MAX_PROMPT_SUBS) {
+    (promptChats.get(parentCardId) ?? noopChat).addSystem(
+      t("board.subLimit", { n: String(MAX_PROMPT_SUBS) })
+    );
+    return;
+  }
+  const card = board.addPrompt(parent.tabId, t("board.subPrompt"), {
+    parentId: parentCardId,
+  });
+  attachPromptCard(card);
+  notifyParentOfSub(card.id, "spawned");
+  scheduleBoardSave();
+}
+
+async function spawnSubFromAgent(
+  parentCardId: string,
+  spawn: { title: string; task: string }
+): Promise<void> {
+  const parent = board.findCard(parentCardId);
+  if (!parent || parent.kind !== "prompt") return;
+  // 1-hop only: ignore spawn requests from subagents.
+  if (parent.parentId) return;
+  if (board.countPromptChildren(parentCardId) >= MAX_PROMPT_SUBS) {
+    (promptChats.get(parentCardId) ?? noopChat).addSystem(
+      t("board.subLimit", { n: String(MAX_PROMPT_SUBS) })
+    );
+    return;
+  }
+  const card = board.addPrompt(parent.tabId, spawn.title, {
+    parentId: parentCardId,
+  });
+  attachPromptCard(card);
+  notifyParentOfSub(card.id, "spawned");
+  const runChat = promptChats.get(card.id) ?? noopChat;
+  const message = spawn.task.trim();
+  runChat.addUser(message);
+  setGenerating(true, card.id);
+  board.setPromptRunStatus(card.id, "running");
+  runChat.setThinking(true, t("thinking"));
+  const res = await api.sendAgent({ tabId: parent.tabId, message });
+  if ("error" in res) {
+    runChat.setThinking(false);
+    runChat.addError(res.error);
+    setGenerating(false, card.id);
+    board.setPromptRunStatus(card.id, "error");
+    notifyParentOfSub(card.id, "failed");
+    return;
+  }
+  state.activeRunId = res.runId;
+  runToPrompt.set(res.runId, card.id);
+  runTurns.set(res.runId, {
+    startedAssistant: false,
+    turnTokens: null,
+    turnModel: state.modelId,
+    turnCost: null,
+  });
+  scheduleBoardSave();
+}
+
 let filesServerTabId: string | null = null;
+/** Files tree follows only the terminal last selected on the board. */
+let filesFollowTabId: string | null = null;
 
 const mainStage = document.getElementById("main-stage")!;
 const mainSplit = document.getElementById("main-split")!;
@@ -2446,13 +2944,9 @@ const editorPane = createEditorPane({
 {
   const layoutEl = document.querySelector(".layout") as HTMLElement | null;
   const splitSidebar = document.getElementById("split-sidebar");
-  const splitAgent = document.getElementById("split-agent");
   const SIDEBAR_KEY = "drift.sidebarWidth";
-  const AGENT_KEY = "drift.agentWidth";
   const SIDEBAR_MIN = 200;
   const SIDEBAR_MAX = 480;
-  const AGENT_MIN = 280;
-  const AGENT_MAX = 560;
 
   function clamp(n: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, n));
@@ -2461,17 +2955,10 @@ const editorPane = createEditorPane({
   function applyStoredWidths(): void {
     if (!layoutEl) return;
     const side = Number(localStorage.getItem(SIDEBAR_KEY));
-    const agent = Number(localStorage.getItem(AGENT_KEY));
     if (Number.isFinite(side) && side > 0) {
       layoutEl.style.setProperty(
         "--sidebar",
         `${clamp(side, SIDEBAR_MIN, SIDEBAR_MAX)}px`
-      );
-    }
-    if (Number.isFinite(agent) && agent > 0) {
-      layoutEl.style.setProperty(
-        "--agent",
-        `${clamp(agent, AGENT_MIN, AGENT_MAX)}px`
       );
     }
   }
@@ -2479,78 +2966,52 @@ const editorPane = createEditorPane({
   applyStoredWidths();
 
   type ColDrag = {
-    kind: "sidebar" | "agent";
+    kind: "sidebar";
     startX: number;
     startWidth: number;
   } | null;
   let colDrag: ColDrag = null;
 
-  function currentVarPx(name: "--sidebar" | "--agent", fallback: number): number {
+  function currentVarPx(name: "--sidebar", fallback: number): number {
     if (!layoutEl) return fallback;
     const raw = getComputedStyle(layoutEl).getPropertyValue(name).trim();
     const n = Number.parseFloat(raw);
     return Number.isFinite(n) ? n : fallback;
   }
 
-  function beginColDrag(
-    kind: "sidebar" | "agent",
-    handle: HTMLElement,
-    e: MouseEvent
-  ): void {
+  function beginColDrag(handle: HTMLElement, e: MouseEvent): void {
     e.preventDefault();
-    const startWidth =
-      kind === "sidebar"
-        ? currentVarPx("--sidebar", 288)
-        : currentVarPx("--agent", 380);
-    colDrag = { kind, startX: e.clientX, startWidth };
+    const startWidth = currentVarPx("--sidebar", 288);
+    colDrag = { kind: "sidebar", startX: e.clientX, startWidth };
     handle.classList.add("is-active");
     document.body.classList.add("is-resizing-col");
   }
 
   splitSidebar?.addEventListener("mousedown", (e) => {
     if (layoutEl?.classList.contains("nav-collapsed")) return;
-    beginColDrag("sidebar", splitSidebar, e);
-  });
-  splitAgent?.addEventListener("mousedown", (e) => {
-    if (layoutEl?.classList.contains("agent-collapsed")) return;
-    beginColDrag("agent", splitAgent, e);
+    beginColDrag(splitSidebar, e);
   });
 
   window.addEventListener("mousemove", (e) => {
     if (!colDrag || !layoutEl) return;
-    if (colDrag.kind === "sidebar") {
-      const next = clamp(
-        colDrag.startWidth + (e.clientX - colDrag.startX),
-        SIDEBAR_MIN,
-        SIDEBAR_MAX
-      );
-      layoutEl.style.setProperty("--sidebar", `${next}px`);
-    } else {
-      const next = clamp(
-        colDrag.startWidth - (e.clientX - colDrag.startX),
-        AGENT_MIN,
-        AGENT_MAX
-      );
-      layoutEl.style.setProperty("--agent", `${next}px`);
-    }
+    const next = clamp(
+      colDrag.startWidth + (e.clientX - colDrag.startX),
+      SIDEBAR_MIN,
+      SIDEBAR_MAX
+    );
+    layoutEl.style.setProperty("--sidebar", `${next}px`);
     refitTerminals();
   });
 
   window.addEventListener("mouseup", () => {
     if (!colDrag || !layoutEl) return;
-    const kind = colDrag.kind;
     colDrag = null;
     splitSidebar?.classList.remove("is-active");
-    splitAgent?.classList.remove("is-active");
     document.body.classList.remove("is-resizing-col");
-    if (kind === "sidebar") {
-      localStorage.setItem(
-        SIDEBAR_KEY,
-        String(currentVarPx("--sidebar", 288))
-      );
-    } else {
-      localStorage.setItem(AGENT_KEY, String(currentVarPx("--agent", 380)));
-    }
+    localStorage.setItem(
+      SIDEBAR_KEY,
+      String(currentVarPx("--sidebar", 288))
+    );
   });
 }
 
@@ -2652,25 +3113,6 @@ const filesBrowser = createFilesBrowser({
   onTransferProgress: (cb) => api.onTransferProgress(cb),
 });
 
-function resolveServerTab(): TabView | null {
-  // Server tree follows only the active SSH tab — hide it on local tabs.
-  const active = state.activeTabId
-    ? state.tabs.get(state.activeTabId)
-    : undefined;
-  return active?.kind === "ssh" ? active : null;
-}
-
-function resolveLocalTab(): TabView | null {
-  const active = state.activeTabId
-    ? state.tabs.get(state.activeTabId)
-    : undefined;
-  if (active?.kind === "local") return active;
-  for (const tab of state.tabs.values()) {
-    if (tab.kind === "local") return tab;
-  }
-  return null;
-}
-
 async function cwdForTab(tabId: string): Promise<string | null> {
   const cached = tabCwds.get(tabId);
   if (cached) return cached;
@@ -2685,35 +3127,11 @@ async function applyCwdToFiles(tabId: string, cwd: string): Promise<void> {
   tabCwds.set(tabId, cwd);
   invalidateMentionCache();
   if (state.activeTabId === tabId) updateStripPath();
+  // Only the board-selected terminal drives the files panel.
+  if (filesFollowTabId !== tabId) return;
   if (tab.kind === "local") {
-    const follow = resolveLocalTab();
-    if (follow?.id === tabId) {
-      await filesBrowser.setLocalRoot(cwd);
-    }
-    return;
-  }
-  if (state.activeTabId === tabId) {
-    filesServerTabId = tabId;
-    await filesBrowser.setServer({
-      enabled: true,
-      label: tab.title,
-      rootPath: cwd,
-    });
-  }
-}
-
-async function syncFilesPanel(_force = false): Promise<void> {
-  const local = resolveLocalTab();
-  if (local) {
-    const cwd =
-      (await cwdForTab(local.id)) ||
-      (await api.getHomeDir());
-    await filesBrowser.setLocalRoot(cwd);
-  }
-
-  const server = resolveServerTab();
-  filesServerTabId = server?.id ?? null;
-  if (!server) {
+    filesServerTabId = null;
+    await filesBrowser.setLocal({ enabled: true, rootPath: cwd });
     await filesBrowser.setServer({
       enabled: false,
       label: "",
@@ -2721,10 +3139,58 @@ async function syncFilesPanel(_force = false): Promise<void> {
     });
     return;
   }
-  const cwd = (await cwdForTab(server.id)) || "~";
+  filesServerTabId = tabId;
+  const home = homeDirCache || (await api.getHomeDir());
+  await filesBrowser.setLocal({ enabled: true, rootPath: home });
   await filesBrowser.setServer({
     enabled: true,
-    label: server.title,
+    label: tab.title,
+    rootPath: cwd,
+  });
+}
+
+async function syncFilesPanel(_force = false): Promise<void> {
+  const tab = filesFollowTabId
+    ? state.tabs.get(filesFollowTabId)
+    : undefined;
+  // Restore this terminal's pane collapse / tree expand before loading paths.
+  filesBrowser.setFollowSession(filesFollowTabId);
+  if (!tab) {
+    filesServerTabId = null;
+    await filesBrowser.setLocal({
+      enabled: false,
+      message: t("files.noTerminal"),
+    });
+    await filesBrowser.setServer({
+      enabled: false,
+      label: "",
+      message: t("files.noTerminal"),
+    });
+    return;
+  }
+
+  if (tab.kind === "local") {
+    filesServerTabId = null;
+    const cwd =
+      (await cwdForTab(tab.id)) ||
+      homeDirCache ||
+      (await api.getHomeDir());
+    await filesBrowser.setLocal({ enabled: true, rootPath: cwd });
+    await filesBrowser.setServer({
+      enabled: false,
+      label: "",
+      message: t("files.serverEmpty"),
+    });
+    return;
+  }
+
+  filesServerTabId = tab.id;
+  const cwd = (await cwdForTab(tab.id)) || "~";
+  const home = homeDirCache || (await api.getHomeDir());
+  await filesBrowser.setLocal({ enabled: true, rootPath: home });
+  await filesBrowser.setServer({
+    enabled: true,
+    label: tab.title,
     rootPath: cwd,
   });
 }
@@ -2823,15 +3289,17 @@ document.querySelectorAll<HTMLButtonElement>(".rail-btn[data-nav]").forEach((btn
 });
 
 els.stripPath.onclick = () => setNav("files");
-els.composerContext.onclick = () => {
-  if (els.composerContext.classList.contains("is-empty")) return;
-  setNav("files");
-};
 api.onShortcut((payload) => handleShortcut(payload));
 
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && closeTopModal()) {
     e.preventDefault();
+    return;
+  }
+  // ⌘B / Ctrl+B — toggle left sidebar (VS Code / Cursor style)
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "b") {
+    e.preventDefault();
+    toggleNavPanel();
   }
 });
 els.btnOpenApiKeys.onclick = () => openCursorApiKeysPage(api);
@@ -2866,11 +3334,6 @@ els.settingsLocalShell.onchange = async () => {
   state.localShell = next;
   await api.setLocalShell(next);
   chat.addSystem(t("settings.localShellSaved", { shell: t(`settings.shell.${next}`) }));
-};
-els.btnModel.onclick = (e) => {
-  e.stopPropagation();
-  if (els.modelPopover.classList.contains("hidden")) openModelPopover();
-  else closeModelPopover();
 };
 els.modelPopover.addEventListener("click", (e) => e.stopPropagation());
 els.modelList.addEventListener("click", (e) => {
@@ -2908,13 +3371,6 @@ function showModeTip(btn: HTMLElement): void {
   els.modeTip.style.top = `${row.top - pop.top + row.height / 2}px`;
 }
 
-els.btnMode.onclick = (e) => {
-  e.stopPropagation();
-  closeModelPopover();
-  hideModeTip();
-  const open = els.modePopover.classList.toggle("hidden") === false;
-  els.btnMode.setAttribute("aria-expanded", open ? "true" : "false");
-};
 els.modePopover.addEventListener("click", (e) => {
   e.stopPropagation();
   const btn = (e.target as HTMLElement).closest(
@@ -2935,30 +3391,19 @@ els.modePopover.addEventListener("mouseover", (e) => {
 });
 els.modePopover.addEventListener("mouseleave", () => hideModeTip());
 document.addEventListener("click", () => {
-  els.modePopover.classList.add("hidden");
-  els.btnMode.setAttribute("aria-expanded", "false");
-  hideModeTip();
+  closeModePopover();
   closeModelPopover();
 });
 let navCollapsed = false;
-let agentCollapsed = false;
 
 function applyPanelLayout(): void {
   const layout = document.querySelector(".layout");
   layout?.classList.toggle("nav-collapsed", navCollapsed);
-  layout?.classList.toggle("agent-collapsed", agentCollapsed);
   const navBtn = document.getElementById("btn-toggle-nav");
-  const agentBtn = document.getElementById("btn-toggle-agent");
   navBtn?.setAttribute("aria-pressed", navCollapsed ? "false" : "true");
-  agentBtn?.setAttribute("aria-pressed", agentCollapsed ? "false" : "true");
   navBtn?.classList.toggle("active", !navCollapsed);
-  agentBtn?.classList.toggle("active", !agentCollapsed);
   try {
     localStorage.setItem("drift.navCollapsed", navCollapsed ? "1" : "0");
-    localStorage.setItem(
-      "drift.agentCollapsed",
-      agentCollapsed ? "1" : "0"
-    );
   } catch {
     /* ignore */
   }
@@ -2967,61 +3412,37 @@ function applyPanelLayout(): void {
 
 try {
   navCollapsed = localStorage.getItem("drift.navCollapsed") === "1";
-  agentCollapsed = localStorage.getItem("drift.agentCollapsed") === "1";
 } catch {
   /* ignore */
 }
 applyPanelLayout();
 
-document.getElementById("btn-toggle-nav")!.onclick = () => {
+function toggleNavPanel(): void {
   navCollapsed = !navCollapsed;
   applyPanelLayout();
-};
-document.getElementById("btn-toggle-agent")!.onclick = () => {
-  agentCollapsed = !agentCollapsed;
-  applyPanelLayout();
-};
+}
 
-document.getElementById("btn-new-chat")!.onclick = () => {
-  if (state.generating) return;
-  clearComposer();
-  hideMentionMenu();
-  chat.clear();
-  state.startedAssistant = false;
-  chat.showEmpty(buildChatSuggestions());
+document.getElementById("btn-toggle-nav")!.onclick = () => {
+  toggleNavPanel();
 };
 
-els.chatThread.addEventListener("click", (e) => {
-  const btn = (e.target as HTMLElement).closest(
-    "[data-suggest]"
-  ) as HTMLElement | null;
-  if (!btn?.dataset.suggest) return;
-  clearComposer();
-  els.agentInput.textContent = btn.dataset.suggest;
-  syncComposerEmpty();
-  autoGrowInput();
-  els.agentInput.focus();
-  placeCaretAtEnd(els.agentInput);
-});
-
-async function sendCurrentPrompt(): Promise<void> {
-  if (state.generating) return;
-  let tabId = state.activeTabId;
+async function sendPrompt(cardId: string): Promise<void> {
+  if (isCardGenerating(cardId)) return;
+  activePromptCardId = cardId;
+  let tabId = getPromptTabId(cardId);
   if (!tabId || activeNav === "meetings") {
     try {
       const local = await ensureActiveLocalTab();
       tabId = local.id;
       if (activeNav === "meetings") setNav("sessions");
     } catch {
-      chat.addError(t("error.openTab"));
+      (promptChats.get(cardId) ?? noopChat).addError(t("error.openTab"));
       return;
     }
   }
-  if (!tabId) {
-    chat.addError(t("error.openTab"));
-    return;
-  }
-  const { text: message, refs } = readComposer();
+  const pe = promptEls(cardId);
+  if (!pe) return;
+  const { text: message, refs } = readComposerFrom(pe.input);
   if (!message && !refs.length) return;
   hideMentionMenu();
   const payload = enrichPromptWithRefs(message, refs);
@@ -3029,154 +3450,54 @@ async function sendCurrentPrompt(): Promise<void> {
     name: r.name.replace(/\/$/, ""),
     kind: r.kind,
   }));
-  clearComposer();
-  chat.addUser(message, refsForBubble);
-  state.startedAssistant = false;
-  state.turnTokens = null;
-  state.turnModel = state.modelId;
-  state.turnCost = null;
-  setGenerating(true);
-  chat.setThinking(true, t("thinking"));
+  clearComposer(cardId);
+  const runChat = promptChats.get(cardId) ?? noopChat;
+  runChat.addUser(message, refsForBubble);
+  setGenerating(true, cardId);
+  board.setPromptRunStatus(cardId, "running");
+  runChat.setThinking(true, t("thinking"));
   const res = await api.sendAgent({ tabId, message: payload });
   if ("error" in res) {
-    state.activeRunId = null;
-    chat.setThinking(false);
+    runChat.setThinking(false);
     if (isApiKeyError(res.error)) {
       openSettings();
-      chat.addError(t("settings.needKeyToast"), {
+      runChat.addError(t("settings.needKeyToast"), {
         action: {
           label: t("settings.openKeyPage"),
           onClick: () => openCursorApiKeysPage(api),
         },
       });
     } else {
-      chat.addError(res.error);
+      runChat.addError(res.error);
     }
-    setGenerating(false);
+    setGenerating(false, cardId);
+    board.setPromptRunStatus(cardId, "error");
     return;
   }
   state.activeRunId = res.runId;
+  runToPrompt.set(res.runId, cardId);
+  runTurns.set(res.runId, {
+    startedAssistant: false,
+    turnTokens: null,
+    turnModel: state.modelId,
+    turnCost: null,
+  });
 }
 
-function autoGrowInput(): void {
-  const el = els.agentInput;
+function autoGrowInput(el: HTMLDivElement): void {
   el.style.height = "auto";
   el.style.height = `${Math.min(180, Math.max(64, el.scrollHeight))}px`;
 }
 
-function deleteChipBeforeCaret(): boolean {
-  const sel = window.getSelection();
-  if (!sel || !sel.rangeCount || !sel.isCollapsed) return false;
-  const range = sel.getRangeAt(0);
-  const node = range.startContainer;
-  if (node.nodeType === Node.TEXT_NODE && range.startOffset === 0) {
-    const prev = node.previousSibling as HTMLElement | null;
-    if (prev?.classList?.contains("composer-inline-chip")) {
-      prev.remove();
-      syncComposerEmpty();
-      autoGrowInput();
-      return true;
-    }
-  }
-  if (node === els.agentInput && range.startOffset > 0) {
-    const prev = els.agentInput.childNodes[range.startOffset - 1] as
-      | HTMLElement
-      | undefined;
-    if (prev?.classList?.contains("composer-inline-chip")) {
-      prev.remove();
-      syncComposerEmpty();
-      autoGrowInput();
-      return true;
-    }
-  }
-  return false;
-}
-
-function stopCurrentAgent(): void {
+function stopPromptAgent(cardId?: string | null): void {
+  const id = cardId ?? activePromptCardId;
+  const runId = id ? runIdForCard(id) : state.activeRunId;
+  const tabId = id ? getPromptTabId(id) : state.activeTabId;
   void api.stopAgent({
-    runId: state.activeRunId ?? undefined,
-    tabId: state.activeTabId ?? undefined,
+    runId: runId ?? undefined,
+    tabId: tabId || undefined,
   });
 }
-
-els.btnSend.onclick = () => {
-  if (state.generating) {
-    stopCurrentAgent();
-    return;
-  }
-  void sendCurrentPrompt();
-};
-els.agentInput.addEventListener("keydown", (e) => {
-  if (state.generating) {
-    e.preventDefault();
-    return;
-  }
-  const mentionOpen = !els.mentionMenu.classList.contains("hidden");
-  if (mentionOpen) {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      if (mentionItems.length) {
-        mentionIndex = (mentionIndex + 1) % mentionItems.length;
-        renderMentionMenu();
-      }
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      if (mentionItems.length) {
-        mentionIndex =
-          (mentionIndex - 1 + mentionItems.length) % mentionItems.length;
-        renderMentionMenu();
-      }
-      return;
-    }
-    if (e.key === "Enter" || e.key === "Tab") {
-      e.preventDefault();
-      const item = mentionItems[mentionIndex];
-      if (item) applyMention(item);
-      else hideMentionMenu();
-      return;
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      hideMentionMenu();
-      return;
-    }
-  }
-  if (e.key === "Backspace" && deleteChipBeforeCaret()) {
-    e.preventDefault();
-    return;
-  }
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    if (state.generating) {
-      stopCurrentAgent();
-      return;
-    }
-    void sendCurrentPrompt();
-  }
-});
-els.agentInput.addEventListener("focus", () => {
-  if (normalizeEmptyComposer()) {
-    els.composerInputWrap.classList.add("is-empty");
-    placeCaretAtEnd(els.agentInput);
-  }
-});
-els.agentInput.addEventListener("input", () => {
-  syncComposerEmpty();
-  autoGrowInput();
-  void refreshMentionMenu();
-});
-els.agentInput.addEventListener("keyup", () => {
-  void refreshMentionMenu();
-});
-els.agentInput.addEventListener("click", () => {
-  void refreshMentionMenu();
-});
-els.agentInput.addEventListener("blur", () => {
-  syncComposerEmpty();
-  window.setTimeout(() => hideMentionMenu(), 120);
-});
 
 api.onTerminalData(({ tabId, data }) => {
   state.tabs.get(tabId)?.term.write(data);
@@ -3204,9 +3525,12 @@ function localizeProgressTitle(title: string): string {
   return map[title] || title;
 }
 
-api.onAgentEvent(({ event }) => {
+api.onAgentEvent(({ runId, event }) => {
+  const agentChat = chatForRun(runId);
+  const cardId = runToPrompt.get(runId) ?? null;
+  const turn = ensureRunTurn(runId);
   if (event.type === "progress") {
-    chat.setActivity({
+    agentChat.setActivity({
       title: localizeProgressTitle(event.title),
       detail: event.detail,
       summary: event.summary,
@@ -3214,84 +3538,109 @@ api.onAgentEvent(({ event }) => {
     });
   }
   if (event.type === "text") {
-    if (!state.startedAssistant) {
-      chat.beginAssistant();
-      state.startedAssistant = true;
+    if (!turn.startedAssistant) {
+      agentChat.beginAssistant();
+      turn.startedAssistant = true;
     }
-    chat.appendAssistant(event.text);
+    agentChat.appendAssistant(event.text);
   }
   if (event.type === "usage") {
     state.lastUsage = event.usage;
     state.lastCostCents = event.cost?.chargedCents ?? null;
-    state.turnTokens = event.usage.totalTokens;
-    state.turnModel = event.modelId ?? state.modelId;
-    state.turnCost = event.cost
+    turn.turnTokens = event.usage.totalTokens;
+    turn.turnModel = event.modelId ?? state.modelId;
+    turn.turnCost = event.cost
       ? formatCents(event.cost.chargedCents)
       : null;
+    state.turnTokens = turn.turnTokens;
+    state.turnModel = turn.turnModel;
+    state.turnCost = turn.turnCost;
     renderUsage();
+  }
+  if (event.type === "spawn" && cardId) {
+    void spawnSubFromAgent(cardId, {
+      title: event.title,
+      task: event.task,
+    });
   }
   if (event.type === "status") {
     if (event.status === "waiting-approval") {
-      chat.setThinking(true, t("thinking.approval"));
+      agentChat.setThinking(true, t("thinking.approval"));
+      if (cardId) board.setPromptRunStatus(cardId, "waiting");
     }
     if (event.status === "error") {
       const detail = event.detail || "unknown error";
       const missingKey = isApiKeyError(detail);
-      state.activeRunId = null;
-      state.pendingApproval = null;
-      chat.setThinking(false);
-      if (state.startedAssistant) {
-        chat.finishAssistant();
-        state.startedAssistant = false;
+      if (pendingApprovalsByRun.has(runId)) {
+        pendingApprovalsByRun.delete(runId);
+      }
+      agentChat.setThinking(false);
+      if (turn.startedAssistant) {
+        agentChat.finishAssistant();
+        turn.startedAssistant = false;
       }
       if (missingKey) {
         openSettings();
-        chat.addError(t("settings.needKeyToast"), {
+        agentChat.addError(t("settings.needKeyToast"), {
           action: {
             label: t("settings.openKeyPage"),
             onClick: () => openCursorApiKeysPage(api),
           },
         });
       } else {
-        chat.addError(detail);
+        agentChat.addError(detail);
       }
-      setGenerating(false);
+      setGenerating(false, cardId);
+      if (cardId) {
+        board.setPromptRunStatus(cardId, "error");
+        notifyParentOfSub(cardId, "failed");
+      }
+      clearRun(runId);
     }
     if (event.status === "cancelled") {
-      state.activeRunId = null;
-      if (state.pendingApproval) {
-        state.pendingApproval = null;
-        chat.resolveApprovalCard("deny");
+      if (pendingApprovalsByRun.has(runId)) {
+        pendingApprovalsByRun.delete(runId);
+        agentChat.resolveApprovalCard("deny");
       }
-      chat.setThinking(false);
-      if (state.startedAssistant) {
-        chat.finishAssistant();
-        state.startedAssistant = false;
+      agentChat.setThinking(false);
+      if (turn.startedAssistant) {
+        agentChat.finishAssistant();
+        turn.startedAssistant = false;
       }
-      chat.addSystem(event.detail || t("chat.stopped"));
-      setGenerating(false);
+      agentChat.addSystem(event.detail || t("chat.stopped"));
+      setGenerating(false, cardId);
+      if (cardId) {
+        board.setPromptRunStatus(cardId, "idle");
+        notifyParentOfSub(cardId, "failed");
+      }
+      clearRun(runId);
     }
     if (event.status === "done") {
-      state.activeRunId = null;
-      chat.setThinking(false);
-      if (state.startedAssistant) {
-        chat.finishAssistant({
-          tokens: state.turnTokens ?? undefined,
-          modelId: state.turnModel ?? undefined,
-          cost: state.turnCost ?? undefined,
+      agentChat.setThinking(false);
+      if (turn.startedAssistant) {
+        agentChat.finishAssistant({
+          tokens: turn.turnTokens ?? undefined,
+          modelId: turn.turnModel ?? undefined,
+          cost: turn.turnCost ?? undefined,
         });
-        state.startedAssistant = false;
+        turn.startedAssistant = false;
       }
-      setGenerating(false);
+      setGenerating(false, cardId);
+      if (cardId) {
+        board.setPromptRunStatus(cardId, "done");
+        notifyParentOfSub(cardId, "finished");
+      }
+      clearRun(runId);
       void refreshAccountUsage();
     }
     if (event.status === "running") {
-      chat.setThinking(true, t("thinking"));
+      agentChat.setThinking(true, t("thinking"));
+      if (cardId) board.setPromptRunStatus(cardId, "running");
     }
   }
   if (event.type === "plan") {
-    chat.setThinking(false);
-    chat.addPlan(event.steps);
+    agentChat.setThinking(false);
+    agentChat.addPlan(event.steps);
   }
   if (event.type === "propose") {
     // approval card arrives via onApprovalRequest
@@ -3349,9 +3698,16 @@ void (async () => {
     await syncFilesPanel();
 
     setSplashProgress(SPLASH_AT.terminal, t("splash.terminal"));
+    let savedBoard: BoardPersistedState = { cards: [] };
+    try {
+      savedBoard = (await api.getBoard()) as BoardPersistedState;
+    } catch {
+      /* first launch */
+    }
     // Wait one frame so the terminal host has its final flex size.
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
     await openLocal();
+    restoreSavedPrompts(savedBoard);
     refreshStatusStrip();
     void refreshStripMetrics();
     void refreshAccountUsage();

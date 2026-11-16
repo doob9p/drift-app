@@ -225,6 +225,10 @@ function settingsPath(): string {
   return path.join(dataDir(), "settings.json");
 }
 
+function boardPath(): string {
+  return path.join(dataDir(), "board.json");
+}
+
 async function loadApiKey(): Promise<string> {
   try {
     const { readFile: rf } = await import("node:fs/promises");
@@ -1602,6 +1606,21 @@ function registerIpc(): void {
   });
 
   ipcMain.handle("settings:get", async () => appSettings);
+
+  ipcMain.handle("board:get", async () => {
+    try {
+      const raw = await readFile(boardPath(), "utf8");
+      return JSON.parse(raw) as unknown;
+    } catch {
+      return { cards: [], camera: { x: 0, y: 0, zoom: 1 } };
+    }
+  });
+
+  ipcMain.handle("board:save", async (_e, state: unknown) => {
+    await mkdir(dataDir(), { recursive: true });
+    await writeFile(boardPath(), JSON.stringify(state, null, 2), "utf8");
+    return { ok: true as const };
+  });
 
   ipcMain.handle(
     "settings:set-model",
