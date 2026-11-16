@@ -1532,8 +1532,9 @@ body.is-resizing-col {
 
 .session-item {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.1rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.15rem;
+  align-items: center;
 }
 
 .session-item .row {
@@ -1544,6 +1545,7 @@ body.is-resizing-col {
   border-radius: 10px;
   background: transparent;
   border: 0;
+  min-width: 0;
 }
 
 .session-item .row:hover {
@@ -1562,14 +1564,41 @@ body.is-resizing-col {
   font-size: 0.62rem;
 }
 
-.session-item .del {
-  width: 28px;
+.session-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.08rem;
+  align-self: center;
   opacity: 0;
-  color: var(--text-3);
 }
 
-.session-item:hover .del {
+.session-item:hover .session-actions,
+.session-item:focus-within .session-actions {
   opacity: 1;
+}
+
+.session-action {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--text-3);
+  border: 0;
+  background: transparent;
+  line-height: 0;
+}
+
+.session-action:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.session-action svg {
+  display: block;
 }
 
 .main {
@@ -3507,6 +3536,50 @@ body.is-resizing-editor {
   gap: 0.3rem;
   font-size: 0.74rem;
   color: var(--text-2);
+}
+
+.ssh-advanced {
+  margin-top: 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.ssh-advanced > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.7rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-2);
+  letter-spacing: -0.01em;
+  user-select: none;
+}
+
+.ssh-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ssh-advanced > summary::after {
+  content: "";
+  float: right;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-top: 0.28rem;
+  border-right: 1.5px solid var(--text-3);
+  border-bottom: 1.5px solid var(--text-3);
+  transform: rotate(45deg);
+  transition: transform 0.15s ease;
+}
+
+.ssh-advanced[open] > summary::after {
+  transform: rotate(-135deg);
+  margin-top: 0.42rem;
+}
+
+.ssh-advanced-body {
+  padding: 0 0.85rem 0.85rem;
 }
 
 .hidden {

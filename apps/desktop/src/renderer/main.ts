@@ -444,19 +444,23 @@ app.innerHTML = `
 
   <div class="modal-backdrop hidden" id="modal-ssh">
     <div class="modal">
-      <h2 data-i18n="ssh.title">SSH session</h2>
+      <h2 id="ssh-modal-title" data-i18n="ssh.title">SSH session</h2>
       <p class="lead" data-i18n="ssh.lead">Passwords are never saved. Use keys or enter credentials in the terminal.</p>
+      <input type="hidden" id="ssh-edit-id" value="" />
       <div class="form-grid two">
         <label><span data-i18n="ssh.name">Name</span> <input id="ssh-name" placeholder="prod-gpu" /></label>
         <label><span data-i18n="ssh.host">Host</span> <input id="ssh-host" placeholder="192.168.1.10" /></label>
         <label><span data-i18n="ssh.user">User</span> <input id="ssh-user" placeholder="ubuntu" /></label>
         <label><span data-i18n="ssh.port">Port</span> <input id="ssh-port" type="number" placeholder="22" /></label>
       </div>
-      <div class="form-grid">
-        <label><span data-i18n="ssh.identity">Identity file</span> <input id="ssh-identity" placeholder="~/.ssh/id_ed25519" /></label>
-        <label><span data-i18n="ssh.jump">ProxyJump</span> <input id="ssh-jump" placeholder="bastion" /></label>
-        <label><span data-i18n="ssh.dir">Start dir</span> <input id="ssh-dir" placeholder="/home/ubuntu" /></label>
-      </div>
+      <details class="ssh-advanced" id="ssh-advanced">
+        <summary data-i18n="ssh.advanced">Advanced (optional)</summary>
+        <div class="form-grid ssh-advanced-body">
+          <label><span data-i18n="ssh.identity">Identity file</span> <input id="ssh-identity" placeholder="~/.ssh/id_ed25519" /></label>
+          <label><span data-i18n="ssh.jump">ProxyJump</span> <input id="ssh-jump" placeholder="bastion" /></label>
+          <label><span data-i18n="ssh.dir">Start dir</span> <input id="ssh-dir" placeholder="/home/ubuntu" /></label>
+        </div>
+      </details>
       <div class="actions">
         <button class="ghost" id="btn-cancel-ssh" data-i18n="ssh.cancel">Cancel</button>
         <button class="primary" id="btn-save-ssh" data-i18n="ssh.save">Save session</button>
@@ -1430,6 +1434,53 @@ async function applyModel(modelId: string): Promise<void> {
   renderUsage();
 }
 
+function sshFormEls() {
+  return {
+    editId: document.getElementById("ssh-edit-id") as HTMLInputElement,
+    name: document.getElementById("ssh-name") as HTMLInputElement,
+    host: document.getElementById("ssh-host") as HTMLInputElement,
+    user: document.getElementById("ssh-user") as HTMLInputElement,
+    port: document.getElementById("ssh-port") as HTMLInputElement,
+    identity: document.getElementById("ssh-identity") as HTMLInputElement,
+    jump: document.getElementById("ssh-jump") as HTMLInputElement,
+    dir: document.getElementById("ssh-dir") as HTMLInputElement,
+    advanced: document.getElementById("ssh-advanced") as HTMLDetailsElement,
+    title: document.getElementById("ssh-modal-title")!,
+    save: document.getElementById("btn-save-ssh")!,
+  };
+}
+
+function openSshModal(session?: SavedSession): void {
+  const form = sshFormEls();
+  const editing = Boolean(session?.id);
+  form.editId.value = session?.id ?? "";
+  form.name.value = session?.name ?? "";
+  form.host.value = session?.host ?? "";
+  form.user.value = session?.user ?? "";
+  form.port.value =
+    session?.port && session.port !== 22 ? String(session.port) : "";
+  form.identity.value = session?.identityFile ?? "";
+  form.jump.value = session?.proxyJump ?? "";
+  form.dir.value = session?.startDir ?? "";
+  const hasAdvanced = Boolean(
+    form.identity.value || form.jump.value || form.dir.value
+  );
+  form.advanced.open = hasAdvanced;
+  form.title.textContent = editing ? t("ssh.editTitle") : t("ssh.title");
+  form.title.dataset.i18n = editing ? "ssh.editTitle" : "ssh.title";
+  form.save.textContent = editing ? t("ssh.saveEdit") : t("ssh.save");
+  form.save.dataset.i18n = editing ? "ssh.saveEdit" : "ssh.save";
+  els.modalSsh.classList.remove("hidden");
+  requestAnimationFrame(() => form.name.focus());
+}
+
+function closeSshModal(): void {
+  els.modalSsh.classList.add("hidden");
+  const form = sshFormEls();
+  form.editId.value = "";
+  form.advanced.open = false;
+}
+
 async function refreshSessions(): Promise<void> {
   state.sessions = await api.getSessions();
   els.sessionList.innerHTML = "";
@@ -1441,16 +1492,29 @@ async function refreshSessions(): Promise<void> {
     open.className = "row";
     open.innerHTML = `<strong>${escapeHtml(s.name)}</strong><span class="meta">${escapeHtml(s.user)}@${escapeHtml(s.host)}${s.port && s.port !== 22 ? `:${s.port}` : ""}</span>`;
     open.onclick = () => void openSsh(s.id);
+    const actions = document.createElement("div");
+    actions.className = "session-actions";
+    const edit = document.createElement("button");
+    edit.className = "session-action ghost";
+    edit.title = t("ssh.edit");
+    edit.setAttribute("aria-label", `${t("ssh.edit")} ${s.name}`);
+    edit.innerHTML = icons.pencil(14);
+    edit.onclick = (e) => {
+      e.stopPropagation();
+      openSshModal(s);
+    };
     const del = document.createElement("button");
-    del.className = "del ghost";
-    del.title = "Delete";
-    del.setAttribute("aria-label", `Delete ${s.name}`);
+    del.className = "session-action ghost";
+    del.title = t("ssh.delete");
+    del.setAttribute("aria-label", `${t("ssh.delete")} ${s.name}`);
     del.innerHTML = icons.trash(14);
-    del.onclick = async () => {
+    del.onclick = async (e) => {
+      e.stopPropagation();
       await api.deleteSession(s.id);
       await refreshSessions();
     };
-    li.append(open, del);
+    actions.append(edit, del);
+    li.append(open, actions);
     els.sessionList.append(li);
   }
 }
@@ -1601,7 +1665,7 @@ function closeTopModal(): boolean {
     return true;
   }
   if (!els.modalSsh.classList.contains("hidden")) {
-    els.modalSsh.classList.add("hidden");
+    closeSshModal();
     return true;
   }
   return false;
@@ -2580,20 +2644,21 @@ els.meetingList.addEventListener("click", (e) => {
   ) as HTMLElement | null;
   if (open?.dataset.id) void openMeetingById(open.dataset.id);
 });
-document.getElementById("btn-add-ssh")!.onclick = () =>
-  els.modalSsh.classList.remove("hidden");
-document.getElementById("btn-cancel-ssh")!.onclick = () =>
-  els.modalSsh.classList.add("hidden");
+document.getElementById("btn-add-ssh")!.onclick = () => openSshModal();
+document.getElementById("btn-cancel-ssh")!.onclick = () => closeSshModal();
 document.getElementById("btn-save-ssh")!.onclick = async () => {
-  const name = (document.getElementById("ssh-name") as HTMLInputElement).value.trim();
-  const host = (document.getElementById("ssh-host") as HTMLInputElement).value.trim();
-  const user = (document.getElementById("ssh-user") as HTMLInputElement).value.trim();
-  const portRaw = (document.getElementById("ssh-port") as HTMLInputElement).value;
-  const identityFile = (document.getElementById("ssh-identity") as HTMLInputElement).value.trim();
-  const proxyJump = (document.getElementById("ssh-jump") as HTMLInputElement).value.trim();
-  const startDir = (document.getElementById("ssh-dir") as HTMLInputElement).value.trim();
+  const form = sshFormEls();
+  const name = form.name.value.trim();
+  const host = form.host.value.trim();
+  const user = form.user.value.trim();
+  const portRaw = form.port.value;
+  const identityFile = form.identity.value.trim();
+  const proxyJump = form.jump.value.trim();
+  const startDir = form.dir.value.trim();
   if (!name || !host || !user) return;
+  const editId = form.editId.value.trim();
   await api.saveSession({
+    id: editId || undefined,
     name,
     host,
     user,
@@ -2602,7 +2667,7 @@ document.getElementById("btn-save-ssh")!.onclick = async () => {
     proxyJump: proxyJump || undefined,
     startDir: startDir || undefined,
   });
-  els.modalSsh.classList.add("hidden");
+  closeSshModal();
   await refreshSessions();
 };
 document.getElementById("btn-import-ssh")!.onclick = async () => {

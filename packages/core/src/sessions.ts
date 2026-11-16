@@ -37,11 +37,19 @@ export class SessionStore {
     if (input.id) {
       const idx = this.sessions.findIndex((s) => s.id === input.id);
       if (idx >= 0) {
+        const prev = this.sessions[idx]!;
         const next: SavedSession = {
-          ...this.sessions[idx],
+          ...prev,
           ...input,
           id: input.id,
+          // Allow clearing optional fields on edit (empty form → undefined).
+          port: input.port,
+          identityFile: input.identityFile,
+          proxyJump: input.proxyJump,
+          startDir: input.startDir,
+          folder: input.folder,
           updatedAt: now,
+          createdAt: prev.createdAt,
         };
         this.sessions[idx] = next;
         await this.persist();
