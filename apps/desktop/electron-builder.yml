@@ -9,6 +9,9 @@ files:
   - dist/**/*
   - dist-electron/**/*
   - package.json
+  # Runtime window / About icons (exe icon is embedded separately on Windows).
+  - resources/brand/icon.png
+  - resources/brand/icon.ico
 asar: true
 asarUnpack:
   - "**/*.node"
@@ -29,8 +32,10 @@ dmg:
   artifactName: "${productName}-${version}-mac-${arch}.${ext}"
 win:
   icon: resources/brand/icon.ico
-  # Unsigned builds (no Authenticode cert yet).
-  signAndEditExecutable: false
+  # Embed icon/metadata into Drift.exe, but skip Authenticode signing for now.
+  # (signAndEditExecutable:false leaves the Electron default icon on the exe.)
+  signAndEditExecutable: true
+  signExecutable: false
   # Keep native modules unpackaged for node-pty on Windows.
   target:
     - target: nsis

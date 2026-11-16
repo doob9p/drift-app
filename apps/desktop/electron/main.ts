@@ -183,10 +183,10 @@ function brandAsset(...parts: string[]): string {
 }
 
 function loadAppIcon(): NativeImage | undefined {
-  const candidates = [
-    brandAsset("icon.icns"),
-    brandAsset("icon.png"),
-  ];
+  const candidates =
+    process.platform === "win32"
+      ? [brandAsset("icon.ico"), brandAsset("icon.png")]
+      : [brandAsset("icon.icns"), brandAsset("icon.png"), brandAsset("icon.ico")];
   for (const file of candidates) {
     if (!existsSync(file)) continue;
     const image = nativeImage.createFromPath(file);
