@@ -3538,6 +3538,17 @@ body.is-resizing-editor {
   color: var(--text-2);
 }
 
+.form-grid input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.form-grid input[type="number"]::-webkit-outer-spin-button,
+.form-grid input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .form-grid .field-label {
   display: inline-flex;
   align-items: center;
