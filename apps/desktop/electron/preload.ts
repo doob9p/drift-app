@@ -5,6 +5,7 @@ import type {
   AppLocale,
   AppSettings,
   ChatMode,
+  LocalShellId,
   ModelOption,
   ProposedAction,
   SavedSession,
@@ -73,6 +74,16 @@ export type DesktopApi = {
   setModel: (modelId: string) => Promise<AppSettings>;
   setChatMode: (mode: ChatMode) => Promise<AppSettings>;
   setLocale: (locale: AppLocale) => Promise<AppSettings>;
+  setLocalShell: (shell: LocalShellId) => Promise<AppSettings>;
+  listLocalShells: () => Promise<{
+    platform: string;
+    current: LocalShellId;
+    shells: Array<{
+      id: LocalShellId;
+      available: boolean;
+      path: string | null;
+    }>;
+  }>;
   listModels: () => Promise<ModelOption[]>;
 
   getSessionUsage: () => Promise<SessionUsageView>;
@@ -469,6 +480,9 @@ const api: DesktopApi = {
   setModel: (modelId) => ipcRenderer.invoke("settings:set-model", modelId),
   setChatMode: (mode) => ipcRenderer.invoke("settings:set-chat-mode", mode),
   setLocale: (locale) => ipcRenderer.invoke("settings:set-locale", locale),
+  setLocalShell: (shell) =>
+    ipcRenderer.invoke("settings:set-local-shell", shell),
+  listLocalShells: () => ipcRenderer.invoke("settings:list-local-shells"),
   listModels: () => ipcRenderer.invoke("settings:list-models"),
 
   getSessionUsage: () => ipcRenderer.invoke("usage:get-session"),

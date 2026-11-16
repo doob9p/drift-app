@@ -14,8 +14,134 @@
       href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
     />
     <title>Drift</title>
+    <style>
+      /* First paint before the module bundle — keep in sync with .app-splash */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        color: #e8eaf0;
+        overflow: hidden;
+      }
+      #app-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 10000;
+        display: grid;
+        place-items: center;
+        background: #000;
+        transition: opacity 0.42s ease, visibility 0.42s ease;
+      }
+      #app-splash.is-done {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      #app-splash .splash-inner {
+        display: grid;
+        justify-items: center;
+        gap: 1.75rem;
+        padding: 1.5rem;
+        transform: translateY(-4vh);
+      }
+      #app-splash .splash-logo {
+        width: min(340px, 72vw);
+        height: auto;
+        display: block;
+        user-select: none;
+        -webkit-user-drag: none;
+        animation: splash-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+      #app-splash .splash-foot {
+        display: grid;
+        justify-items: center;
+        gap: 0.7rem;
+        min-height: 2.6rem;
+        animation: splash-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.12s both;
+      }
+      #app-splash .splash-bar {
+        width: min(200px, 52vw);
+        height: 3px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        overflow: hidden;
+      }
+      #app-splash .splash-bar > i {
+        display: block;
+        height: 100%;
+        width: 0%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #d5d8f2, #8b92f5);
+        transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      #app-splash .splash-meta {
+        display: flex;
+        align-items: baseline;
+        justify-content: center;
+        gap: 0.55rem;
+        min-height: 1.2em;
+        max-width: 28rem;
+      }
+      #app-splash .splash-status {
+        margin: 0;
+        font: 500 0.78rem/1.4 Pretendard Variable, Pretendard, -apple-system,
+          BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+        letter-spacing: -0.01em;
+        color: rgba(232, 234, 240, 0.55);
+        text-align: center;
+      }
+      #app-splash .splash-pct {
+        margin: 0;
+        font: 560 0.72rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0.02em;
+        color: rgba(232, 234, 240, 0.42);
+        font-variant-numeric: tabular-nums;
+        min-width: 2.6em;
+        text-align: right;
+      }
+      @keyframes splash-in {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="app-splash" role="status" aria-live="polite" aria-busy="true">
+      <div class="splash-inner">
+        <img
+          class="splash-logo"
+          src="./brand/logo-splash.png"
+          alt="Drift"
+          width="340"
+          height="101"
+          decoding="async"
+          fetchpriority="high"
+        />
+        <div class="splash-foot">
+          <div
+            class="splash-bar"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            id="app-splash-bar"
+          >
+            <i id="app-splash-fill"></i>
+          </div>
+          <div class="splash-meta">
+            <p class="splash-status" id="app-splash-status">Starting…</p>
+            <p class="splash-pct" id="app-splash-pct">0%</p>
+          </div>
+        </div>
+      </div>
+    </div>
     <div id="app"></div>
     <script type="module" src="/src/renderer/main.ts"></script>
   </body>

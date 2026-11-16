@@ -4,7 +4,14 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { readlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { newId, type ExecResult, type TargetRef } from "@drift/core";
+import {
+  newId,
+  type ExecResult,
+  type LocalShellId,
+  type TargetRef,
+} from "@drift/core";
+
+export type { LocalShellId };
 
 export interface LocalPtyBackend {
   readonly id: string;
@@ -79,13 +86,17 @@ function cleanEnv(): Record<string, string> {
   return env;
 }
 
-function defaultShell(): string {
-  if (isWin()) {
-    // Prefer a resolved PowerShell path so PATH-less Electron spawns still work.
-    const systemRoot = process.env.SystemRoot || "C:\\Windows";
-    const candidates = [
-      process.env.DRIFT_SHELL,
-      process.env.SHELL,
+function firstExisting(paths: string[]): string | null {
+  for (const p of paths) {
+    if (p && existsSync(p)) return p;
+  }
+  return null;
+}
+
+function powershellPath(): string {
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  return (
+    firstExisting([
       path.join(
         systemRoot,
         "System32",
@@ -93,17 +104,67 @@ function defaultShell(): string {
         "v1.0",
         "powershell.exe"
       ),
+      path.join(
+        systemRoot,
+        "SysWOW64",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe"
+      ),
+    ]) || "powershell.exe"
+  );
+}
+
+function cmdPath(): string {
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  return (
+    firstExisting([
       path.join(systemRoot, "System32", "cmd.exe"),
-      "powershell.exe",
-    ].filter((c): c is string => Boolean(c));
-    for (const c of candidates) {
-      if (c.includes("\\") || c.includes("/")) {
-        if (existsSync(c)) return c;
-      } else {
-        return c;
-      }
-    }
-    return "powershell.exe";
+      path.join(systemRoot, "SysWOW64", "cmd.exe"),
+    ]) || "cmd.exe"
+  );
+}
+
+function gitBashPath(): string | null {
+  const pf = process.env.ProgramFiles || "C:\\Program Files";
+  const pf86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+  const local = process.env.LOCALAPPDATA || "";
+  return firstExisting([
+    path.join(pf, "Git", "bin", "bash.exe"),
+    path.join(pf, "Git", "usr", "bin", "bash.exe"),
+    path.join(pf86, "Git", "bin", "bash.exe"),
+    path.join(pf86, "Git", "usr", "bin", "bash.exe"),
+    local ? path.join(local, "Programs", "Git", "bin", "bash.exe") : "",
+  ]);
+}
+
+/** Resolve an absolute shell executable for the requested Windows shell. */
+export function resolveWindowsShell(kind: LocalShellId): string {
+  if (kind === "cmd") return cmdPath();
+  if (kind === "gitbash") {
+    return gitBashPath() || powershellPath();
+  }
+  return powershellPath();
+}
+
+export function detectWindowsShells(): Array<{
+  id: LocalShellId;
+  available: boolean;
+  path: string | null;
+}> {
+  const bash = gitBashPath();
+  return [
+    { id: "powershell", available: true, path: powershellPath() },
+    { id: "cmd", available: true, path: cmdPath() },
+    { id: "gitbash", available: Boolean(bash), path: bash },
+  ];
+}
+
+function defaultShell(kind?: LocalShellId): string {
+  if (isWin()) {
+    const override = process.env.DRIFT_SHELL;
+    if (override) return override;
+    return resolveWindowsShell(kind ?? "powershell");
   }
   const candidates = [process.env.SHELL, "/bin/zsh", "/bin/bash", "/bin/sh"];
   for (const c of candidates) {
@@ -116,8 +177,11 @@ function shellBaseName(shell: string): string {
   return path.basename(shell).toLowerCase().replace(/\.exe$/, "");
 }
 
-function shellArgs(shell: string): string[] {
+function shellArgs(shell: string, kind?: LocalShellId): string[] {
   if (!isWin()) return ["-l"];
+  if (kind === "gitbash" || shellBaseName(shell) === "bash") {
+    return ["--login", "-i"];
+  }
   const base = shellBaseName(shell);
   if (base === "powershell" || base === "pwsh") {
     return ["-NoLogo"];
@@ -198,8 +262,11 @@ export function createLocalPty(opts?: {
   cwd?: string;
   cols?: number;
   rows?: number;
+  /** Windows local shell preference. Ignored on macOS/Linux. */
+  shellKind?: LocalShellId;
 }): LocalPtyBackend {
-  const shell = defaultShell();
+  const shellKind = opts?.shellKind ?? "powershell";
+  const shell = defaultShell(shellKind);
   const cwd =
     opts?.cwd ??
     (isWin()
@@ -207,15 +274,17 @@ export function createLocalPty(opts?: {
       : process.env.HOME || os.homedir());
   const id = newId();
   const env = cleanEnv();
+  const base = shellBaseName(shell);
+  const isPowerShell = base === "powershell" || base === "pwsh";
 
-  if (isWin()) {
+  if (isWin() && isPowerShell) {
     prepareWindowsPowerShellEnv(shell, id, env);
-  } else {
+  } else if (!isWin()) {
     prepareUnixShellEnv(shell, id, env);
   }
 
-  let args = shellArgs(shell);
-  if (isWin() && env.DRIFT_PS_PROFILE) {
+  let args = shellArgs(shell, isWin() ? shellKind : undefined);
+  if (isWin() && isPowerShell && env.DRIFT_PS_PROFILE) {
     // Load our OSC 7 prompt without replacing the user's default profile permanently.
     args = [
       "-NoLogo",

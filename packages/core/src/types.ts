@@ -124,10 +124,15 @@ export type ChatMode = "ask" | "agent" | "plan";
 
 export type AppLocale = "ko" | "en";
 
+/** Local terminal shell on Windows (ignored on macOS/Linux). */
+export type LocalShellId = "powershell" | "cmd" | "gitbash";
+
 export interface AppSettings {
   modelId: string;
   chatMode: ChatMode;
   locale: AppLocale;
+  /** Preferred Windows local shell. Default: powershell. */
+  localShell: LocalShellId;
 }
 
 export interface TabState {

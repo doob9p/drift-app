@@ -7,6 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 import type { DesktopApi, SessionUsageView } from "../../electron/preload";
 import type {
   ChatMode,
+  LocalShellId,
   ModelOption,
   ProposedAction,
   SavedSession,
@@ -88,6 +89,47 @@ async function ensureTermFont(): Promise<void> {
   }
 }
 
+const splashStartedAt = performance.now();
+const SPLASH_MIN_MS = 700;
+let splashPercent = 0;
+
+/** Boot milestones — not wall-clock ETA, just weighted steps that fill 0→100. */
+const SPLASH_AT = {
+  start: 4,
+  fonts: 14,
+  settings: 32,
+  models: 52,
+  sessions: 68,
+  files: 84,
+  terminal: 96,
+  ready: 100,
+} as const;
+
+function setSplashProgress(percent: number, message?: string): void {
+  splashPercent = Math.max(splashPercent, Math.min(100, Math.round(percent)));
+  const fill = document.getElementById("app-splash-fill");
+  const bar = document.getElementById("app-splash-bar");
+  const pct = document.getElementById("app-splash-pct");
+  const status = document.getElementById("app-splash-status");
+  if (fill) fill.style.width = `${splashPercent}%`;
+  if (bar) bar.setAttribute("aria-valuenow", String(splashPercent));
+  if (pct) pct.textContent = `${splashPercent}%`;
+  if (message && status) status.textContent = message;
+}
+
+async function dismissSplash(): Promise<void> {
+  const root = document.getElementById("app-splash");
+  if (!root || root.classList.contains("is-done")) return;
+  setSplashProgress(100);
+  const wait = Math.max(0, SPLASH_MIN_MS - (performance.now() - splashStartedAt));
+  if (wait > 0) await new Promise((r) => window.setTimeout(r, wait));
+  // Let the bar finish its CSS width transition before fading out.
+  await new Promise((r) => window.setTimeout(r, 180));
+  root.classList.add("is-done");
+  root.setAttribute("aria-busy", "false");
+  window.setTimeout(() => root.remove(), 480);
+}
+
 const state = {
   sessions: [] as SavedSession[],
   tabs: new Map<string, TabView>(),
@@ -96,6 +138,7 @@ const state = {
   modelId: "composer-2.5",
   chatMode: "agent" as ChatMode,
   locale: "ko" as AppLocale,
+  localShell: "powershell" as LocalShellId,
   models: [] as ModelOption[],
   lastUsage: null as TokenUsageSnapshot | null,
   lastCostCents: null as number | null,
@@ -311,6 +354,17 @@ app.innerHTML = `
                   <option value="ko">한국어</option>
                   <option value="en">English</option>
                 </select>
+              </label>
+              <label class="settings-shell hidden" id="settings-shell-row" hidden>
+                <span data-i18n="settings.localShell">Local terminal</span>
+                <select id="settings-local-shell">
+                  <option value="powershell" data-i18n="settings.shell.powershell">PowerShell</option>
+                  <option value="cmd" data-i18n="settings.shell.cmd">Command Prompt</option>
+                  <option value="gitbash" data-i18n="settings.shell.gitbash">Git Bash</option>
+                </select>
+                <span class="settings-hint" data-i18n="settings.localShellHint"
+                  >Applies to newly opened local terminals.</span
+                >
               </label>
             </div>
           </div>
@@ -583,6 +637,10 @@ const els = {
   modelSearch: document.getElementById("model-search") as HTMLInputElement,
   modelList: document.getElementById("model-list")!,
   settingsLocale: document.getElementById("settings-locale") as HTMLSelectElement,
+  settingsShellRow: document.getElementById("settings-shell-row") as HTMLElement,
+  settingsLocalShell: document.getElementById(
+    "settings-local-shell"
+  ) as HTMLSelectElement,
   usageMini: document.getElementById("usage-mini")!,
   btnMode: document.getElementById("btn-mode") as HTMLButtonElement,
   modePopover: document.getElementById("mode-popover")!,
@@ -613,6 +671,29 @@ function renderModeChip(): void {
   });
 }
 
+async function syncLocalShellSettingsVisibility(): Promise<void> {
+  try {
+    const info = await api.listLocalShells();
+    const onWindows = info.platform === "win32";
+    els.settingsShellRow.classList.toggle("hidden", !onWindows);
+    els.settingsShellRow.hidden = !onWindows;
+    if (onWindows) {
+      els.settingsLocalShell.value = state.localShell;
+      for (const opt of Array.from(els.settingsLocalShell.options)) {
+        const match = info.shells.find((s) => s.id === opt.value);
+        if (!match) continue;
+        opt.disabled = !match.available;
+        if (!match.available && opt.selected) {
+          els.settingsLocalShell.value = "powershell";
+        }
+      }
+    }
+  } catch {
+    els.settingsShellRow.classList.add("hidden");
+    els.settingsShellRow.hidden = true;
+  }
+}
+
 function applyUiLocale(): void {
   applyDomI18n(document);
   renderModeChip();
@@ -628,6 +709,9 @@ function applyUiLocale(): void {
     els.btnSend.setAttribute("aria-label", t("chat.send"));
   }
   els.settingsLocale.value = state.locale;
+  if (!els.settingsShellRow.hidden) {
+    els.settingsLocalShell.value = state.localShell;
+  }
   els.composerPlaceholder.textContent = t("chat.placeholder");
   els.agentInput.setAttribute("aria-label", t("chat.placeholder"));
   hideMentionMenu();
@@ -2776,6 +2860,13 @@ els.apiKeyInput.addEventListener("keydown", (e) => {
 els.settingsLocale.onchange = () => {
   void applyLocale(normalizeLocale(els.settingsLocale.value));
 };
+els.settingsLocalShell.onchange = async () => {
+  const next = els.settingsLocalShell.value as LocalShellId;
+  if (next !== "powershell" && next !== "cmd" && next !== "gitbash") return;
+  state.localShell = next;
+  await api.setLocalShell(next);
+  chat.addSystem(t("settings.localShellSaved", { shell: t(`settings.shell.${next}`) }));
+};
 els.btnModel.onclick = (e) => {
   e.stopPropagation();
   if (els.modelPopover.classList.contains("hidden")) openModelPopover();
@@ -3224,28 +3315,55 @@ window.addEventListener("resize", () => {
 });
 
 void (async () => {
-  await ensureTermFont();
-  const settings = await api.getSettings();
-  state.modelId = settings.modelId;
-  state.chatMode = settings.chatMode ?? "agent";
-  state.locale = normalizeLocale(settings.locale);
-  setLocale(state.locale);
-  const status = await api.getApiKeyStatus();
-  state.hasKey = status.hasKey;
-  state.sessionUsage = await api.getSessionUsage();
-  applyUiLocale();
-  renderUsage();
-  await refreshModels();
-  await refreshSessions();
-  homeDirCache = await api.getHomeDir();
-  await filesBrowser.setLocalRoot(homeDirCache);
-  await syncFilesPanel();
-  // Wait one frame so the terminal host has its final flex size.
-  await new Promise<void>((r) => requestAnimationFrame(() => r()));
-  await openLocal();
-  refreshStatusStrip();
-  void refreshStripMetrics();
-  void refreshAccountUsage();
-  window.setInterval(() => void refreshStripMetrics(), 2500);
-  window.setInterval(() => void refreshAccountUsage(), 5 * 60_000);
+  try {
+    setSplashProgress(SPLASH_AT.start, t("splash.starting"));
+    setSplashProgress(SPLASH_AT.fonts, t("splash.fonts"));
+    await ensureTermFont();
+
+    setSplashProgress(SPLASH_AT.settings, t("splash.settings"));
+    const settings = await api.getSettings();
+    state.modelId = settings.modelId;
+    state.chatMode = settings.chatMode ?? "agent";
+    state.locale = normalizeLocale(settings.locale);
+    state.localShell =
+      settings.localShell === "cmd" || settings.localShell === "gitbash"
+        ? settings.localShell
+        : "powershell";
+    setLocale(state.locale);
+    const status = await api.getApiKeyStatus();
+    state.hasKey = status.hasKey;
+    state.sessionUsage = await api.getSessionUsage();
+    await syncLocalShellSettingsVisibility();
+    applyUiLocale();
+    renderUsage();
+    // Locale may have changed splash copy — refresh current line.
+    setSplashProgress(SPLASH_AT.models, t("splash.models"));
+
+    await refreshModels();
+    setSplashProgress(SPLASH_AT.sessions, t("splash.sessions"));
+    await refreshSessions();
+
+    setSplashProgress(SPLASH_AT.files, t("splash.files"));
+    homeDirCache = await api.getHomeDir();
+    await filesBrowser.setLocalRoot(homeDirCache);
+    await syncFilesPanel();
+
+    setSplashProgress(SPLASH_AT.terminal, t("splash.terminal"));
+    // Wait one frame so the terminal host has its final flex size.
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    await openLocal();
+    refreshStatusStrip();
+    void refreshStripMetrics();
+    void refreshAccountUsage();
+    window.setInterval(() => void refreshStripMetrics(), 2500);
+    window.setInterval(() => void refreshAccountUsage(), 5 * 60_000);
+
+    setSplashProgress(SPLASH_AT.ready, t("splash.ready"));
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    setSplashProgress(splashPercent, detail || t("splash.starting"));
+    console.error(err);
+  } finally {
+    await dismissSplash();
+  }
 })();

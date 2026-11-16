@@ -34,7 +34,11 @@ import {
   type ProposedAction,
   type SavedSession,
 } from "@drift/core";
-import { createLocalPty, type LocalPtyBackend } from "@drift/host-local";
+import {
+  createLocalPty,
+  detectWindowsShells,
+  type LocalPtyBackend,
+} from "@drift/host-local";
 import {
   createSshPty,
   downloadFilesViaScp,
@@ -47,6 +51,7 @@ import type {
   AppLocale,
   AppSettings,
   ChatMode,
+  LocalShellId,
   TokenUsageSnapshot,
   UsageCostSnapshot,
 } from "@drift/core";
@@ -134,7 +139,24 @@ let appSettings: AppSettings = {
   modelId: "composer-2.5",
   chatMode: "agent",
   locale: "ko",
+  localShell: "powershell",
 };
+
+function normalizeLocalShell(value: unknown): LocalShellId {
+  if (value === "cmd" || value === "gitbash" || value === "powershell") {
+    return value;
+  }
+  return "powershell";
+}
+
+function localPtyOpts(size?: { cols?: number; rows?: number }) {
+  return {
+    cols: size?.cols,
+    rows: size?.rows,
+    shellKind:
+      process.platform === "win32" ? appSettings.localShell : undefined,
+  };
+}
 
 function stopAgentRuns(runId?: string): { stopped: string[] } {
   const stopped: string[] = [];
@@ -253,12 +275,14 @@ async function loadSettings(): Promise<AppSettings> {
       modelId: parsed.modelId?.trim() || "composer-2.5",
       chatMode: normalizeChatMode(parsed.chatMode),
       locale: normalizeLocale(parsed.locale),
+      localShell: normalizeLocalShell(parsed.localShell),
     };
   } catch {
     return {
       modelId: "composer-2.5",
       chatMode: "agent",
       locale: "ko",
+      localShell: "powershell",
     };
   }
 }
@@ -494,7 +518,8 @@ function createWindow(): void {
     minWidth: 960,
     minHeight: 600,
     title: "Drift",
-    backgroundColor: "#0a0c10",
+    backgroundColor: "#000000",
+    show: false,
     ...(icon ? { icon } : {}),
     ...(process.platform === "darwin"
       ? {
@@ -508,6 +533,10 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: false,
     },
+  });
+
+  mainWindow.once("ready-to-show", () => {
+    mainWindow?.show();
   });
 
   // Allow mic for meeting recording (getUserMedia + SpeechRecognition).
@@ -1410,7 +1439,7 @@ function registerIpc(): void {
       try {
         const cols = Math.max(2, Math.floor(payload.cols));
         const rows = Math.max(1, Math.floor(payload.rows));
-        const backend = createLocalPty({ cols, rows });
+        const backend = createLocalPty(localPtyOpts({ cols, rows }));
         tab.backend = backend;
         tab.lastCols = cols;
         tab.lastRows = rows;
@@ -1430,7 +1459,7 @@ function registerIpc(): void {
       try {
         const cols = Math.max(2, Math.floor(size?.cols ?? 120));
         const rows = Math.max(1, Math.floor(size?.rows ?? 30));
-        const backend = createLocalPty({ cols, rows });
+        const backend = createLocalPty(localPtyOpts({ cols, rows }));
         const tabId = newId();
         const title = "Local";
         tabs.set(tabId, {
@@ -1598,6 +1627,36 @@ function registerIpc(): void {
       locale: normalizeLocale(locale),
     });
     return appSettings;
+  });
+
+  ipcMain.handle(
+    "settings:set-local-shell",
+    async (_e, shell: LocalShellId) => {
+      await saveSettings({
+        ...appSettings,
+        localShell: normalizeLocalShell(shell),
+      });
+      return appSettings;
+    }
+  );
+
+  ipcMain.handle("settings:list-local-shells", async () => {
+    if (process.platform === "win32") {
+      return {
+        platform: "win32" as const,
+        current: appSettings.localShell,
+        shells: detectWindowsShells(),
+      };
+    }
+    return {
+      platform: process.platform,
+      current: appSettings.localShell,
+      shells: [] as Array<{
+        id: "powershell" | "cmd" | "gitbash";
+        available: boolean;
+        path: string | null;
+      }>,
+    };
   });
 
   ipcMain.handle("settings:list-models", async () => {
