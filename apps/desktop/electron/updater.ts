@@ -35,7 +35,6 @@ type DismissedState = {
   version?: string;
 };
 
-const CHECK_DELAY_MS = 4_000;
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const GITHUB_OWNER = "doob9p";
 const GITHUB_REPO = "drift-app";
@@ -312,9 +311,26 @@ export function initAutoUpdater(getWindow: () => BrowserWindow | null): void {
     if (!app.isPackaged) return { ok: false as const, reason: "dev" as const };
     try {
       const result = await autoUpdater.checkForUpdates();
+      const info = result?.updateInfo ?? null;
+      const version = info?.version ?? null;
+      const dismissed = readDismissed();
+      const available =
+        !!version &&
+        version !== app.getVersion() &&
+        dismissed.version !== version;
+      const update = available && info
+        ? ({
+            version: info.version,
+            currentVersion: app.getVersion(),
+            releaseName: info.releaseName,
+            releaseNotes: toPlainReleaseNotes(info.releaseNotes),
+          } satisfies UpdateAvailablePayload)
+        : null;
       return {
         ok: true as const,
-        versionInfo: result?.updateInfo?.version ?? null,
+        versionInfo: version,
+        available,
+        update,
       };
     } catch (err) {
       return {
@@ -425,6 +441,7 @@ export function initAutoUpdater(getWindow: () => BrowserWindow | null): void {
     });
   };
 
-  setTimeout(runCheck, CHECK_DELAY_MS);
+  // First check is driven by the intro splash (renderer `checkForUpdate`).
+  // Keep a periodic check for long-running sessions.
   setInterval(runCheck, CHECK_INTERVAL_MS);
 }

@@ -95,6 +95,24 @@ function wheelDeltaY(e: WheelEvent): number {
   return dy;
 }
 
+function cardScrollSurface(target: Element): HTMLElement | null {
+  const thread = target.closest(".board-prompt-thread");
+  if (thread instanceof HTMLElement) return thread;
+  const term =
+    target.closest(".xterm-viewport") ??
+    target.closest(".xterm")?.querySelector(".xterm-viewport");
+  return term instanceof HTMLElement ? term : null;
+}
+
+/** True when `el` can still move in the wheel's vertical direction. */
+function canScrollVertically(el: HTMLElement, dy: number): boolean {
+  const max = el.scrollHeight - el.clientHeight;
+  if (max <= 1) return false;
+  if (dy < 0) return el.scrollTop > 0;
+  if (dy > 0) return el.scrollTop < max - 1;
+  return false;
+}
+
 type MapFrame = {
   worldX: number;
   worldY: number;
@@ -1194,7 +1212,8 @@ export function createBoardPane(
     true
   );
 
-  // Capture for board pan/zoom. Native scroll only inside the focused card.
+  // Capture for board pan/zoom. Focused card scrolls vertically only while
+  // content can move; otherwise (and for horizontal) the board pans.
   viewport.addEventListener(
     "wheel",
     (e) => {
@@ -1210,11 +1229,24 @@ export function createBoardPane(
       const target = e.target;
       if (target instanceof Element && focus) {
         const cardEl = cardEls.get(focus.cardId);
-        const inFocusedCard = Boolean(cardEl?.contains(target));
-        const inScrollSurface = Boolean(
-          target.closest(".board-prompt-thread, .xterm-viewport, .xterm-screen")
-        );
-        if (inFocusedCard && inScrollSurface) return;
+        const surface =
+          cardEl?.contains(target) ? cardScrollSurface(target) : null;
+        if (surface) {
+          const dx = e.deltaX;
+          const dy = wheelDeltaY(e);
+          // Shift+wheel or sideways-dominant trackpad → pan board left/right.
+          if (e.shiftKey || Math.abs(dx) > Math.abs(dy)) {
+            e.preventDefault();
+            e.stopPropagation();
+            camera.x -= e.shiftKey ? dy : dx;
+            applyCamera(true);
+            return;
+          }
+          if (canScrollVertically(surface, dy)) {
+            return;
+          }
+          // No more vertical room — fall through to board pan.
+        }
       }
 
       e.preventDefault();

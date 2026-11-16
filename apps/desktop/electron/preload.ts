@@ -315,7 +315,17 @@ export type DesktopApi = {
 
   getAppVersion: () => Promise<{ version: string; packaged: boolean }>;
   checkForUpdate: () => Promise<
-    | { ok: true; versionInfo: string | null }
+    | {
+        ok: true;
+        versionInfo: string | null;
+        available: boolean;
+        update: {
+          version: string;
+          currentVersion: string;
+          releaseName?: string | null;
+          releaseNotes?: string | null;
+        } | null;
+      }
     | { ok: false; reason: "dev" | "error"; message?: string }
   >;
   downloadUpdate: () => Promise<

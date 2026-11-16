@@ -2222,7 +2222,6 @@ async function exportMeeting(id, parentWindow) {
   await writeText(path.join(dest, "meeting.md"), bundle);
   return { ok: true, path: dest };
 }
-const CHECK_DELAY_MS = 4e3;
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1e3;
 const GITHUB_OWNER = "doob9p";
 const GITHUB_REPO = "drift-app";
@@ -2431,13 +2430,24 @@ function initAutoUpdater(getWindow) {
     packaged: electron.app.isPackaged
   }));
   electron.ipcMain.handle("updater:check", async () => {
-    var _a;
     if (!electron.app.isPackaged) return { ok: false, reason: "dev" };
     try {
       const result = await electronUpdater.autoUpdater.checkForUpdates();
+      const info = (result == null ? void 0 : result.updateInfo) ?? null;
+      const version = (info == null ? void 0 : info.version) ?? null;
+      const dismissed = readDismissed();
+      const available = !!version && version !== electron.app.getVersion() && dismissed.version !== version;
+      const update = available && info ? {
+        version: info.version,
+        currentVersion: electron.app.getVersion(),
+        releaseName: info.releaseName,
+        releaseNotes: toPlainReleaseNotes(info.releaseNotes)
+      } : null;
       return {
         ok: true,
-        versionInfo: ((_a = result == null ? void 0 : result.updateInfo) == null ? void 0 : _a.version) ?? null
+        versionInfo: version,
+        available,
+        update
       };
     } catch (err) {
       return {
@@ -2535,7 +2545,6 @@ function initAutoUpdater(getWindow) {
     void electronUpdater.autoUpdater.checkForUpdates().catch(() => {
     });
   };
-  setTimeout(runCheck, CHECK_DELAY_MS);
   setInterval(runCheck, CHECK_INTERVAL_MS);
 }
 const PREFERRED = [

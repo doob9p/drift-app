@@ -3822,7 +3822,23 @@ void (async () => {
     window.setInterval(() => void refreshStripMetrics(), 2500);
     window.setInterval(() => void refreshAccountUsage(), 5 * 60_000);
 
-    setSplashProgress(SPLASH_AT.ready, t("splash.ready"));
+    setSplashProgress(SPLASH_AT.ready, t("splash.updates"));
+    // Check while intro is still up so Update / Later stay on the splash.
+    const updateCheck = await Promise.race([
+      api.checkForUpdate(),
+      new Promise<null>((r) => window.setTimeout(() => r(null), 8_000)),
+    ]);
+    if (
+      updateCheck &&
+      updateCheck.ok &&
+      updateCheck.available &&
+      updateCheck.update
+    ) {
+      showUpdateSplash(updateCheck.update);
+    }
+    if (!splashHeldForUpdate) {
+      setSplashProgress(SPLASH_AT.ready, t("splash.ready"));
+    }
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     setSplashProgress(splashPercent, detail || t("splash.starting"));
