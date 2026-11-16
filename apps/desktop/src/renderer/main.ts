@@ -448,10 +448,31 @@ app.innerHTML = `
       <p class="lead" data-i18n="ssh.lead">Passwords are never saved. Use keys or enter credentials in the terminal.</p>
       <input type="hidden" id="ssh-edit-id" value="" />
       <div class="form-grid two">
-        <label><span data-i18n="ssh.name">Name</span> <input id="ssh-name" placeholder="prod-gpu" /></label>
-        <label><span data-i18n="ssh.host">Host</span> <input id="ssh-host" placeholder="192.168.1.10" /></label>
-        <label><span data-i18n="ssh.user">User</span> <input id="ssh-user" placeholder="ubuntu" /></label>
-        <label><span data-i18n="ssh.port">Port</span> <input id="ssh-port" type="number" placeholder="22" /></label>
+        <label>
+          <span class="field-label"
+            ><span data-i18n="ssh.name">Name</span
+            ><abbr class="req" data-i18n-title="ssh.required" title="Required">*</abbr></span
+          >
+          <input id="ssh-name" placeholder="prod-gpu" required autocomplete="off" />
+        </label>
+        <label>
+          <span class="field-label"
+            ><span data-i18n="ssh.host">Host</span
+            ><abbr class="req" data-i18n-title="ssh.required" title="Required">*</abbr></span
+          >
+          <input id="ssh-host" placeholder="192.168.1.10" required autocomplete="off" />
+        </label>
+        <label>
+          <span class="field-label"
+            ><span data-i18n="ssh.user">User</span
+            ><abbr class="req" data-i18n-title="ssh.required" title="Required">*</abbr></span
+          >
+          <input id="ssh-user" placeholder="ubuntu" required autocomplete="off" />
+        </label>
+        <label>
+          <span class="field-label" data-i18n="ssh.port">Port</span>
+          <input id="ssh-port" type="number" placeholder="22" autocomplete="off" />
+        </label>
       </div>
       <details class="ssh-advanced" id="ssh-advanced">
         <summary data-i18n="ssh.advanced">Advanced (optional)</summary>
@@ -2655,7 +2676,11 @@ document.getElementById("btn-save-ssh")!.onclick = async () => {
   const identityFile = form.identity.value.trim();
   const proxyJump = form.jump.value.trim();
   const startDir = form.dir.value.trim();
-  if (!name || !host || !user) return;
+  if (!name || !host || !user) {
+    showToast(t("ssh.requiredHint"), "info");
+    (!name ? form.name : !host ? form.host : form.user).focus();
+    return;
+  }
   const editId = form.editId.value.trim();
   await api.saveSession({
     id: editId || undefined,

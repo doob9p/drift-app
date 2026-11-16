@@ -3538,6 +3538,21 @@ body.is-resizing-editor {
   color: var(--text-2);
 }
 
+.form-grid .field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+}
+
+.form-grid .req {
+  color: var(--danger);
+  font-weight: 700;
+  font-size: 0.85em;
+  line-height: 1;
+  text-decoration: none;
+  cursor: help;
+}
+
 .ssh-advanced {
   margin-top: 0.85rem;
   border-radius: 12px;
