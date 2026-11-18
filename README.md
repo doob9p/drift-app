@@ -1,16 +1,43 @@
-# Drift
+<p align="center">
+  <img src="docs/assets/readme-banner.png" alt="Drift" width="520" />
+</p>
 
-Terminal app with saved SSH sessions and a Cursor agent panel.
+<p align="center">
+  <strong>보드 위에 터미널을 펼치고, Cursor 에이전트와 같이 일하세요.</strong>
+</p>
 
-> Repo folder: `drift-app`. npm packages: `@drift/*`.
+<p align="center">
+  <a href="https://github.com/doob9p/drift-app/releases/latest">Download</a>
+  ·
+  <a href="https://doob9p.github.io/drift-app/">Website</a>
+  ·
+  <a href="https://github.com/doob9p/drift-app/releases/latest">Releases</a>
+</p>
 
-## MVP
+---
 
-- Local PTY terminal (macOS / Windows)
-- Saved SSH sessions (optional encrypted password + SSH key)
-- Cursor API key entered in-app (OS encrypted storage)
-- Agent proposes commands → approve → run on the active host
-- Auto-update from GitHub Releases (packaged builds)
+**Drift**는 로컬·SSH 터미널을 카드로 펼쳐 두는 데스크톱 앱입니다. 세션을 보드에 배치하고, Cursor 에이전트 제안은 검토·승인한 뒤 현재 호스트에서 실행합니다.
+
+## Features
+
+- **보드 터미널** — 세션을 카드로 펼치고 타일·정렬로 배치
+- **로컬 · SSH 셸** — 로컬은 iTerm에 가까운 PATH·히스토리, SSH는 저장한 호스트로 전환
+- **Cursor 에이전트** — 제안된 명령을 보고 승인 / 세션 승인 / 거절 후 실행
+- **회의 기록** — 마이크 녹음, 실시간 받아쓰기, 요약
+- **자동 업데이트** — GitHub Releases 기반 (패키지 빌드)
+
+시즌 테마가 켜져 있으면 보드 위 눈도 쌓이고, Option 드래그로 굴릴 수 있습니다.
+
+## Download
+
+| Platform | 파일 |
+| --- | --- |
+| macOS (Apple Silicon) | `Drift-*-mac-arm64.dmg` |
+| Windows x64 | `Drift-*-win-x64.exe` |
+
+최신 빌드: [Releases](https://github.com/doob9p/drift-app/releases/latest)
+
+> 서명되지 않은 빌드라 macOS Gatekeeper / Windows SmartScreen 안내가 보일 수 있습니다. 시스템 설정에서 허용하면 실행됩니다.
 
 ## Develop
 
@@ -20,85 +47,56 @@ npm install          # also rebuilds node-pty for Electron
 npm run dev
 ```
 
-If the local terminal fails with `posix_spawnp` (macOS) or a native module error:
+로컬 터미널이 `posix_spawnp`(macOS) 또는 native module 오류로 실패하면:
 
 ```bash
 npm run rebuild:native
 ```
 
+> Repo folder: `drift-app`. npm packages: `@drift/*`.
+
 ## Release (macOS)
 
-Packaging uses `electron-builder` + `electron-updater` with **GitHub Releases**.
+`electron-builder` + `electron-updater` → **GitHub Releases**.
 
-1. Repo: [`doob9p/drift-app`](https://github.com/doob9p/drift-app) (publish owner already set).
-2. Bump `"version"` in [`apps/desktop/package.json`](apps/desktop/package.json) (and root if you keep them in sync).
-3. Export a token that can create releases:
+1. [`apps/desktop/package.json`](apps/desktop/package.json) (및 루트) `"version"` 올리기
+2. `export GH_TOKEN=ghp_...`
+3. 로컬 확인: `npm run dist:mac`
+4. 배포: `npm run release:mac`
 
-```bash
-export GH_TOKEN=ghp_...
-```
+포함되어야 하는 산출물:
 
-4. Build locally (no upload):
+- `Drift-*-mac-*.dmg` (설치)
+- `Drift-*-mac-*.zip` (자동 업데이트)
+- `latest-mac.yml`
 
-```bash
-npm run dist:mac
-```
-
-5. Build and publish to GitHub Releases:
-
-```bash
-npm run release:mac
-```
-
-The macOS release should include at least:
-
-- `Drift-*-mac-*.dmg` (install)
-- `Drift-*-mac-*.zip` (auto-update)
-- `latest-mac.yml` (updater feed)
-
-### Code signing (macOS, later)
-
-This project currently ships **without** Apple Developer ID signing / notarization (`identity: null`). Users may need `xattr -cr` / Gatekeeper workarounds the first time. Add signing + notarization before a wide public launch.
+현재 macOS는 Apple Developer ID 서명·공증 없이 배포됩니다 (`identity: null`).
 
 ## Release (Windows)
 
-Windows installers must be built on Windows (native `node-pty`). From this Mac, use GitHub Actions:
+Windows 설치 파일은 Windows에서 빌드해야 합니다 (`node-pty`). Mac에서는 GitHub Actions를 사용합니다.
+
+- 태그 `v*` push 또는 Actions → **Release Windows** → Run workflow  
+- 워크플로: [`.github/workflows/release-windows.yml`](.github/workflows/release-windows.yml)
+
+로컬 (Windows):
 
 ```bash
-# after pushing a version tag, or manually:
-# Actions → “Release Windows” → Run workflow
-```
-
-Workflow: [`.github/workflows/release-windows.yml`](.github/workflows/release-windows.yml)
-
-On a Windows machine locally:
-
-```bash
-# PowerShell / cmd — GH_TOKEN only needed for release:win
 npm ci
-npm run dist:win          # rebuilds node-pty, then builds NSIS + zip
-npm run release:win       # publish to GitHub Releases (needs GH_TOKEN)
+npm run dist:win
+npm run release:win   # needs GH_TOKEN
 ```
 
-Windows notes:
+산출물:
 
-- Local shell defaults to PowerShell (with OSC 7 cwd tracking).
-- Meeting mic + live transcript use Chromium APIs; transcript may need network and can fall back to notes-only.
-- Cursor usage can read the desktop login DB via built-in `node:sqlite` (no `sqlite3.exe` required).
+- `Drift-*-win-*-setup.exe` / `Drift-*-win-*.exe`
+- `Drift-*-win-*.zip`
+- `latest.yml`
 
-Windows artifacts:
-
-- `Drift-*-win-*-setup.exe` (NSIS installer)
-- `Drift-*-win-*.zip` (portable / updater)
-- `latest.yml` (updater feed)
-
-Unsigned Windows builds may show SmartScreen warnings until Authenticode signing is added.
-
-Packaged apps check for updates on launch (and every 4 hours). When a newer version exists, Drift shows the intro splash: **Later** / **Update** → download progress → **Restart & install**.
+패키지 앱은 실행 시(및 4시간마다) 업데이트를 확인합니다. 새 버전이 있으면 스플래시에서 **나중에** / **업데이트** → 다운로드 → **다시 시작하여 설치** 흐름으로 이어집니다.
 
 ## Notes
 
-- Set your Cursor API key in **Settings** (gear). Stored encrypted in the OS keychain / credential store.
-- SSH sessions can save an encrypted password and/or an SSH key in the Add SSH dialog (generate key, install pubkey on the server with the password once). Key auth is preferred when both are set. Passwords never go into `sessions.json`. Windows builds bundle a portable OpenSSH client so the optional Windows feature is not required (system OpenSSH is still preferred when present).
-- Agent proposes commands → approve once / for session / deny → runs on the active host.
-- Dev mode (`npm run dev`) does not check for updates.
+- Cursor API 키는 **Settings**에서 입력합니다. OS 키체인 / credential store에 암호화 저장됩니다.
+- SSH는 암호화된 비밀번호 및/또는 키를 저장할 수 있습니다. 비밀번호는 `sessions.json`에 들어가지 않습니다. Windows 빌드는 portable OpenSSH를 포함합니다.
+- Dev 모드 (`npm run dev`)에서는 업데이트 확인을 하지 않습니다.
