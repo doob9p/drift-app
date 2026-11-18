@@ -1,5 +1,10 @@
 import { icons } from "./icons.js";
 import { t } from "./i18n.js";
+import {
+  createBoardSnow,
+  type BoardSnow,
+  type BoardSnowOptions,
+} from "./board-snow.js";
 import type {
   BoardCamera,
   BoardCard,
@@ -62,6 +67,11 @@ export type BoardPane = {
   setMinimized: (cardId: string, minimized: boolean) => void;
   findCard: (cardId: string) => BoardCard | undefined;
   removeCard: (cardId: string) => void;
+  setChristmasTheme: (enabled: boolean) => void;
+  setChristmasSnowOptions: (opts: Partial<BoardSnowOptions>) => void;
+  clearChristmasSnow: () => void;
+  arrangeCards: () => void;
+  tileOpenTerminals: () => void;
 };
 
 function uid(prefix: string): string {
@@ -187,6 +197,7 @@ export function createBoardPane(
         <div class="board-chrome-actions">
           <div class="board-zoom-hud" role="group" aria-label="Zoom">
             <button type="button" class="icon ghost" id="btn-board-arrange" data-i18n-title="board.arrange" title="${t("board.arrange")}" aria-label="${t("board.arrange")}">${icons.arrange(14)}</button>
+            <button type="button" class="icon ghost" id="btn-board-tile" data-i18n-title="board.tileTerminals" title="${t("board.tileTerminals")}" aria-label="${t("board.tileTerminals")}">${icons.tileTerminals(14)}</button>
             <button type="button" class="icon ghost" id="btn-board-zoom-out" data-i18n-title="board.zoomOut" title="Zoom out">${icons.zoomOut(14)}</button>
             <button type="button" class="board-zoom-label" id="btn-board-zoom-reset" data-i18n-title="board.zoomReset" title="Reset zoom">100%</button>
             <button type="button" class="icon ghost" id="btn-board-zoom-in" data-i18n-title="board.zoomIn" title="Zoom in">${icons.zoomIn(14)}</button>
@@ -212,6 +223,21 @@ export function createBoardPane(
   const mapToggleBtn = root.querySelector(
     "#btn-board-map-toggle"
   ) as HTMLButtonElement;
+
+  const snow: BoardSnow = createBoardSnow({
+    viewport,
+    world: WORLD,
+    getCamera: () => camera,
+    getRoofs: () =>
+      cards
+        .filter(
+          (c): c is TerminalCard => c.kind === "terminal" && !c.minimized
+        )
+        .map((c) => {
+          const { w, h } = cardSize(c);
+          return { id: c.id, x: c.x, y: c.y, w, h, z: c.z };
+        }),
+  });
 
   function nextZ(): number {
     zCounter += 1;
@@ -584,9 +610,87 @@ export function createBoardPane(
     applyCamera(true);
   }
 
+  /**
+   * Pack open (non-minimized) terminals into the viewport with no gaps —
+   * 1 → full screen, 2 → halves, 3+ → grid (last row stretched to fill).
+   */
+  function tileOpenTerminals(): void {
+    const terms = cards.filter(
+      (c): c is TerminalCard => c.kind === "terminal" && !c.minimized
+    );
+    if (terms.length === 0) return;
+
+    const vw = Math.max(1, viewport.clientWidth);
+    const vh = Math.max(1, viewport.clientHeight);
+    const n = terms.length;
+    const cols = Math.ceil(Math.sqrt(n));
+    const rows = Math.ceil(n / cols);
+
+    // Keep the tile block inside the world canvas at zoom 1.
+    const maxOriginX = Math.max(WORLD.x, WORLD.x + WORLD.w - vw);
+    const maxOriginY = Math.max(WORLD.y, WORLD.y + WORLD.h - vh);
+    const originX = clamp(WORLD.x + 24, WORLD.x, maxOriginX);
+    const originY = clamp(WORLD.y + 24, WORLD.y, maxOriginY);
+
+    camera.zoom = 1;
+    camera.x = -originX;
+    camera.y = -originY;
+
+    for (const card of cards) {
+      if (card.kind === "terminal") {
+        cardEls.get(card.id)?.classList.remove("is-tiled");
+      }
+    }
+
+    for (let i = 0; i < n; i++) {
+      const row = Math.floor(i / cols);
+      const rowStart = row * cols;
+      const itemsInRow = Math.min(cols, n - rowStart);
+      const col = i - rowStart;
+      const cellW = vw / itemsInRow;
+      const cellH = vh / rows;
+      const term = terms[i]!;
+      term.x = originX + col * cellW;
+      term.y = originY + row * cellH;
+      term.w = cellW;
+      term.h = cellH;
+      term.z = nextZ();
+      clampCardInWorld(term);
+    }
+
+    for (const term of terms) {
+      const el = cardEls.get(term.id);
+      el?.classList.add("is-arranging");
+      el?.classList.add("is-tiled");
+    }
+    void surface.offsetWidth;
+    applyCamera(true);
+    for (const term of terms) {
+      layoutCard(term);
+    }
+    window.setTimeout(() => {
+      for (const term of terms) {
+        cardEls.get(term.id)?.classList.remove("is-arranging");
+      }
+    }, 320);
+
+    updateLinks();
+    markMinimapDirty();
+    schedulePersist();
+    root.dispatchEvent(
+      new CustomEvent("board:refit-terminals", { bubbles: true })
+    );
+  }
+
   /** Tidy cards by session: terminal left, linked prompts stacked to the right. */
   function arrangeCards(): void {
     if (cards.length === 0) return;
+
+    for (const card of cards) {
+      if (card.kind === "terminal") {
+        cardEls.get(card.id)?.classList.remove("is-tiled");
+      }
+    }
 
     const GAP_X = 56;
     const GAP_Y = 40;
@@ -887,6 +991,7 @@ export function createBoardPane(
     let startY = 0;
     let originX = 0;
     let originY = 0;
+    let lastCardX = 0;
 
     const onMove = (e: PointerEvent) => {
       if (!dragging) return;
@@ -895,6 +1000,10 @@ export function createBoardPane(
       card.x = originX + (e.clientX - startX) / camera.zoom;
       card.y = originY + (e.clientY - startY) / camera.zoom;
       clampCardInWorld(card);
+      if (card.kind === "terminal" && !card.minimized) {
+        snow.shake(card.id, card.x - lastCardX);
+      }
+      lastCardX = card.x;
       layoutCard(card);
       markMinimapDirty();
     };
@@ -912,10 +1021,12 @@ export function createBoardPane(
       const card = cards.find((c) => c.id === cardId);
       if (!card) return;
       dragging = true;
+      el.classList.remove("is-tiled");
       startX = e.clientX;
       startY = e.clientY;
       originX = card.x;
       originY = card.y;
+      lastCardX = card.x;
       bringToFront(cardId);
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
@@ -955,6 +1066,7 @@ export function createBoardPane(
       const card = cards.find((c) => c.id === cardId);
       if (!card || (card.kind === "terminal" && card.minimized)) return;
       resizing = true;
+      el.classList.remove("is-tiled");
       startX = e.clientX;
       startY = e.clientY;
       originW = card.w;
@@ -1262,6 +1374,8 @@ export function createBoardPane(
     if (!root.isConnected || root.closest(".hidden")) return;
 
     // ⌥⌘←↑→↓ (Ctrl+Alt on Windows): focus nearest card in that direction
+    // Layout shortcuts ⌥⌘A / ⌥⌘S are registered on the app View menu so they
+    // still work while a terminal has focus.
     if (e.altKey && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
       const dirs = {
         ArrowLeft: "left",
@@ -1359,6 +1473,9 @@ export function createBoardPane(
   root.querySelector("#btn-board-arrange")!.addEventListener("click", () => {
     arrangeCards();
   });
+  root.querySelector("#btn-board-tile")!.addEventListener("click", () => {
+    tileOpenTerminals();
+  });
   root.querySelector("#btn-board-zoom-in")!.addEventListener("click", () => {
     zoomByFactor(ZOOM_BTN_STEP);
   });
@@ -1449,6 +1566,7 @@ export function createBoardPane(
     minimizeOtherTerminals(exceptTabId) {
       for (const c of cards) {
         if (c.kind === "terminal" && c.tabId !== exceptTabId) {
+          if (!c.minimized) snow.dump(c.id);
           c.minimized = true;
           layoutCard(c);
         }
@@ -1472,6 +1590,7 @@ export function createBoardPane(
       const removeIds = cards
         .filter((c) => c.tabId === tabId)
         .map((c) => c.id);
+      for (const id of removeIds) snow.dump(id);
       cards = cards.filter((c) => c.tabId !== tabId);
       for (const id of removeIds) removeCardEl(id);
       // Closing the focused terminal clears selection — do not auto-pick
@@ -1650,6 +1769,7 @@ export function createBoardPane(
     setMinimized(cardId, minimized) {
       const card = cards.find((c) => c.id === cardId);
       if (!card || card.kind !== "terminal") return;
+      if (minimized && !card.minimized) snow.dump(cardId);
       card.minimized = minimized;
       layoutCard(card);
       markMinimapDirty();
@@ -1657,6 +1777,21 @@ export function createBoardPane(
     },
     findCard(cardId) {
       return cards.find((c) => c.id === cardId);
+    },
+    setChristmasTheme(enabled) {
+      snow.setEnabled(enabled);
+    },
+    setChristmasSnowOptions(opts) {
+      snow.setOptions(opts);
+    },
+    clearChristmasSnow() {
+      snow.clearAll();
+    },
+    arrangeCards() {
+      arrangeCards();
+    },
+    tileOpenTerminals() {
+      tileOpenTerminals();
     },
     removeCard(cardId) {
       const removeIds = [
@@ -1666,6 +1801,7 @@ export function createBoardPane(
           .map((c) => c.id),
       ];
       if (!cards.some((c) => c.id === cardId)) return;
+      for (const id of removeIds) snow.dump(id);
       cards = cards.filter((c) => !removeIds.includes(c.id));
       for (const id of removeIds) removeCardEl(id);
       if (focus && removeIds.includes(focus.cardId)) {

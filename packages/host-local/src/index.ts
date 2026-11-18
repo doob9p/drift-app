@@ -1,5 +1,5 @@
 import { spawn as ptySpawn, type IPty } from "node-pty";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { readlink } from "node:fs/promises";
 import os from "node:os";
@@ -40,10 +40,97 @@ const STRIP_ENV_KEYS = new Set([
   "CURSOR_SPAWNED_BY_EXTENSION_ID",
   "CURSOR_SPAWN_CHAIN",
   "CI",
+  // Electron/Vite set this for Drift itself; Next.js then warns and prerender
+  // diverges from iTerm ("non-standard NODE_ENV"). Leave unset like a normal shell.
+  "NODE_ENV",
+  "ELECTRON_RUN_AS_NODE",
+  "ELECTRON_NO_ASAR",
+  "ELECTRON_NO_ATTACH_CONSOLE",
+  "VITE_DEV_SERVER_URL",
+  "VITE_CJS_IGNORE_WARNING",
+  // npm/pnpm lifecycle — otherwise interactive PATH picks up this repo's bins.
+  "INIT_CWD",
+  "NODE_PATH",
+  "npm_config_prefix",
+  "npm_config_globalconfig",
+  "npm_config_userconfig",
+  "npm_config_cache",
+  "npm_config_node_gyp",
+  "npm_lifecycle_event",
+  "npm_lifecycle_script",
+  "npm_package_name",
+  "npm_package_version",
+  "npm_package_json",
+  "PNPM_SCRIPT_SRC_DIR",
+  "PNPM_PACKAGE_NAME",
+  "npm_command",
+  "npm_execpath",
+  "npm_node_execpath",
 ]);
+const STRIP_ENV_PREFIXES = ["npm_package_", "npm_config_", "npm_node_", "ELECTRON_"];
+/** PATH entries injected while Drift itself was started via npm/pnpm. */
+const PATH_POLLUTION_RE =
+  /(?:^|[/\\])node_modules[/\\]\.bin(?:$|[/\\])|(?:^|[/\\])node-gyp-bin(?:$|[/\\])/i;
 
 function isWin(): boolean {
   return process.platform === "win32";
+}
+
+function pathSep(): string {
+  return isWin() ? ";" : ":";
+}
+
+/** Drop npm/pnpm lifecycle bins and keep first-seen order (iTerm-like). */
+function scrubPathValue(raw: string): string {
+  const sep = pathSep();
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of raw.split(sep)) {
+    if (!part) continue;
+    if (PATH_POLLUTION_RE.test(part)) continue;
+    const key = isWin() ? part.toLowerCase() : part;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(part);
+  }
+  return out.join(sep);
+}
+
+let cachedLoginPath: string | null | undefined;
+
+/**
+ * PATH as a fresh login shell would see it — not Electron/npm's polluted PATH.
+ * Cached: login startup is slow and stable for the app lifetime.
+ */
+function resolveLoginPath(): string | null {
+  if (cachedLoginPath !== undefined) return cachedLoginPath;
+  if (isWin()) {
+    cachedLoginPath = null;
+    return null;
+  }
+  const shell = process.env.SHELL || "/bin/zsh";
+  try {
+    const home = os.homedir();
+    const user = os.userInfo().username;
+    const result = spawnSync(shell, ["-l", "-c", "printenv PATH"], {
+      encoding: "utf8",
+      timeout: 8000,
+      env: {
+        HOME: home,
+        USER: user,
+        LOGNAME: user,
+        SHELL: shell,
+        TERM: "xterm-256color",
+        // Minimal PATH so the login scripts rebuild like Terminal/iTerm.
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      },
+    });
+    const pathOut = (result.stdout || "").trim();
+    cachedLoginPath = result.status === 0 && pathOut ? scrubPathValue(pathOut) : null;
+  } catch {
+    cachedLoginPath = null;
+  }
+  return cachedLoginPath;
 }
 
 function cleanEnv(): Record<string, string> {
@@ -54,9 +141,19 @@ function cleanEnv(): Record<string, string> {
     // shells then hit empty caches (e.g. "==> Downloading Homebrew API data")
     // while iTerm uses ~/Library/Caches/Homebrew and looks fine.
     if (STRIP_ENV_KEYS.has(key) || SANDBOX_ENV_RE.test(value)) continue;
+    if (STRIP_ENV_PREFIXES.some((p) => key.startsWith(p))) continue;
     env[key] = value;
   }
-  if (!env.PATH && !env.Path) {
+
+  const pathKey = isWin() && env.Path && !env.PATH ? "Path" : "PATH";
+  const inherited = env.PATH || env.Path || "";
+  const loginPath = resolveLoginPath();
+  if (loginPath) {
+    env.PATH = loginPath;
+    if (isWin() && env.Path) delete env.Path;
+  } else if (inherited) {
+    env[pathKey] = scrubPathValue(inherited);
+  } else {
     env.PATH = isWin()
       ? [
           process.env.SystemRoot
@@ -71,6 +168,7 @@ function cleanEnv(): Record<string, string> {
           .join(";")
       : "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
   }
+
   // Electron/Cursor often sets TERM=dumb; a real PTY needs a usable TERM.
   if (!env.TERM || env.TERM === "dumb") env.TERM = "xterm-256color";
   if (!env.HOME) env.HOME = os.homedir();
@@ -205,11 +303,33 @@ function prepareUnixShellEnv(shell: string, id: string, env: Record<string, stri
 
   const zdot = path.join(os.tmpdir(), `drift-zsh-${id}`);
   mkdirSync(zdot, { recursive: true });
+  // ZDOTDIR would default HISTFILE to $ZDOTDIR/.zsh_history (empty each session).
+  // Pin to the user's real history so ↑ / autosuggest match Terminal.app.
   writeFileSync(
     path.join(zdot, ".zshrc"),
     [
-      // Source user config first (oh-my-zsh may reset precmd hooks).
+      // Prefer the usual home history before user config runs.
+      'if [[ -f "$HOME/.zsh_history" ]]; then',
+      '  HISTFILE="$HOME/.zsh_history"',
+      'elif [[ -f "$HOME/.zhistory" ]]; then',
+      '  HISTFILE="$HOME/.zhistory"',
+      "else",
+      '  HISTFILE="$HOME/.zsh_history"',
+      "fi",
+      // Source user config (oh-my-zsh may reset precmd hooks / HISTFILE).
       '[[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"',
+      // If user config left HISTFILE under our temp ZDOTDIR, put it back.
+      'if [[ -z "$HISTFILE" || "$HISTFILE" == "$ZDOTDIR"* ]]; then',
+      '  if [[ -f "$HOME/.zsh_history" ]]; then',
+      '    HISTFILE="$HOME/.zsh_history"',
+      '  elif [[ -f "$HOME/.zhistory" ]]; then',
+      '    HISTFILE="$HOME/.zhistory"',
+      "  else",
+      '    HISTFILE="$HOME/.zsh_history"',
+      "  fi",
+      "fi",
+      // Reload global history into this interactive shell.
+      '[[ -f "$HISTFILE" ]] && fc -R "$HISTFILE" 2>/dev/null || true',
       // Powerline prompts (agnoster) glitch on wrap if RPROMPT indent is off.
       "ZLE_RPROMPT_INDENT=${ZLE_RPROMPT_INDENT:-0}",
       // Emit OSC 7 after omz so cwd tracking survives theme init.
@@ -224,6 +344,11 @@ function prepareUnixShellEnv(shell: string, id: string, env: Record<string, stri
   writeFileSync(
     path.join(zdot, ".zprofile"),
     '[[ -f "$HOME/.zprofile" ]] && source "$HOME/.zprofile"\n',
+    "utf8"
+  );
+  writeFileSync(
+    path.join(zdot, ".zshenv"),
+    '[[ -f "$HOME/.zshenv" ]] && source "$HOME/.zshenv"\n',
     "utf8"
   );
   env.ZDOTDIR = zdot;

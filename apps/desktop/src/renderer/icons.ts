@@ -45,6 +45,7 @@ import {
   BotMessageSquare,
   Grid2x2,
   GitBranch,
+  Columns2,
 } from "lucide";
 
 type IconOpts = {
@@ -124,5 +125,7 @@ export const icons = {
   /** Open / attach an AI prompt card. */
   addPrompt: (size = 14) => lucideSvg(BotMessageSquare, { size }),
   arrange: (size = 14) => lucideSvg(Grid2x2, { size }),
+  /** Tile open terminals to fill the viewport with no gaps. */
+  tileTerminals: (size = 14) => lucideSvg(Columns2, { size }),
   addSub: (size = 14) => lucideSvg(GitBranch, { size }),
 };

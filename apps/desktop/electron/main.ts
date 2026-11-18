@@ -150,11 +150,21 @@ const pendingApprovals = new Map<
 >();
 /** In-flight agent turns keyed by Drift runId. */
 const activeAgentRuns = new Map<string, AbortController>();
+function clampUnit(value: unknown, fallback: number): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(1, Math.max(0, n));
+}
+
 let appSettings: AppSettings = {
   modelId: "composer-2.5",
   chatMode: "agent",
   locale: "ko",
   localShell: "powershell",
+  christmasTheme: false,
+  christmasSnowAmount: 0.55,
+  christmasSnowSpeed: 0.5,
+  christmasSnowSmooth: false,
 };
 
 function normalizeLocalShell(value: unknown): LocalShellId {
@@ -295,6 +305,10 @@ async function loadSettings(): Promise<AppSettings> {
       chatMode: normalizeChatMode(parsed.chatMode),
       locale: normalizeLocale(parsed.locale),
       localShell: normalizeLocalShell(parsed.localShell),
+      christmasTheme: parsed.christmasTheme === true,
+      christmasSnowAmount: clampUnit(parsed.christmasSnowAmount, 0.55),
+      christmasSnowSpeed: clampUnit(parsed.christmasSnowSpeed, 0.5),
+      christmasSnowSmooth: parsed.christmasSnowSmooth === true,
     };
   } catch {
     return {
@@ -302,6 +316,10 @@ async function loadSettings(): Promise<AppSettings> {
       chatMode: "agent",
       locale: "ko",
       localShell: "powershell",
+      christmasTheme: false,
+      christmasSnowAmount: 0.55,
+      christmasSnowSpeed: 0.5,
+      christmasSnowSmooth: false,
     };
   }
 }
@@ -463,6 +481,17 @@ function buildApplicationMenu(): void {
         label: "Zoom Out",
         accelerator: "CmdOrCtrl+-",
         click: () => nudgeWindowZoom(-0.1),
+      },
+      { type: "separator" },
+      {
+        label: "Arrange Cards",
+        accelerator: "Alt+CmdOrCtrl+A",
+        click: () => sendShortcut("arrange-cards"),
+      },
+      {
+        label: "Tile Terminals",
+        accelerator: "Alt+CmdOrCtrl+S",
+        click: () => sendShortcut("tile-terminals"),
       },
       { type: "separator" },
       { role: "reload" },
@@ -1678,6 +1707,46 @@ function registerIpc(): void {
       await saveSettings({
         ...appSettings,
         localShell: normalizeLocalShell(shell),
+      });
+      return appSettings;
+    }
+  );
+
+  ipcMain.handle(
+    "settings:set-christmas-theme",
+    async (_e, enabled: unknown) => {
+      await saveSettings({
+        ...appSettings,
+        christmasTheme: enabled === true,
+      });
+      return appSettings;
+    }
+  );
+
+  ipcMain.handle(
+    "settings:set-christmas-snow",
+    async (
+      _e,
+      patch: {
+        amount?: unknown;
+        speed?: unknown;
+        smooth?: unknown;
+      }
+    ) => {
+      await saveSettings({
+        ...appSettings,
+        christmasSnowAmount:
+          patch?.amount === undefined
+            ? appSettings.christmasSnowAmount
+            : clampUnit(patch.amount, appSettings.christmasSnowAmount),
+        christmasSnowSpeed:
+          patch?.speed === undefined
+            ? appSettings.christmasSnowSpeed
+            : clampUnit(patch.speed, appSettings.christmasSnowSpeed),
+        christmasSnowSmooth:
+          patch?.smooth === undefined
+            ? appSettings.christmasSnowSmooth
+            : patch.smooth === true,
       });
       return appSettings;
     }

@@ -1221,6 +1221,185 @@ body.is-resizing-col {
   font-weight: 400;
 }
 
+.settings-toggle-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 0.15rem 0.15rem;
+  cursor: pointer;
+}
+
+.settings-toggle-copy {
+  display: grid;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.settings-toggle-copy > span:first-child {
+  color: var(--text-2);
+  font-size: 0.78rem;
+  font-weight: 560;
+  letter-spacing: -0.01em;
+}
+
+.settings-toggle-row .settings-hint {
+  display: block;
+  margin: 0;
+  font-size: 0.7rem;
+  line-height: 1.45;
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.settings-toggle {
+  appearance: none;
+  position: relative;
+  width: 40px;
+  height: 22px;
+  margin: 0.1rem 0 0;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.settings-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text) 78%, white);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.settings-toggle:checked {
+  background: color-mix(in srgb, #c23b3b 72%, var(--panel));
+  border-color: color-mix(in srgb, #c23b3b 55%, transparent);
+}
+
+.settings-toggle:checked::after {
+  transform: translateX(18px);
+  background: #fff;
+}
+
+.settings-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, #c23b3b 55%, transparent);
+  outline-offset: 2px;
+}
+
+.settings-snow-controls {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0.15rem 0 0.35rem;
+  padding: 0.55rem 0.65rem 0.7rem;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  background: color-mix(in srgb, var(--text) 3.5%, transparent);
+}
+
+.settings-snow-controls[hidden] {
+  display: none;
+}
+
+.settings-snow-slider {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.settings-snow-slider-label {
+  color: var(--text-2);
+  font-size: 0.74rem;
+  font-weight: 560;
+  letter-spacing: -0.01em;
+}
+
+.settings-snow-slider-track {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.settings-snow-end {
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  user-select: none;
+}
+
+.settings-snow-slider-track input[type="range"] {
+  width: 100%;
+  accent-color: color-mix(in srgb, #c23b3b 78%, #fff);
+  cursor: pointer;
+}
+
+.settings-snow-smooth {
+  padding: 0.15rem 0 0;
+}
+
+.settings-snow-clear {
+  justify-self: start;
+  margin-top: 0.1rem;
+  padding: 0.38rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text-2);
+  font-size: 0.74rem;
+  font-weight: 540;
+  cursor: pointer;
+}
+
+.settings-snow-clear:hover {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--text);
+}
+
+.board-snow-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Falling / ground snow sits behind terminal cards. */
+.board-snow-back {
+  z-index: 1;
+}
+
+/* Roof piles + snowmen sit on top of card chrome only. */
+.board-snow-front {
+  z-index: 3;
+}
+
+.board-viewport.is-christmas {
+  background:
+    radial-gradient(
+      900px 480px at 50% -8%,
+      rgba(180, 40, 40, 0.1),
+      transparent 55%
+    ),
+    radial-gradient(
+      700px 420px at 88% 12%,
+      rgba(40, 110, 70, 0.08),
+      transparent 50%
+    ),
+    color-mix(in srgb, var(--panel) 40%, var(--chrome));
+}
+
+.board-viewport.is-christmas .board-grid {
+  opacity: 0.32;
+}
+
+.board-viewport.is-christmas.is-snow-gather {
+  cursor: grab;
+}
+
 .settings-key-help {
   display: grid;
   gap: 0.45rem;
@@ -2249,7 +2428,16 @@ body.is-resizing-col {
 }
 
 .board-card.is-arranging {
-  transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition:
+    transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+    height 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Flush pane look after “tile terminals”. */
+.board-card.board-card-terminal.is-tiled {
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .board-card.is-focused {

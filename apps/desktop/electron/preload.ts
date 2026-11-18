@@ -75,6 +75,12 @@ export type DesktopApi = {
   setChatMode: (mode: ChatMode) => Promise<AppSettings>;
   setLocale: (locale: AppLocale) => Promise<AppSettings>;
   setLocalShell: (shell: LocalShellId) => Promise<AppSettings>;
+  setChristmasTheme: (enabled: boolean) => Promise<AppSettings>;
+  setChristmasSnow: (patch: {
+    amount?: number;
+    speed?: number;
+    smooth?: boolean;
+  }) => Promise<AppSettings>;
   listLocalShells: () => Promise<{
     platform: string;
     current: LocalShellId;
@@ -537,6 +543,10 @@ const api: DesktopApi = {
   setLocale: (locale) => ipcRenderer.invoke("settings:set-locale", locale),
   setLocalShell: (shell) =>
     ipcRenderer.invoke("settings:set-local-shell", shell),
+  setChristmasTheme: (enabled) =>
+    ipcRenderer.invoke("settings:set-christmas-theme", enabled),
+  setChristmasSnow: (patch) =>
+    ipcRenderer.invoke("settings:set-christmas-snow", patch),
   listLocalShells: () => ipcRenderer.invoke("settings:list-local-shells"),
   listModels: () => ipcRenderer.invoke("settings:list-models"),
   getBoard: () => ipcRenderer.invoke("board:get"),

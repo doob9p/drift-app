@@ -158,6 +158,10 @@ const state = {
   chatMode: "agent" as ChatMode,
   locale: "ko" as AppLocale,
   localShell: "powershell" as LocalShellId,
+  christmasTheme: false,
+  christmasSnowAmount: 0.55,
+  christmasSnowSpeed: 0.5,
+  christmasSnowSmooth: false,
   models: [] as ModelOption[],
   lastUsage: null as TokenUsageSnapshot | null,
   lastCostCents: null as number | null,
@@ -375,6 +379,69 @@ app.innerHTML = `
                   >Applies to newly opened local terminals.</span
                 >
               </label>
+              <label class="settings-toggle-row" for="settings-christmas-theme">
+                <span class="settings-toggle-copy">
+                  <span data-i18n="settings.christmasTheme">Christmas board theme</span>
+                  <span class="settings-hint" data-i18n="settings.christmasThemeHint"
+                    >Move mouse to sweep snow. ⌥ + move to make a snowball. Bump two balls to build a snowman.</span
+                  >
+                </span>
+                <input
+                  type="checkbox"
+                  id="settings-christmas-theme"
+                  class="settings-toggle"
+                />
+              </label>
+              <div class="settings-snow-controls" id="settings-snow-controls" hidden>
+                <label class="settings-snow-slider" for="settings-snow-amount">
+                  <span class="settings-snow-slider-label" data-i18n="settings.christmasSnowAmount">Amount</span>
+                  <div class="settings-snow-slider-track">
+                    <span class="settings-snow-end low" aria-hidden="true">···</span>
+                    <input
+                      type="range"
+                      id="settings-snow-amount"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value="55"
+                    />
+                    <span class="settings-snow-end high" aria-hidden="true">••••</span>
+                  </div>
+                </label>
+                <label class="settings-snow-slider" for="settings-snow-speed">
+                  <span class="settings-snow-slider-label" data-i18n="settings.christmasSnowSpeed">Speed</span>
+                  <div class="settings-snow-slider-track">
+                    <span class="settings-snow-end low" aria-hidden="true">›</span>
+                    <input
+                      type="range"
+                      id="settings-snow-speed"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value="50"
+                    />
+                    <span class="settings-snow-end high" aria-hidden="true">»</span>
+                  </div>
+                </label>
+                <label class="settings-toggle-row settings-snow-smooth" for="settings-snow-smooth">
+                  <span class="settings-toggle-copy">
+                    <span data-i18n="settings.christmasSnowSmooth">Smoother (uses more CPU)</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    id="settings-snow-smooth"
+                    class="settings-toggle"
+                  />
+                </label>
+                <button
+                  type="button"
+                  class="settings-snow-clear"
+                  id="btn-clear-snow"
+                  data-i18n="settings.christmasSnowClear"
+                >
+                  Clear all snow
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -582,6 +649,24 @@ const els = {
   settingsLocalShell: document.getElementById(
     "settings-local-shell"
   ) as HTMLSelectElement,
+  settingsChristmasTheme: document.getElementById(
+    "settings-christmas-theme"
+  ) as HTMLInputElement,
+  settingsSnowControls: document.getElementById(
+    "settings-snow-controls"
+  ) as HTMLElement,
+  settingsSnowAmount: document.getElementById(
+    "settings-snow-amount"
+  ) as HTMLInputElement,
+  settingsSnowSpeed: document.getElementById(
+    "settings-snow-speed"
+  ) as HTMLInputElement,
+  settingsSnowSmooth: document.getElementById(
+    "settings-snow-smooth"
+  ) as HTMLInputElement,
+  btnClearSnow: document.getElementById(
+    "btn-clear-snow"
+  ) as HTMLButtonElement,
   modePopover: document.getElementById("mode-popover")!,
   modeTip: document.getElementById("mode-tip")!,
   composerPopovers: document.getElementById("composer-popovers")!,
@@ -787,6 +872,8 @@ function applyUiLocale(): void {
   if (!els.settingsShellRow.hidden) {
     els.settingsLocalShell.value = state.localShell;
   }
+  els.settingsChristmasTheme.checked = state.christmasTheme;
+  syncSnowControlsUi();
   if (board) {
     applyDomI18n(board.root);
     for (const card of board.getCards()) {
@@ -2039,6 +2126,10 @@ board.root.addEventListener("board:add-prompt", ((e: CustomEvent<{ tabId: string
   attachPromptCard(board.addPrompt(tabId));
 }) as EventListener);
 
+board.root.addEventListener("board:refit-terminals", () => {
+  requestAnimationFrame(() => refitTerminals());
+});
+
 /** Keep xterm + PTY sizes locked together — never resize one without the other. */
 function syncTerminalSize(tab: TabView, opts?: { force?: boolean }): void {
   if (!isTabTerminalExpanded(tab.id)) return;
@@ -2396,6 +2487,12 @@ function handleShortcut(payload: {
     case "refit-terminals":
       requestAnimationFrame(() => refitTerminals());
       break;
+    case "arrange-cards":
+      board.arrangeCards();
+      break;
+    case "tile-terminals":
+      board.tileOpenTerminals();
+      break;
     default:
       break;
   }
@@ -2422,6 +2519,100 @@ async function ensureActiveLocalTab(): Promise<TabView> {
     : undefined;
   if (!tab || tab.kind !== "local") throw new Error("No local terminal tab");
   return tab;
+}
+
+/**
+ * Board surface uses CSS `transform: scale(zoom)`. xterm maps mouse with
+ * getBoundingClientRect (scaled) / css.cell (unscaled), so selection lands
+ * on the wrong row/col whenever zoom ≠ 1. Recompute in layout space.
+ */
+function patchXtermMouseForCssTransform(term: Terminal): void {
+  type RenderDims = {
+    dimensions: {
+      css: {
+        cell: { width: number; height: number };
+        canvas: { width: number; height: number };
+      };
+    };
+  };
+  type MouseSvc = {
+    getCoords: (
+      event: MouseEvent,
+      element: HTMLElement,
+      colCount: number,
+      rowCount: number,
+      isSelection?: boolean
+    ) => [number, number] | undefined;
+    getMouseReportCoords: (
+      event: MouseEvent,
+      element: HTMLElement
+    ) =>
+      | { col: number; row: number; x: number; y: number }
+      | undefined;
+    _renderService: RenderDims;
+    _charSizeService: { hasValidSize: boolean };
+  };
+  const core = (
+    term as unknown as {
+      _core?: { _mouseService?: MouseSvc; _charSizeService?: { hasValidSize: boolean } };
+    }
+  )._core;
+  const mouse = core?._mouseService;
+  if (!mouse) return;
+
+  const cssScale = (el: HTMLElement): number => {
+    const layout = el.offsetWidth;
+    if (layout <= 0) return 1;
+    const visual = el.getBoundingClientRect().width;
+    const s = visual / layout;
+    return Number.isFinite(s) && s > 0.01 ? s : 1;
+  };
+
+  const localPoint = (
+    event: MouseEvent,
+    element: HTMLElement
+  ): { x: number; y: number } => {
+    const scale = cssScale(element);
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    const padL = parseInt(style.paddingLeft, 10) || 0;
+    const padT = parseInt(style.paddingTop, 10) || 0;
+    // rect is scaled; computed padding is layout px — scale padding to match, then unscale.
+    return {
+      x: (event.clientX - rect.left - padL * scale) / scale,
+      y: (event.clientY - rect.top - padT * scale) / scale,
+    };
+  };
+
+  mouse.getCoords = (event, element, colCount, rowCount, isSelection) => {
+    if (!mouse._charSizeService.hasValidSize) return undefined;
+    const { x, y } = localPoint(event, element);
+    const cellW = mouse._renderService.dimensions.css.cell.width;
+    const cellH = mouse._renderService.dimensions.css.cell.height;
+    if (cellW <= 0 || cellH <= 0) return undefined;
+    let col = Math.ceil((x + (isSelection ? cellW / 2 : 0)) / cellW);
+    let row = Math.ceil(y / cellH);
+    col = Math.min(Math.max(col, 1), colCount + (isSelection ? 1 : 0));
+    row = Math.min(Math.max(row, 1), rowCount);
+    return [col, row];
+  };
+
+  mouse.getMouseReportCoords = (event, element) => {
+    if (!mouse._charSizeService.hasValidSize) return undefined;
+    const pt = localPoint(event, element);
+    const cellW = mouse._renderService.dimensions.css.cell.width;
+    const cellH = mouse._renderService.dimensions.css.cell.height;
+    const canvasW = mouse._renderService.dimensions.css.canvas.width;
+    const canvasH = mouse._renderService.dimensions.css.canvas.height;
+    const x = Math.min(Math.max(pt.x, 0), canvasW - 1);
+    const y = Math.min(Math.max(pt.y, 0), canvasH - 1);
+    return {
+      col: Math.floor(x / cellW),
+      row: Math.floor(y / cellH),
+      x: Math.floor(x),
+      y: Math.floor(y),
+    };
+  };
 }
 
 /** Show the xterm scrollbar only while content overflows and the user hovers/scrolls. */
@@ -2508,6 +2699,7 @@ function mountTabView(
   term.loadAddon(unicode11);
   term.loadAddon(new WebLinksAddon());
   term.open(el);
+  patchXtermMouseForCssTransform(term);
   try {
     // Hangul etc. must be width 2 like macOS zsh wcwidth, or wraps corrupt the prompt.
     term.unicode.activeVersion = "11";
@@ -3436,6 +3628,81 @@ els.apiKeyInput.addEventListener("keydown", (e) => {
 els.settingsLocale.onchange = () => {
   void applyLocale(normalizeLocale(els.settingsLocale.value));
 };
+function clampUnitUi(n: number, fallback: number): number {
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(1, Math.max(0, n));
+}
+
+function syncSnowControlsUi(): void {
+  const on = state.christmasTheme;
+  els.settingsSnowControls.hidden = !on;
+  els.settingsSnowControls.classList.toggle("is-open", on);
+  els.settingsSnowAmount.value = String(
+    Math.round(state.christmasSnowAmount * 100)
+  );
+  els.settingsSnowSpeed.value = String(
+    Math.round(state.christmasSnowSpeed * 100)
+  );
+  els.settingsSnowSmooth.checked = state.christmasSnowSmooth;
+}
+
+function applySnowOptionsToBoard(): void {
+  board?.setChristmasSnowOptions({
+    amount: state.christmasSnowAmount,
+    speed: state.christmasSnowSpeed,
+    smooth: state.christmasSnowSmooth,
+  });
+}
+
+els.settingsChristmasTheme.onchange = async () => {
+  const enabled = els.settingsChristmasTheme.checked;
+  state.christmasTheme = enabled;
+  syncSnowControlsUi();
+  board.setChristmasTheme(enabled);
+  if (enabled) applySnowOptionsToBoard();
+  await api.setChristmasTheme(enabled);
+  chat.addSystem(
+    enabled
+      ? t("settings.christmasThemeOn")
+      : t("settings.christmasThemeOff")
+  );
+};
+
+let snowPatchTimer: number | undefined;
+function queueSnowPatch(patch: {
+  amount?: number;
+  speed?: number;
+  smooth?: boolean;
+}): void {
+  applySnowOptionsToBoard();
+  window.clearTimeout(snowPatchTimer);
+  snowPatchTimer = window.setTimeout(() => {
+    void api.setChristmasSnow(patch);
+  }, 180);
+}
+
+els.settingsSnowAmount.oninput = () => {
+  state.christmasSnowAmount = clampUnitUi(
+    Number(els.settingsSnowAmount.value) / 100,
+    state.christmasSnowAmount
+  );
+  queueSnowPatch({ amount: state.christmasSnowAmount });
+};
+els.settingsSnowSpeed.oninput = () => {
+  state.christmasSnowSpeed = clampUnitUi(
+    Number(els.settingsSnowSpeed.value) / 100,
+    state.christmasSnowSpeed
+  );
+  queueSnowPatch({ speed: state.christmasSnowSpeed });
+};
+els.settingsSnowSmooth.onchange = () => {
+  state.christmasSnowSmooth = els.settingsSnowSmooth.checked;
+  queueSnowPatch({ smooth: state.christmasSnowSmooth });
+};
+els.btnClearSnow.onclick = () => {
+  board.clearChristmasSnow();
+  chat.addSystem(t("settings.christmasSnowCleared"));
+};
 els.settingsLocalShell.onchange = async () => {
   const next = els.settingsLocalShell.value as LocalShellId;
   if (next !== "powershell" && next !== "cmd" && next !== "gitbash") return;
@@ -3786,6 +4053,13 @@ void (async () => {
       settings.localShell === "cmd" || settings.localShell === "gitbash"
         ? settings.localShell
         : "powershell";
+    state.christmasTheme = settings.christmasTheme === true;
+    state.christmasSnowAmount = clampUnitUi(
+      settings.christmasSnowAmount,
+      0.55
+    );
+    state.christmasSnowSpeed = clampUnitUi(settings.christmasSnowSpeed, 0.5);
+    state.christmasSnowSmooth = settings.christmasSnowSmooth === true;
     setLocale(state.locale);
     const status = await api.getApiKeyStatus();
     state.hasKey = status.hasKey;
@@ -3816,6 +4090,8 @@ void (async () => {
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
     await openLocal();
     restoreSavedPrompts(savedBoard);
+    applySnowOptionsToBoard();
+    board.setChristmasTheme(state.christmasTheme);
     refreshStatusStrip();
     void refreshStripMetrics();
     void refreshAccountUsage();

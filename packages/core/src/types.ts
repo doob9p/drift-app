@@ -141,6 +141,14 @@ export interface AppSettings {
   locale: AppLocale;
   /** Preferred Windows local shell. Default: powershell. */
   localShell: LocalShellId;
+  /** Seasonal board snow / Christmas overlay. Default: false. */
+  christmasTheme: boolean;
+  /** Snowfall amount 0–1 (SnowDesk-style). Default: 0.55. */
+  christmasSnowAmount: number;
+  /** Snowfall speed 0–1. Default: 0.5. */
+  christmasSnowSpeed: number;
+  /** Higher-quality snow (more CPU). Default: false. */
+  christmasSnowSmooth: boolean;
 }
 
 export interface TabState {
