@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>Drift demo — board</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
+    />
+    <style>
+      :root {
+        --chrome: #0b0d11;
+        --panel: #11141a;
+        --panel-2: #151922;
+        --elevated: #1a1f28;
+        --line: rgba(255, 255, 255, 0.06);
+        --text: #f2f4f6;
+        --text-2: #8b95a1;
+        --text-3: #6b7684;
+        --accent: #4f8fca;
+        --ok: #3dbf7a;
+        --term: #0c0e12;
+        --rail: 52px;
+        --sidebar: 260px;
+        --font: "Pretendard Variable", Pretendard, -apple-system, sans-serif;
+        --mono: ui-monospace, Menlo, Consolas, monospace;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: #000; }
+      body {
+        display: grid;
+        place-items: center;
+        font-family: var(--font);
+        color: var(--text);
+      }
+      .frame {
+        width: 1280px;
+        height: 800px;
+        display: grid;
+        grid-template-columns: var(--rail) var(--sidebar) 1fr;
+        background: var(--chrome);
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 24px 64px rgba(0,0,0,.55);
+      }
+      .rail {
+        background: #080a0e;
+        border-right: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        padding: 14px 0;
+      }
+      .rail img { width: 28px; height: 28px; border-radius: 7px; }
+      .rail i {
+        width: 10px; height: 10px; border-radius: 50%;
+        background: #2a3140;
+      }
+      .rail i.on {
+        background: var(--accent);
+        box-shadow: 0 0 0 3px rgba(79,143,202,.22);
+      }
+      .side {
+        background: var(--panel);
+        border-right: 1px solid var(--line);
+        padding: 14px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .side-actions { display: grid; gap: 8px; }
+      .btn {
+        display: flex; align-items: center; justify-content: center;
+        min-height: 36px; border-radius: 10px; font-size: 13px; font-weight: 700;
+      }
+      .btn.primary { background: var(--accent); color: #fff; }
+      .btn.ghost {
+        background: var(--elevated); color: var(--text-2);
+        border: 1px solid var(--line);
+      }
+      .label {
+        margin: 10px 2px 4px; font-size: 11px; font-weight: 700;
+        letter-spacing: .04em; text-transform: uppercase; color: var(--text-3);
+      }
+      .host {
+        padding: 10px 10px; border-radius: 10px; background: var(--elevated);
+        border: 1px solid transparent;
+      }
+      .host.active { border-color: rgba(79,143,202,.35); background: rgba(79,143,202,.1); }
+      .host b { display: block; font-size: 13px; }
+      .host span { font-size: 11px; color: var(--text-3); }
+      .main {
+        display: grid;
+        grid-template-rows: 40px 1fr;
+        min-width: 0;
+      }
+      .top {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 0 14px; border-bottom: 1px solid var(--line);
+        background: var(--panel);
+        font-size: 12px; color: var(--text-2);
+      }
+      .top strong { color: var(--text); }
+      .stats { display: flex; gap: 14px; }
+      .board {
+        position: relative;
+        background:
+          radial-gradient(900px 480px at 50% -10%, rgba(79,143,202,.08), transparent 55%),
+          var(--chrome);
+        overflow: hidden;
+      }
+      .grid {
+        position: absolute; inset: 0; opacity: .35;
+        background-image:
+          linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+        background-size: 24px 24px;
+      }
+      .card {
+        position: absolute;
+        border-radius: 12px;
+        overflow: hidden;
+        background: var(--panel-2);
+        border: 1px solid rgba(255,255,255,.08);
+        box-shadow: 0 16px 36px rgba(0,0,0,.35);
+        display: grid;
+        grid-template-rows: 34px 1fr;
+      }
+      .card.focus { border-color: rgba(79,143,202,.45); box-shadow: 0 0 0 1px rgba(79,143,202,.2), 0 16px 36px rgba(0,0,0,.35); }
+      .head {
+        display: flex; align-items: center; gap: 8px;
+        padding: 0 10px; background: #171c26; border-bottom: 1px solid var(--line);
+        font-size: 12px; color: var(--text-2);
+      }
+      .dots span {
+        width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 4px;
+        background: #3a4150;
+      }
+      .dots span:nth-child(1){background:#ff5f57}
+      .dots span:nth-child(2){background:#febc2e}
+      .dots span:nth-child(3){background:#28c840}
+      .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .body {
+        padding: 12px 12px 14px;
+        font-family: var(--mono); font-size: 12px; line-height: 1.65;
+        background: var(--term); color: #d7dee8;
+      }
+      .prompt { color: #7eb6e0; }
+      .ok { color: var(--ok); }
+      .dim { color: #6b7684; }
+      .tools {
+        position: absolute; right: 16px; bottom: 14px;
+        display: flex; gap: 8px; z-index: 3;
+      }
+      .tools span {
+        min-height: 28px; padding: 0 12px; border-radius: 8px;
+        display: inline-flex; align-items: center;
+        font-size: 12px; font-weight: 700;
+        background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08);
+        color: #c5ced9;
+      }
+      .a { left: 24px; top: 28px; width: 420px; height: 250px; }
+      .b { left: 460px; top: 42px; width: 360px; height: 230px; }
+      .c { left: 120px; top: 300px; width: 620px; height: 280px; }
+    </style>
+  </head>
+  <body>
+    <div class="frame" id="shot">
+      <aside class="rail">
+        <img src="./app-icon.png" alt="" />
+        <i class="on"></i><i></i><i></i>
+      </aside>
+      <aside class="side">
+        <div class="side-actions">
+          <div class="btn primary">로컬 터미널</div>
+          <div class="btn ghost">SSH 추가</div>
+        </div>
+        <div class="label">호스트</div>
+        <div class="host active"><b>demo-api</b><span>demo@192.0.2.10:22</span></div>
+        <div class="host"><b>staging</b><span>deploy@192.0.2.20:22</span></div>
+        <div class="host"><b>docs</b><span>docs@192.0.2.30:22</span></div>
+      </aside>
+      <section class="main">
+        <div class="top">
+          <div>보드 · <strong>~/demo/app</strong></div>
+          <div class="stats"><span>CPU 12%</span><span>Mem 84 MB</span></div>
+        </div>
+        <div class="board">
+          <div class="grid"></div>
+          <article class="card a focus">
+            <div class="head">
+              <div class="dots"><span></span><span></span><span></span></div>
+              <div class="title">local · demo/app</div>
+            </div>
+            <div class="body">
+              <div><span class="prompt">$</span> npm run dev</div>
+              <div class="dim">VITE v6 ready in 312 ms</div>
+              <div class="ok">➜  Local:   http://127.0.0.1:5173/</div>
+              <div class="dim">➜  press h + enter to show help</div>
+            </div>
+          </article>
+          <article class="card b">
+            <div class="head">
+              <div class="dots"><span></span><span></span><span></span></div>
+              <div class="title">ssh · demo-api</div>
+            </div>
+            <div class="body">
+              <div><span class="prompt">demo@api</span>:~$ uptime</div>
+              <div class="ok">14:02 up 12 days,  3:18,  1 user</div>
+              <div><span class="prompt">demo@api</span>:~$ df -h /</div>
+              <div class="dim">Filesystem  Size  Used  Avail  Use%</div>
+              <div class="dim">/dev/vda1    40G   11G    27G   29%</div>
+            </div>
+          </article>
+          <article class="card c">
+            <div class="head">
+              <div class="dots"><span></span><span></span><span></span></div>
+              <div class="title">Agent · 현재 호스트에서 실행</div>
+            </div>
+            <div class="body" style="font-family:var(--font);font-size:13px;line-height:1.5">
+              <div style="color:#8b95a1;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;margin-bottom:8px">제안</div>
+              <div>배포 전 상태를 확인했어요. 아래 명령을 실행할까요?</div>
+              <div style="margin-top:12px;padding:10px 12px;border-radius:10px;background:#0c0e12;border:1px solid rgba(255,255,255,.06);font-family:var(--mono);font-size:12px;color:#9ec9ea">uptime && df -h /</div>
+              <div style="display:flex;gap:8px;margin-top:12px">
+                <span style="display:inline-flex;align-items:center;min-height:30px;padding:0 12px;border-radius:10px;background:var(--accent);color:#fff;font-size:12px;font-weight:700">승인</span>
+                <span style="display:inline-flex;align-items:center;min-height:30px;padding:0 12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);color:#8b95a1;font-size:12px;font-weight:700">수정</span>
+              </div>
+            </div>
+          </article>
+          <div class="tools"><span>타일</span><span>정렬</span></div>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

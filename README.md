@@ -28,6 +28,16 @@
 
 시즌 테마가 켜져 있으면 보드 위 눈도 쌓이고, Option 드래그로 굴릴 수 있습니다.
 
+<p align="center">
+  <img src="docs/assets/screenshot-board.png" alt="Drift board with local, SSH, and agent cards" width="720" />
+</p>
+
+<p align="center">
+  <img src="docs/assets/screenshot-snow.png" alt="Christmas theme snow pile and roll on the board" width="720" />
+</p>
+
+> 스크린샷은 문서용 데모 UI입니다. 호스트·IP·경로는 예시 값입니다.
+
 ## Download
 
 | Platform | 파일 |

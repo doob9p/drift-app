@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>Drift demo — christmas board</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
+    />
+    <style>
+      :root {
+        --chrome: #0b0d11;
+        --panel: #11141a;
+        --panel-2: #151922;
+        --line: rgba(255, 255, 255, 0.06);
+        --text: #f2f4f6;
+        --text-2: #8b95a1;
+        --accent: #4f8fca;
+        --term: #0c0e12;
+        --font: "Pretendard Variable", Pretendard, -apple-system, sans-serif;
+        --mono: ui-monospace, Menlo, Consolas, monospace;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: #000; }
+      body { display: grid; place-items: center; font-family: var(--font); color: var(--text); }
+      .frame {
+        width: 1280px; height: 800px;
+        background: var(--chrome);
+        border-radius: 14px; overflow: hidden;
+        box-shadow: 0 24px 64px rgba(0,0,0,.55);
+        display: grid; grid-template-rows: 44px 1fr;
+      }
+      .bar {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 0 16px; background: #151a22; border-bottom: 1px solid var(--line);
+        font-size: 13px; color: var(--text-2);
+      }
+      .bar strong { color: var(--text); }
+      .pill {
+        display: inline-flex; align-items: center; gap: 6px;
+        min-height: 28px; padding: 0 10px; border-radius: 999px;
+        background: rgba(180,40,40,.16); color: #f0c9c9; font-size: 12px; font-weight: 700;
+      }
+      .board {
+        position: relative; overflow: hidden;
+        background:
+          radial-gradient(900px 480px at 50% -8%, rgba(180,40,40,.12), transparent 55%),
+          radial-gradient(700px 420px at 88% 12%, rgba(40,110,70,.1), transparent 50%),
+          #0d1016;
+      }
+      .grid {
+        position: absolute; inset: 0; opacity: .28;
+        background-image:
+          linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+        background-size: 24px 24px;
+      }
+      .snow { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+      .flake {
+        position: absolute; top: -6%; border-radius: 50%;
+        background: rgba(255,255,255,.9);
+        box-shadow: 0 0 5px rgba(255,255,255,.35);
+        animation: fall linear infinite;
+      }
+      @keyframes fall {
+        from { transform: translate3d(0,0,0); opacity: 0; }
+        10% { opacity: .85; }
+        to { transform: translate3d(var(--dx, 10px), 110vh, 0); opacity: .2; }
+      }
+      .card {
+        position: absolute; z-index: 2;
+        border-radius: 12px; overflow: hidden;
+        background: var(--panel-2);
+        border: 1px solid rgba(255,255,255,.08);
+        box-shadow: 0 16px 36px rgba(0,0,0,.4);
+        display: grid; grid-template-rows: 34px 1fr;
+      }
+      .head {
+        display: flex; align-items: center; gap: 8px; padding: 0 10px;
+        background: #171c26; border-bottom: 1px solid var(--line);
+        font-size: 12px; color: var(--text-2);
+      }
+      .dots span {
+        width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 4px;
+        background: #3a4150;
+      }
+      .dots span:nth-child(1){background:#ff5f57}
+      .dots span:nth-child(2){background:#febc2e}
+      .dots span:nth-child(3){background:#28c840}
+      .body {
+        padding: 12px; font-family: var(--mono); font-size: 12px; line-height: 1.65;
+        background: var(--term); color: #d7dee8;
+      }
+      .prompt { color: #7eb6e0; }
+      .ok { color: #3dbf7a; }
+      .dim { color: #6b7684; }
+      .pile {
+        position: absolute; z-index: 3; left: 0; right: 0; bottom: 0; height: 54px;
+        background: linear-gradient(180deg, transparent, rgba(255,255,255,.08) 30%, rgba(245,248,255,.55));
+        clip-path: polygon(0 40%, 8% 28%, 18% 34%, 30% 22%, 42% 30%, 55% 18%, 68% 26%, 80% 16%, 92% 24%, 100% 20%, 100% 100%, 0 100%);
+      }
+      .ball {
+        position: absolute; z-index: 5; width: 34px; height: 34px; border-radius: 50%;
+        background: radial-gradient(circle at 35% 30%, #fff, #e8eef8 55%, #c9d4e4);
+        box-shadow: 0 6px 14px rgba(0,0,0,.35);
+      }
+      .hint {
+        position: absolute; z-index: 6; left: 24px; bottom: 70px;
+        padding: 8px 12px; border-radius: 10px;
+        background: rgba(15,18,24,.72); border: 1px solid rgba(255,255,255,.08);
+        font-size: 12px; color: #d7dee8; backdrop-filter: blur(8px);
+      }
+      .hint kbd {
+        display: inline-block; padding: 1px 6px; border-radius: 5px;
+        background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12);
+        font-family: var(--mono); font-size: 11px;
+      }
+      .a { left: 48px; top: 56px; width: 460px; height: 280px; }
+      .b { right: 64px; top: 96px; width: 420px; height: 250px; }
+    </style>
+  </head>
+  <body>
+    <div class="frame" id="shot">
+      <div class="bar">
+        <div>보드 · <strong>Christmas theme</strong></div>
+        <div class="pill">❄ 시즌 테마 · Option으로 눈 굴리기</div>
+      </div>
+      <div class="board">
+        <div class="grid"></div>
+        <div class="snow" id="snow"></div>
+        <article class="card a">
+          <div class="head"><div class="dots"><span></span><span></span><span></span></div>local · demo</div>
+          <div class="body">
+            <div><span class="prompt">$</span> git status -sb</div>
+            <div class="ok">## main...origin/main</div>
+            <div class="dim"> M src/app.ts</div>
+            <div><span class="prompt">$</span> npm test</div>
+            <div class="ok">✓ 24 passed</div>
+          </div>
+        </article>
+        <article class="card b">
+          <div class="head"><div class="dots"><span></span><span></span><span></span></div>ssh · staging</div>
+          <div class="body">
+            <div><span class="prompt">demo@stg</span>:~$ systemctl status api</div>
+            <div class="ok">● api.service — active (running)</div>
+            <div class="dim">   Memory: 128.4M</div>
+          </div>
+        </article>
+        <div class="pile"></div>
+        <div class="ball" style="left:210px;bottom:42px"></div>
+        <div class="ball" style="left:560px;bottom:48px;width:46px;height:46px"></div>
+        <div class="hint"><kbd>⌥ Option</kbd> + 가로 드래그로 보드 바닥 눈을 굴리세요</div>
+      </div>
+    </div>
+    <script>
+      const root = document.getElementById("snow");
+      for (let i = 0; i < 40; i++) {
+        const f = document.createElement("i");
+        f.className = "flake";
+        const s = 1.5 + Math.random() * 3;
+        f.style.width = s + "px";
+        f.style.height = s + "px";
+        f.style.left = Math.random() * 100 + "%";
+        f.style.setProperty("--dx", (Math.random() - 0.5) * 50 + "px");
+        f.style.animationDuration = 6 + Math.random() * 10 + "s";
+        f.style.animationDelay = -Math.random() * 12 + "s";
+        root.appendChild(f);
+      }
+    </script>
+  </body>
+</html>
