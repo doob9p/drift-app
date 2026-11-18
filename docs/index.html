@@ -3,15 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Drift — 터미널과 Cursor 에이전트</title>
+    <title>Drift — 보드 위에서 터미널과 에이전트</title>
     <meta
       name="description"
-      content="SSH 세션, Cursor 에이전트, 회의 기록을 한곳에서. Drift를 다운로드하세요."
+      content="터미널 카드를 보드에 펼치고, SSH·로컬 셸·Cursor 에이전트를 한곳에서. Drift를 다운로드하세요."
     />
     <meta property="og:title" content="Drift" />
     <meta
       property="og:description"
-      content="터미널과 Cursor 에이전트가 함께 있는 데스크톱 앱"
+      content="보드 위 터미널과 Cursor 에이전트가 함께 있는 데스크톱 앱"
     />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="./assets/logo-lockup.png" />
@@ -56,9 +56,11 @@
     <main>
       <section class="hero">
         <div class="hero-copy">
-          <h1>터미널 위에서<br />에이전트가 같이 일합니다</h1>
+          <p class="brand-word">Drift</p>
+          <h1>터미널을 보드에 펼치고<br />에이전트와 같이 일하세요</h1>
           <p class="lede">
-            SSH 세션을 저장하고, Cursor 에이전트와 명령을 검토한 뒤 실행하세요.
+            로컬·SSH 세션을 카드로 두고 타일·정렬로 정리합니다. Cursor 에이전트
+            제안은 보고 승인한 뒤 바로 실행하세요.
           </p>
           <div class="cta">
             <a
@@ -93,27 +95,46 @@
                   Drift
                 </p>
               </div>
-              <div class="window-body">
-                <aside class="rail">
-                  <i class="dot on"></i>
-                  <i class="dot"></i>
-                  <i class="dot"></i>
-                </aside>
-                <div class="term">
-                  <p><span class="prompt">~/proj</span> npm run dev</p>
-                  <p class="dim">Local: http://127.0.0.1:5173</p>
-                  <p><span class="prompt">ssh · prod</span> uptime</p>
-                  <p class="ok">14:02 up 42 days</p>
-                  <p class="cursor-line"><span class="blink"></span></p>
-                </div>
-                <div class="agent">
-                  <p class="agent-label">Agent</p>
-                  <p class="agent-msg">배포 전 상태를 확인했어요. 아래 명령을 실행할까요?</p>
-                  <div class="cmd">uptime && df -h /</div>
-                  <div class="agent-actions">
-                    <span class="chip">승인</span>
-                    <span class="chip ghost">수정</span>
+              <div class="board">
+                <div class="snow" id="hero-snow"></div>
+                <article class="card card-a">
+                  <header>
+                    <i></i><i></i><i></i>
+                    <b>local · ~/proj</b>
+                  </header>
+                  <div class="card-body">
+                    <p><span class="prompt">$</span> npm run dev</p>
+                    <p class="dim">Local: http://127.0.0.1:5173</p>
+                    <p class="cursor-line"><span class="blink"></span></p>
                   </div>
+                </article>
+                <article class="card card-b">
+                  <header>
+                    <i></i><i></i><i></i>
+                    <b>ssh · prod</b>
+                  </header>
+                  <div class="card-body">
+                    <p><span class="prompt">$</span> uptime</p>
+                    <p class="ok">14:02 up 42 days</p>
+                  </div>
+                </article>
+                <article class="card card-c">
+                  <header>
+                    <i></i><i></i><i></i>
+                    <b>Agent</b>
+                  </header>
+                  <div class="card-body agent-pane">
+                    <p class="agent-msg">배포 전 상태 확인했어요.</p>
+                    <div class="cmd">uptime && df -h /</div>
+                    <div class="agent-actions">
+                      <span class="chip">승인</span>
+                      <span class="chip ghost">수정</span>
+                    </div>
+                  </div>
+                </article>
+                <div class="board-tools">
+                  <span>타일</span>
+                  <span>정렬</span>
                 </div>
               </div>
             </div>
@@ -122,16 +143,28 @@
       </section>
 
       <section class="features">
-        <h2>필요한 것만, 바로</h2>
-        <p class="features-lede">설치하고 키만 넣으면 시작할 수 있습니다.</p>
+        <h2>보드에서 시작하고, 셸은 익숙하게</h2>
+        <p class="features-lede">
+          설치 후 바로 쓸 수 있는 흐름만 모았습니다.
+        </p>
         <ul class="feature-list">
           <li>
-            <strong>로컬 · SSH 터미널</strong>
-            <span>세션을 저장해 두고 호스트를 바로 전환합니다.</span>
+            <strong>보드 터미널</strong>
+            <span
+              >세션을 카드로 펼치고 타일·정렬로 배치합니다. 시즌 테마에서는 보드
+              위 눈도 굴릴 수 있어요.</span
+            >
+          </li>
+          <li>
+            <strong>로컬 · SSH 셸</strong>
+            <span
+              >로컬은 iTerm에 가까운 PATH·히스토리로, SSH는 저장해 둔 호스트로 바로
+              전환합니다.</span
+            >
           </li>
           <li>
             <strong>Cursor 에이전트</strong>
-            <span>제안된 명령을 보고 승인한 뒤 현재 호스트에서 실행합니다.</span>
+            <span>제안된 명령을 검토·승인한 뒤 현재 호스트에서 실행합니다.</span>
           </li>
           <li>
             <strong>회의 기록</strong>

@@ -96,3 +96,25 @@ async function boot() {
 }
 
 boot();
+
+function spawnHeroSnow() {
+  const root = document.getElementById("hero-snow");
+  if (!root || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    return;
+  }
+  const count = window.innerWidth < 640 ? 14 : 22;
+  for (let i = 0; i < count; i++) {
+    const flake = document.createElement("i");
+    flake.className = "flake";
+    const size = 1.5 + Math.random() * 2.8;
+    flake.style.left = `${Math.random() * 100}%`;
+    flake.style.width = `${size}px`;
+    flake.style.height = `${size}px`;
+    flake.style.setProperty("--drift", `${(Math.random() - 0.5) * 40}px`);
+    flake.style.animationDuration = `${7 + Math.random() * 9}s`;
+    flake.style.animationDelay = `${-Math.random() * 10}s`;
+    root.appendChild(flake);
+  }
+}
+
+spawnHeroSnow();
