@@ -23,7 +23,7 @@ import {
 } from "./i18n.js";
 import { icons } from "./icons.js";
 import { createEditorPane } from "./editor-pane.js";
-import { createFilesBrowser } from "./files-tree.js";
+import { askFsConfirm, createFilesBrowser } from "./files-tree.js";
 import {
   createMeetingPane,
   type MeetingPaneController,
@@ -291,13 +291,13 @@ app.innerHTML = `
                 <div class="files-pane-body">
                   <div class="files-pane-body-inner">
                     <div class="files-pathbar">
-                      <button type="button" class="icon ghost files-up" data-path-up data-i18n-title="files.up" title="Go up" aria-label="Go up">${icons.folderUp(12)}</button>
+                      <button type="button" class="icon ghost files-back" data-path-back data-i18n-title="files.up" title="Go up" aria-label="Go up" disabled>${icons.back(16)}</button>
                       <nav class="files-path" aria-label="Path"></nav>
                     </div>
                     <div class="files-toolbar">
                       <label class="files-filter-wrap">
                         <span class="files-filter-ico">${icons.search(12)}</span>
-                        <input class="files-filter" type="search" data-i18n-placeholder="files.filter" placeholder="Filter by name" />
+                        <input class="files-filter" type="search" data-i18n-placeholder="files.filter" placeholder="Filter" />
                       </label>
                       <button type="button" class="icon ghost" data-show-hidden data-i18n-title="files.showHidden" title="Show hidden files" aria-pressed="false">${icons.eyeOff(12)}</button>
                       <button type="button" class="icon ghost" data-refresh data-i18n-title="files.refresh" title="Refresh">${icons.refresh(12)}</button>
@@ -316,13 +316,14 @@ app.innerHTML = `
                 <div class="files-pane-body">
                   <div class="files-pane-body-inner">
                     <div class="files-pathbar">
-                      <button type="button" class="icon ghost files-up" data-path-up data-i18n-title="files.up" title="Go up" aria-label="Go up">${icons.folderUp(12)}</button>
+                      <button type="button" class="icon ghost files-back" data-path-back data-i18n-title="files.up" title="Go up" aria-label="Go up" disabled>${icons.back(16)}</button>
                       <nav class="files-path" aria-label="Path"></nav>
+                      <button type="button" class="icon ghost files-open-folder" data-open-folder data-i18n-title="files.openFolder" title="Open folder" aria-label="Open folder">${icons.folderOpen(13)}</button>
                     </div>
                     <div class="files-toolbar">
                       <label class="files-filter-wrap">
                         <span class="files-filter-ico">${icons.search(12)}</span>
-                        <input class="files-filter" type="search" data-i18n-placeholder="files.filter" placeholder="Filter by name" />
+                        <input class="files-filter" type="search" data-i18n-placeholder="files.filter" placeholder="Filter" />
                       </label>
                       <button type="button" class="icon ghost" data-show-hidden data-i18n-title="files.showHidden" title="Show hidden files" aria-pressed="false">${icons.eyeOff(12)}</button>
                       <button type="button" class="icon ghost" data-refresh data-i18n-title="files.refresh" title="Refresh">${icons.refresh(12)}</button>
@@ -3275,7 +3276,8 @@ const filesBrowser = createFilesBrowser({
   onLocalOpenDir: async (dirPath) => {
     const tab = await ensureActiveLocalTab();
     tabCwds.set(tab.id, dirPath);
-    void filesBrowser.setLocalRoot(dirPath);
+    // Panel already moved via goToDir — skip setLocalRoot so cwd echo
+    // cannot race and wipe the Back stack.
     await api.writeTerminal(tab.id, `cd ${shellQuote(dirPath)}\n`);
     tab.term.focus();
   },
@@ -3287,16 +3289,19 @@ const filesBrowser = createFilesBrowser({
   onLocalOpenFile: async (filePath) => {
     await editorPane.openLocal(filePath);
   },
+  onOpenLocalFolder: async (dirPath) => {
+    const res = await api.openPath(dirPath);
+    if (!res.ok) {
+      showToast(t("files.openFolderFail"), "error", {
+        detail: res.error,
+      });
+    }
+  },
   onServerOpenDir: async (dirPath) => {
     if (!filesServerTabId) return;
     const tab = state.tabs.get(filesServerTabId);
     if (!tab) return;
     tabCwds.set(tab.id, dirPath);
-    void filesBrowser.setServer({
-      enabled: true,
-      label: tab.title,
-      rootPath: dirPath,
-    });
     activateTab(tab.id);
     await api.writeTerminal(tab.id, `cd ${shellQuote(dirPath)}\n`);
     tab.term.focus();
@@ -3337,6 +3342,11 @@ const filesBrowser = createFilesBrowser({
       transferId
     );
   },
+  pickDownloadDirectory: () =>
+    api.pickDirectory({
+      title: t("files.downloadPick"),
+      defaultPath: homeDirCache || undefined,
+    }),
   onServerDownload: async (sources, destDir, transferId) => {
     if (!filesServerTabId) {
       return { error: "No SSH tab" };
@@ -3377,19 +3387,22 @@ async function applyCwdToFiles(tabId: string, cwd: string): Promise<void> {
   if (state.activeTabId === tabId) updateStripPath();
   // Only the board-selected terminal drives the files panel.
   if (filesFollowTabId !== tabId) return;
+  if (!terminalCardForTab(tabId)) {
+    filesFollowTabId = null;
+    filesBrowser.setIdle(t("files.noTerminal"));
+    return;
+  }
+  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
   if (tab.kind === "local") {
     filesServerTabId = null;
+    const cur = filesBrowser.localRootPath();
+    if (cur && norm(cur) === norm(cwd)) return;
+    await filesBrowser.setServer({ enabled: false });
     await filesBrowser.setLocal({ enabled: true, rootPath: cwd });
-    await filesBrowser.setServer({
-      enabled: false,
-      label: "",
-      message: t("files.serverEmpty"),
-    });
     return;
   }
   filesServerTabId = tabId;
-  const home = homeDirCache || (await api.getHomeDir());
-  await filesBrowser.setLocal({ enabled: true, rootPath: home });
+  await filesBrowser.setLocal({ enabled: false });
   await filesBrowser.setServer({
     enabled: true,
     label: tab.title,
@@ -3401,19 +3414,14 @@ async function syncFilesPanel(_force = false): Promise<void> {
   const tab = filesFollowTabId
     ? state.tabs.get(filesFollowTabId)
     : undefined;
+  // Files follow a board terminal card — a live PTY without a card is ignored.
+  const boardTerminal = tab ? terminalCardForTab(tab.id) : undefined;
   // Restore this terminal's pane collapse / tree expand before loading paths.
-  filesBrowser.setFollowSession(filesFollowTabId);
-  if (!tab) {
+  filesBrowser.setFollowSession(boardTerminal ? filesFollowTabId : null);
+  if (!tab || !boardTerminal) {
     filesServerTabId = null;
-    await filesBrowser.setLocal({
-      enabled: false,
-      message: t("files.noTerminal"),
-    });
-    await filesBrowser.setServer({
-      enabled: false,
-      label: "",
-      message: t("files.noTerminal"),
-    });
+    if (filesFollowTabId && !boardTerminal) filesFollowTabId = null;
+    filesBrowser.setIdle(t("files.noTerminal"));
     return;
   }
 
@@ -3423,19 +3431,14 @@ async function syncFilesPanel(_force = false): Promise<void> {
       (await cwdForTab(tab.id)) ||
       homeDirCache ||
       (await api.getHomeDir());
+    await filesBrowser.setServer({ enabled: false });
     await filesBrowser.setLocal({ enabled: true, rootPath: cwd });
-    await filesBrowser.setServer({
-      enabled: false,
-      label: "",
-      message: t("files.serverEmpty"),
-    });
     return;
   }
 
   filesServerTabId = tab.id;
   const cwd = (await cwdForTab(tab.id)) || "~";
-  const home = homeDirCache || (await api.getHomeDir());
-  await filesBrowser.setLocal({ enabled: true, rootPath: home });
+  await filesBrowser.setLocal({ enabled: false });
   await filesBrowser.setServer({
     enabled: true,
     label: tab.title,
@@ -3614,6 +3617,14 @@ els.btnSaveKey.onclick = async () => {
   void refreshAccountUsage();
 };
 els.btnClearKey.onclick = async () => {
+  const ok = await askFsConfirm({
+    title: t("settings.clearKey"),
+    body: t("settings.clearKeyConfirm"),
+    okLabel: t("settings.clearKey"),
+    cancelLabel: t("files.dialogCancel"),
+    danger: true,
+  });
+  if (!ok) return;
   await api.clearApiKey();
   setKeyBadge(false);
   chat.addSystem(t("settings.keyCleared"));
@@ -4076,7 +4087,6 @@ void (async () => {
 
     setSplashProgress(SPLASH_AT.files, t("splash.files"));
     homeDirCache = await api.getHomeDir();
-    await filesBrowser.setLocalRoot(homeDirCache);
     await syncFilesPanel();
 
     setSplashProgress(SPLASH_AT.terminal, t("splash.terminal"));

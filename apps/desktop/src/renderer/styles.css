@@ -963,60 +963,24 @@ body.is-resizing-col {
   background: var(--panel);
 }
 
-.files-history {
-  flex: 0 0 auto;
-  border-top: 1px solid var(--line);
-  padding: 0.45rem 0.7rem 0.55rem;
+.files-idle {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem 1rem;
+  color: var(--text-3);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  text-align: center;
+  letter-spacing: -0.01em;
 }
 
-.files-history.hidden {
+.files-idle.hidden {
   display: none !important;
 }
 
-.files-history-head {
-  color: var(--text-3);
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  margin-bottom: 0.3rem;
-}
-
-.files-history-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 0.2rem;
-}
-
-.files-history-list li {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 0.4rem;
-  align-items: center;
-  font-size: 0.7rem;
-  color: var(--text-2);
-  min-width: 0;
-}
-
-.files-history-list li.fail {
-  color: var(--danger);
-}
-
-.files-history-dir {
-  color: var(--text-3);
-  font-weight: 600;
-}
-
-.files-history-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.files-history-time {
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
+.files-panel.is-idle .files-split {
+  display: none;
 }
 
 .fs-menu {
@@ -1163,12 +1127,18 @@ body.is-resizing-col {
   display: none;
 }
 
-.files-panel.has-server .files-pane {
+.files-panel.has-server.has-local .files-pane {
   flex: 1 1 50%;
   min-height: 0;
 }
 
-.files-panel.has-server .files-pane.collapsed {
+.files-panel.has-server:not(.has-local) .files-pane[data-scope="server"],
+.files-panel.has-local:not(.has-server) .files-pane[data-scope="local"] {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.files-panel.has-server.has-local .files-pane.collapsed {
   flex: 0 0 auto;
   min-height: 0;
 }
@@ -1592,28 +1562,39 @@ body.is-resizing-col {
 .files-pathbar {
   display: flex;
   align-items: center;
-  gap: 0.2rem;
-  margin: 0 0.7rem 0.3rem;
+  gap: 0.15rem;
+  margin: 0 0.7rem 0.28rem;
   min-width: 0;
+  padding: 0.12rem;
+  border-radius: 12px;
+  background: var(--elevated);
 }
 
-.files-pathbar .files-up {
+.files-pathbar .files-back,
+.files-pathbar .files-open-folder {
   width: 28px;
   height: 28px;
   padding: 0;
   flex: 0 0 auto;
-  color: var(--text-3);
+  color: var(--text-2);
   border-radius: 8px;
 }
 
-.files-pathbar .files-up:hover:not(:disabled) {
+.files-pathbar .files-back.is-enabled {
+  color: var(--text);
+}
+
+.files-pathbar .files-back:hover:not(:disabled),
+.files-pathbar .files-open-folder:hover:not(:disabled) {
   color: var(--text);
   background: var(--hover);
 }
 
-.files-pathbar .files-up:disabled {
-  opacity: 0.35;
+.files-pathbar .files-back:disabled,
+.files-pathbar .files-open-folder:disabled {
+  opacity: 0.28;
   cursor: default;
+  color: var(--text-3);
 }
 
 .files-path {
@@ -1622,10 +1603,10 @@ body.is-resizing-col {
   display: flex;
   align-items: center;
   gap: 0.05rem;
-  padding: 0.2rem 0.35rem;
-  border-radius: 10px;
+  padding: 0.18rem 0.3rem;
+  border-radius: 8px;
   border: 0;
-  background: var(--elevated);
+  background: transparent;
   color: var(--text-2);
   font-family: var(--mono);
   font-size: 0.68rem;
@@ -1675,7 +1656,7 @@ body.is-resizing-col {
 .files-toolbar {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.2rem;
   padding: 0 0.7rem 0.35rem;
 }
 
@@ -1685,7 +1666,7 @@ body.is-resizing-col {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  padding: 0.35rem 0.55rem;
+  padding: 0.32rem 0.55rem;
   border-radius: 12px;
   border: 0;
   background: var(--elevated);
@@ -2217,8 +2198,8 @@ body.is-resizing-col {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
-  width: fit-content;
+  gap: 6px;
+  width: 148px;
   pointer-events: none;
 }
 
@@ -2287,8 +2268,37 @@ body.is-resizing-col {
   cursor: grabbing;
 }
 
-.board-minimap.is-collapsed .board-minimap-body {
+.board-minimap-zoom {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  align-items: center;
+  justify-items: center;
+  flex: 0 0 auto;
+  padding: 0.15rem;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-2) 55%, transparent);
+  box-sizing: border-box;
+}
+
+.board-minimap-zoom .icon {
+  width: 28px;
+  height: 28px;
+}
+
+.board-minimap-zoom .icon:disabled,
+.board-minimap-zoom .board-zoom-label:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.board-minimap.is-collapsed .board-minimap-body,
+.board-minimap.is-collapsed .board-minimap-zoom {
   display: none;
+}
+
+.board-minimap.is-collapsed .board-minimap-head {
+  border-bottom: 0;
 }
 
 .board-minimap-world {
@@ -2360,18 +2370,12 @@ body.is-resizing-col {
   pointer-events: none;
 }
 
-.board-chrome-actions {
-  display: flex;
+.board-chrome-hud {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   align-items: center;
-  justify-content: stretch;
-  gap: 0.45rem;
-  align-self: stretch;
-}
-
-.board-zoom-hud {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.05rem;
+  justify-items: center;
+  width: 100%;
   padding: 0.15rem;
   border: 1px solid color-mix(in srgb, var(--line-strong) 80%, transparent);
   border-radius: 10px;
@@ -2379,6 +2383,7 @@ body.is-resizing-col {
   box-shadow:
     0 0 0 1px rgba(0, 0, 0, 0.16),
     0 8px 20px rgba(0, 0, 0, 0.28);
+  box-sizing: border-box;
 }
 
 .board-card-add-prompt.is-hidden {
@@ -2389,15 +2394,34 @@ body.is-resizing-col {
   display: none;
 }
 
-.board-zoom-hud .icon {
+.board-chrome-hud .icon {
   width: 28px;
   height: 28px;
+  flex: 0 0 auto;
+}
+
+.board-chrome-hud .icon.is-active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.board-chrome-hud .icon:disabled,
+.board-zoom-label:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.board-viewport.is-view-locked.is-space,
+.board-viewport.is-view-locked.is-panning {
+  cursor: default;
 }
 
 .board-zoom-label {
-  min-width: 3.4rem;
+  width: 100%;
+  max-width: 3.4rem;
   height: 28px;
-  padding: 0 0.35rem;
+  padding: 0 0.15rem;
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -2407,7 +2431,7 @@ body.is-resizing-col {
   cursor: pointer;
 }
 
-.board-zoom-label:hover {
+.board-zoom-label:hover:not(:disabled) {
   background: color-mix(in srgb, var(--text) 8%, transparent);
   color: var(--text);
 }

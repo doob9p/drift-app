@@ -30,28 +30,23 @@ export type TransferProgress = {
   currentName?: string;
 };
 
-export type TransferHistoryEntry = {
-  id: string;
-  at: number;
-  direction: "upload" | "download" | "copy" | "rename" | "delete";
-  name: string;
-  ok: boolean;
-  detail?: string;
-};
-
 type PaneCallbacks = {
   listDir: ListDir;
   onOpenDir: (dirPath: string) => void | Promise<void>;
   onInsertPath: (filePath: string) => void | Promise<void>;
   onOpenFile?: (filePath: string) => void | Promise<void>;
+  /** Open the current directory in the OS file manager (local only). */
+  onOpenFolder?: (dirPath: string) => void | Promise<void>;
   resolveDropPaths?: (files: File[]) => string[];
   onImportFiles?: (
     destDir: string,
     sources: string[],
     transferId: string
   ) => Promise<ImportResult>;
+  pickDownloadDir?: () => Promise<string | null>;
   onDownloadPaths?: (
     sources: string[],
+    destDir: string,
     transferId: string
   ) => Promise<ImportResult>;
   onRenamePath?: (
@@ -62,7 +57,6 @@ type PaneCallbacks = {
   onTransferProgress?: (
     cb: (payload: TransferProgress) => void
   ) => () => void;
-  onHistory?: (entry: TransferHistoryEntry) => void;
   /** i18n keys differ slightly for local copy vs SSH upload */
   importBusyKey?: string;
   importOkKey?: string;
@@ -120,15 +114,12 @@ function pathDirname(p: string): string {
   return parent || "/";
 }
 
-function canGoUp(p: string, home?: string): boolean {
+function canGoUp(p: string): boolean {
   const cur = normalizePath(p).replace(/\/+$/, "") || "/";
   if (cur === "/" || /^[A-Za-z]:$/.test(cur)) return false;
   const parent = pathDirname(cur);
   const parentNorm = normalizePath(parent).replace(/\/+$/, "") || "/";
-  if (parentNorm === cur) return false;
-  // Optional: stop at home as soft root? No — allow above home.
-  void home;
-  return true;
+  return parentNorm !== cur;
 }
 
 type PathCrumb = { label: string; path: string; current: boolean };
@@ -354,6 +345,7 @@ export function askFsConfirm(opts: {
 
 type PaneApi = {
   setEnabled: (on: boolean, message?: string) => void;
+  clear: () => void;
   setMeta: (label: string) => void;
   setRoot: (rootPath: string) => Promise<void>;
   refresh: () => Promise<void>;
@@ -406,11 +398,16 @@ function createPane(
   const titleEl = root.querySelector(".files-pane-title") as HTMLElement;
   const hostEl = root.querySelector(".files-pane-host") as HTMLElement;
   const pathEl = root.querySelector(".files-path") as HTMLElement;
-  const upBtn = root.querySelector("[data-path-up]") as HTMLButtonElement | null;
+  const backBtn = root.querySelector(
+    "[data-path-back]"
+  ) as HTMLButtonElement | null;
   const filterEl = root.querySelector(".files-filter") as HTMLInputElement;
   const treeEl = root.querySelector(".files-tree") as HTMLElement;
   const emptyEl = root.querySelector(".files-empty") as HTMLElement;
   const refreshBtn = root.querySelector("[data-refresh]") as HTMLButtonElement | null;
+  const openFolderBtn = root.querySelector(
+    "[data-open-folder]"
+  ) as HTMLButtonElement | null;
   const showHiddenBtn = root.querySelector(
     "[data-show-hidden]"
   ) as HTMLButtonElement | null;
@@ -425,7 +422,7 @@ function createPane(
   let home = "";
   let rootPath = "";
   let filter = "";
-  let enabled = true;
+  let enabled = false;
   let emptyMessage = "";
   let metaLabel = "";
   let dragDepth = 0;
@@ -550,11 +547,37 @@ function createPane(
     applyCollapsed(!root.classList.contains("collapsed"), true);
   });
 
+  function samePath(a: string, b: string): boolean {
+    return (
+      normalizePath(a).replace(/\/+$/, "") ===
+      normalizePath(b).replace(/\/+$/, "")
+    );
+  }
+
+  function syncUpBtn(): void {
+    if (!backBtn) return;
+    const canUp = Boolean(enabled && rootPath && canGoUp(rootPath));
+    backBtn.disabled = !canUp;
+    backBtn.classList.toggle("is-enabled", canUp);
+    backBtn.title = t("files.up");
+    backBtn.setAttribute("aria-label", t("files.up"));
+    backBtn.setAttribute("aria-disabled", canUp ? "false" : "true");
+  }
+
   function goToDir(next: string): void {
-    if (!next || next === rootPath || !enabled) return;
+    if (!next || !enabled) return;
+    if (rootPath && samePath(next, rootPath)) return;
     rootPath = next;
+    syncUpBtn();
     void opts.onOpenDir(rootPath);
     void render();
+  }
+
+  function goUp(): void {
+    if (!enabled || !rootPath || !canGoUp(rootPath)) return;
+    const parent = pathDirname(rootPath);
+    if (!parent || samePath(parent, rootPath)) return;
+    goToDir(parent);
   }
 
   function renderPathBar(): void {
@@ -562,7 +585,8 @@ function createPane(
     pathEl.title = rootPath || "";
     if (!rootPath) {
       pathEl.innerHTML = "";
-      if (upBtn) upBtn.disabled = true;
+      syncUpBtn();
+      if (openFolderBtn) openFolderBtn.disabled = true;
       return;
     }
     const crumbs = buildBreadcrumbs(rootPath, home || undefined);
@@ -578,11 +602,11 @@ function createPane(
         return `${sep}<button type="button" class="files-crumb" data-crumb-path="${escapeHtml(c.path)}" title="${escapeHtml(c.path)}">${escapeHtml(c.label)}</button>`;
       })
       .join("");
-    if (upBtn) {
-      const enabledUp = canGoUp(rootPath, home || undefined);
-      upBtn.disabled = !enabledUp;
-      upBtn.title = t("files.up");
-      upBtn.setAttribute("aria-label", t("files.up"));
+    syncUpBtn();
+    if (openFolderBtn) {
+      openFolderBtn.disabled = !enabled;
+      openFolderBtn.title = t("files.openFolder");
+      openFolderBtn.setAttribute("aria-label", t("files.openFolder"));
     }
     // Keep the current (rightmost) crumb visible when the trail overflows.
     requestAnimationFrame(() => {
@@ -595,7 +619,8 @@ function createPane(
     emptyEl.classList.remove("hidden");
     treeEl.classList.add("hidden");
     pathEl.innerHTML = "";
-    if (upBtn) upBtn.disabled = true;
+    syncUpBtn();
+    if (openFolderBtn) openFolderBtn.disabled = true;
   }
 
   function showTree(): void {
@@ -763,8 +788,14 @@ function createPane(
       e.preventDefault();
       const row = select.closest("[data-path]") as HTMLElement | null;
       const p = row?.dataset.path;
+      const kind = row?.dataset.kind;
       if (!p) return;
       selectRow(p);
+      // Enter folders on click (chevron only expands). Records Back history.
+      if (kind === "dir") {
+        expanded.add(p);
+        goToDir(p);
+      }
     }
   });
 
@@ -776,15 +807,9 @@ function createPane(
       target.closest(".fs-row[data-path]")) as HTMLElement | null;
     const p = row?.dataset.path;
     const kind = row?.dataset.kind;
-    if (!p || !kind) return;
+    if (!p || !kind || kind === "dir") return;
     e.preventDefault();
     selectRow(p);
-    if (kind === "dir") {
-      expanded.add(p);
-      void opts.onOpenDir(p);
-      void render(p);
-      return;
-    }
     if (opts.onOpenFile) {
       void opts.onOpenFile(p);
     } else {
@@ -883,24 +908,9 @@ function createPane(
                 showToast(t("files.renameFail"), "error", {
                   detail: res.error,
                 });
-                opts.onHistory?.({
-                  id: newTransferId(),
-                  at: Date.now(),
-                  direction: "rename",
-                  name,
-                  ok: false,
-                  detail: res.error,
-                });
                 return;
               }
               showToast(t("files.renameOk"), "ok");
-              opts.onHistory?.({
-                id: newTransferId(),
-                at: Date.now(),
-                direction: "rename",
-                name: `${name} → ${trimmed}`,
-                ok: true,
-              });
               cache.clear();
               errors.clear();
               await render(toPath);
@@ -925,24 +935,9 @@ function createPane(
                 showToast(t("files.deleteFail"), "error", {
                   detail: res.error,
                 });
-                opts.onHistory?.({
-                  id: newTransferId(),
-                  at: Date.now(),
-                  direction: "delete",
-                  name,
-                  ok: false,
-                  detail: res.error,
-                });
                 return;
               }
               showToast(t("files.deleteOk"), "ok");
-              opts.onHistory?.({
-                id: newTransferId(),
-                at: Date.now(),
-                direction: "delete",
-                name,
-                ok: true,
-              });
               cache.clear();
               errors.clear();
               await render();
@@ -951,67 +946,55 @@ function createPane(
           return;
         }
         if (action === "download" && opts.onDownloadPaths) {
-          const transferId = newTransferId();
-          importing = true;
-          showTransferProgress({
-            percent: 0,
-            currentName: t(opts.downloadBusyKey ?? "files.downloading"),
-          });
-          const stopProgress = opts.onTransferProgress?.((payload) => {
-            if (payload.transferId !== transferId) return;
+          void (async () => {
+            const dest = opts.pickDownloadDir
+              ? await opts.pickDownloadDir()
+              : null;
+            if (!dest) return;
+            const transferId = newTransferId();
+            importing = true;
             showTransferProgress({
-              percent: payload.percent,
-              currentName: payload.currentName,
+              percent: 0,
+              currentName: t(opts.downloadBusyKey ?? "files.downloading"),
             });
-          });
-          void opts
-            .onDownloadPaths([targetPath], transferId)
-            .then(async (res) => {
+            const stopProgress = opts.onTransferProgress?.((payload) => {
+              if (payload.transferId !== transferId) return;
+              showTransferProgress({
+                percent: payload.percent,
+                currentName: payload.currentName,
+              });
+            });
+            try {
+              const res = await opts.onDownloadPaths!(
+                [targetPath],
+                dest,
+                transferId
+              );
               if (res && "error" in res && res.error) {
                 hideTransferProgress();
-                showToast(t(opts.downloadFailKey ?? "files.downloadFail"), "error", {
-                  detail: res.error,
-                });
-                opts.onHistory?.({
-                  id: transferId,
-                  at: Date.now(),
-                  direction: "download",
-                  name,
-                  ok: false,
-                  detail: res.error,
-                });
+                showToast(
+                  t(opts.downloadFailKey ?? "files.downloadFail"),
+                  "error",
+                  { detail: res.error }
+                );
                 return;
               }
               showTransferProgress({ percent: 100 });
               showToast(t(opts.downloadOkKey ?? "files.downloadOk"), "ok");
-              opts.onHistory?.({
-                id: transferId,
-                at: Date.now(),
-                direction: "download",
-                name,
-                ok: true,
-              });
               window.setTimeout(() => hideTransferProgress(), 500);
-            })
-            .catch((err: unknown) => {
+            } catch (err: unknown) {
               hideTransferProgress();
               const detail = err instanceof Error ? err.message : String(err);
-              showToast(t(opts.downloadFailKey ?? "files.downloadFail"), "error", {
-                detail,
-              });
-              opts.onHistory?.({
-                id: transferId,
-                at: Date.now(),
-                direction: "download",
-                name,
-                ok: false,
-                detail,
-              });
-            })
-            .finally(() => {
+              showToast(
+                t(opts.downloadFailKey ?? "files.downloadFail"),
+                "error",
+                { detail }
+              );
+            } finally {
               stopProgress?.();
               importing = false;
-            });
+            }
+          })();
         }
       };
     });
@@ -1024,6 +1007,14 @@ function createPane(
 
   showHiddenBtn?.addEventListener("click", () => {
     setShowHidden(!showHidden);
+  });
+
+  openFolderBtn?.addEventListener("click", () => {
+    if (!rootPath || !enabled || !opts.onOpenFolder) return;
+    void Promise.resolve(opts.onOpenFolder(rootPath)).catch((err: unknown) => {
+      const detail = err instanceof Error ? err.message : String(err);
+      showToast(t("files.openFolderFail"), "error", { detail });
+    });
   });
 
   refreshBtn?.addEventListener("click", () => {
@@ -1040,10 +1031,8 @@ function createPane(
     goToDir(next);
   });
 
-  upBtn?.addEventListener("click", () => {
-    if (!rootPath || !enabled || upBtn.disabled) return;
-    const parent = pathDirname(rootPath);
-    if (parent && parent !== rootPath) goToDir(parent);
+  backBtn?.addEventListener("click", () => {
+    goUp();
   });
 
   if (bodyEl && opts.onImportFiles && opts.resolveDropPaths) {
@@ -1099,11 +1088,6 @@ function createPane(
       }
       importing = true;
       const transferId = newTransferId();
-      const labelName =
-        sources.length === 1
-          ? pathBasename(sources[0]!)
-          : t("files.manyItems", { count: String(sources.length) });
-      const direction = scope === "server" ? "upload" : "copy";
       showTransferProgress({ percent: 0, currentName: t(busyKey) });
       const stopProgress = opts.onTransferProgress?.((payload) => {
         if (payload.transferId !== transferId) return;
@@ -1118,25 +1102,10 @@ function createPane(
           if (res && "error" in res && res.error) {
             hideTransferProgress();
             showToast(t(failKey), "error", { detail: res.error });
-            opts.onHistory?.({
-              id: transferId,
-              at: Date.now(),
-              direction,
-              name: labelName,
-              ok: false,
-              detail: res.error,
-            });
             return;
           }
           showTransferProgress({ percent: 100 });
           showToast(t(okKey), "ok");
-          opts.onHistory?.({
-            id: transferId,
-            at: Date.now(),
-            direction,
-            name: labelName,
-            ok: true,
-          });
           window.setTimeout(() => hideTransferProgress(), 500);
           cache.clear();
           await api.refresh();
@@ -1145,14 +1114,6 @@ function createPane(
           hideTransferProgress();
           const detail = err instanceof Error ? err.message : String(err);
           showToast(t(failKey), "error", { detail });
-          opts.onHistory?.({
-            id: transferId,
-            at: Date.now(),
-            direction,
-            name: labelName,
-            ok: false,
-            detail,
-          });
         })
         .finally(() => {
           stopProgress?.();
@@ -1168,12 +1129,27 @@ function createPane(
       root.classList.toggle("disabled", !on);
       if (!on) {
         clearPaneDrop();
+        rootPath = "";
+        cache.clear();
+        errors.clear();
+        treeEl.innerHTML = "";
         showEmpty(emptyMessage);
         return;
       }
       // Re-show the tree after coming back from the disabled empty state
       // (e.g. local tab → SSH tab) without waiting for a manual refresh.
       if (rootPath) void render();
+    },
+    clear() {
+      enabled = false;
+      emptyMessage = "";
+      rootPath = "";
+      cache.clear();
+      errors.clear();
+      treeEl.innerHTML = "";
+      root.classList.add("disabled");
+      clearPaneDrop();
+      showEmpty("");
     },
     setMeta(label) {
       metaLabel = label;
@@ -1183,9 +1159,13 @@ function createPane(
     setSessionKey,
     async setRoot(next) {
       if (!next) return;
-      if (rootPath === next && cache.has(next) && !errors.has(next)) {
-        // Same path — still re-render so a prior showEmpty() is cleared.
-        if (expanded.size === 0) expanded.add(next);
+      if (
+        rootPath &&
+        samePath(rootPath, next) &&
+        cache.has(rootPath) &&
+        !errors.has(rootPath)
+      ) {
+        if (expanded.size === 0) expanded.add(rootPath);
         await render();
         return;
       }
@@ -1193,7 +1173,9 @@ function createPane(
       // Keep per-session expanded dirs when switching back to the same terminal.
       if (expanded.size === 0) {
         expanded.add(next);
-      } else if (![...expanded].some((p) => p === next || p.startsWith(next + "/"))) {
+      } else if (
+        ![...expanded].some((p) => p === next || p.startsWith(next + "/"))
+      ) {
         expanded.add(next);
       }
       cache.clear();
@@ -1235,6 +1217,8 @@ export type FilesBrowser = {
     rootPath?: string;
     message?: string;
   }) => Promise<void>;
+  /** No terminal selected — hide both panes and show an idle hint. */
+  setIdle: (message: string) => void;
   /** Bind pane collapse/expand memory to a terminal tab id. */
   setFollowSession: (tabId: string | null) => void;
 };
@@ -1246,6 +1230,7 @@ export function createFilesBrowser(opts: {
   onLocalOpenDir: (dirPath: string) => void | Promise<void>;
   onLocalInsertPath: (filePath: string) => void | Promise<void>;
   onLocalOpenFile?: (filePath: string) => void | Promise<void>;
+  onOpenLocalFolder?: (dirPath: string) => void | Promise<void>;
   onServerOpenDir: (dirPath: string) => void | Promise<void>;
   onServerInsertPath: (filePath: string) => void | Promise<void>;
   onServerOpenFile?: (filePath: string) => void | Promise<void>;
@@ -1265,6 +1250,7 @@ export function createFilesBrowser(opts: {
     destDir: string,
     transferId: string
   ) => Promise<ImportResult>;
+  pickDownloadDirectory?: () => Promise<string | null>;
   onLocalRename?: (
     fromPath: string,
     toPath: string
@@ -1286,34 +1272,24 @@ export function createFilesBrowser(opts: {
     '[data-scope="server"]'
   ) as HTMLElement;
 
-  const history: TransferHistoryEntry[] = [];
-  const historyEl = document.createElement("div");
-  historyEl.className = "files-history hidden";
-  historyEl.innerHTML = `
-    <div class="files-history-head">
-      <span data-i18n="files.history">${escapeHtml(t("files.history"))}</span>
-    </div>
-    <ul class="files-history-list"></ul>
-  `;
-  opts.root.append(historyEl);
-  const historyList = historyEl.querySelector(
-    ".files-history-list"
-  ) as HTMLElement;
+  const idleEl = document.createElement("div");
+  idleEl.className = "files-idle";
+  idleEl.setAttribute("role", "status");
+  idleEl.textContent = t("files.noTerminal");
+  opts.root.prepend(idleEl);
 
-  function pushHistory(entry: TransferHistoryEntry): void {
-    history.unshift(entry);
-    if (history.length > 8) history.length = 8;
-    historyEl.classList.toggle("hidden", history.length === 0);
-    historyList.innerHTML = history
-      .map((h) => {
-        const when = new Date(h.at).toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-        const dirLabel = t(`files.history.${h.direction}`);
-        return `<li class="${h.ok ? "ok" : "fail"}"><span class="files-history-dir">${escapeHtml(dirLabel)}</span><span class="files-history-name">${escapeHtml(h.name)}</span><span class="files-history-time">${escapeHtml(when)}</span></li>`;
-      })
-      .join("");
+  function setIdle(message: string): void {
+    opts.root.classList.remove("has-local", "has-server");
+    opts.root.classList.add("is-idle");
+    idleEl.textContent = message || t("files.noTerminal");
+    idleEl.classList.remove("hidden");
+    local.clear();
+    server.clear();
+  }
+
+  function clearIdle(): void {
+    opts.root.classList.remove("is-idle");
+    idleEl.classList.add("hidden");
   }
 
   const local = createPane(localRoot, "local", {
@@ -1321,12 +1297,12 @@ export function createFilesBrowser(opts: {
     onOpenDir: opts.onLocalOpenDir,
     onInsertPath: opts.onLocalInsertPath,
     onOpenFile: opts.onLocalOpenFile,
+    onOpenFolder: opts.onOpenLocalFolder,
     resolveDropPaths: opts.resolveDropPaths,
     onImportFiles: opts.onLocalImport,
     onRenamePath: opts.onLocalRename,
     onDeletePath: opts.onLocalDelete,
     onTransferProgress: opts.onTransferProgress,
-    onHistory: pushHistory,
     importBusyKey: "files.dropping",
     importOkKey: "files.dropOk",
     importFailKey: "files.dropFail",
@@ -1338,21 +1314,11 @@ export function createFilesBrowser(opts: {
     onOpenFile: opts.onServerOpenFile,
     resolveDropPaths: opts.resolveDropPaths,
     onImportFiles: opts.onServerImport,
-    onDownloadPaths: opts.onServerDownload
-      ? async (sources, transferId) => {
-          const dest = local.rootPath();
-          if (!dest) return { error: t("files.noLocalDest") };
-          const res = await opts.onServerDownload!(sources, dest, transferId);
-          if (!(res && "error" in res && res.error)) {
-            await local.refresh();
-          }
-          return res;
-        }
-      : undefined,
+    pickDownloadDir: opts.pickDownloadDirectory,
+    onDownloadPaths: opts.onServerDownload,
     onRenamePath: opts.onServerRename,
     onDeletePath: opts.onServerDelete,
     onTransferProgress: opts.onTransferProgress,
-    onHistory: pushHistory,
     importBusyKey: "files.uploading",
     importOkKey: "files.uploadOk",
     importFailKey: "files.uploadFail",
@@ -1360,6 +1326,9 @@ export function createFilesBrowser(opts: {
     downloadOkKey: "files.downloadOk",
     downloadFailKey: "files.downloadFail",
   });
+
+  // Start with no terminal selected — don't browse home until focus.
+  setIdle(t("files.noTerminal"));
 
   return {
     refresh: async () => {
@@ -1369,17 +1338,22 @@ export function createFilesBrowser(opts: {
       local.setSessionKey(tabId);
       server.setSessionKey(tabId);
     },
+    setIdle,
     setLocalRoot: async (path) => {
+      clearIdle();
       opts.root.classList.toggle("has-local", true);
       local.setEnabled(true);
       await local.setRoot(path);
     },
     setLocal: async ({ enabled, rootPath, message }) => {
-      opts.root.classList.toggle("has-local", enabled);
       if (!enabled) {
-        local.setEnabled(false, message ?? t("files.noTerminal"));
+        opts.root.classList.toggle("has-local", false);
+        local.clear();
+        if (message) local.setEnabled(false, message);
         return;
       }
+      clearIdle();
+      opts.root.classList.toggle("has-local", true);
       local.setEnabled(true);
       if (rootPath) await local.setRoot(rootPath);
       else await local.refresh();
@@ -1387,19 +1361,18 @@ export function createFilesBrowser(opts: {
     localRootPath: () => local.rootPath(),
     setServer: async ({ enabled, label, rootPath, message }) => {
       if (label != null) server.setMeta(label);
-      opts.root.classList.toggle("has-server", enabled);
       if (!enabled) {
-        server.setEnabled(
-          false,
-          message ?? t("files.serverEmpty")
-        );
+        opts.root.classList.toggle("has-server", false);
+        server.clear();
+        if (message) server.setEnabled(false, message);
         return;
       }
+      clearIdle();
+      opts.root.classList.toggle("has-server", true);
       server.setEnabled(true);
       if (rootPath) {
         await server.setRoot(rootPath);
       } else {
-        // Keep previous root if any; just leave the disabled empty state.
         await server.refresh();
       }
     },

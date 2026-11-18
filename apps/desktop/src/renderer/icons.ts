@@ -5,6 +5,7 @@ import {
   Check,
   Copy,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ChevronUp,
   Cpu,
@@ -46,6 +47,8 @@ import {
   Grid2x2,
   GitBranch,
   Columns2,
+  Lock,
+  LockOpen,
 } from "lucide";
 
 type IconOpts = {
@@ -92,6 +95,7 @@ export const icons = {
   folder: (size = 14) => lucideSvg(Folder, { size }),
   folderOpen: (size = 14) => lucideSvg(FolderOpen, { size }),
   folderUp: (size = 14) => lucideSvg(FolderUp, { size }),
+  back: (size = 14) => lucideSvg(ChevronLeft, { size, strokeWidth: 2.25 }),
   importConfig: (size = 14) => lucideSvg(RefreshCw, { size }),
   file: (size = 14) => lucideSvg(File, { size }),
   chevronRight: (size = 12) => lucideSvg(ChevronRight, { size, strokeWidth: 2 }),
@@ -127,5 +131,7 @@ export const icons = {
   arrange: (size = 14) => lucideSvg(Grid2x2, { size }),
   /** Tile open terminals to fill the viewport with no gaps. */
   tileTerminals: (size = 14) => lucideSvg(Columns2, { size }),
+  lockView: (size = 14) => lucideSvg(Lock, { size }),
+  unlockView: (size = 14) => lucideSvg(LockOpen, { size }),
   addSub: (size = 14) => lucideSvg(GitBranch, { size }),
 };

@@ -169,6 +169,8 @@ export function createBoardPane(
   let camera: BoardCamera = { x: 0, y: 0, zoom: 1 };
   let spaceHeld = false;
   let panning = false;
+  /** When true, pan/zoom (trackpad, Space-drag, minimap, shortcuts) are frozen. */
+  let viewLocked = false;
   let mapFrame: MapFrame = { worldX: 0, worldY: 0, scale: 1, ox: 0, oy: 0 };
   let mapCollapsed = false;
   let minimapDirty = true;
@@ -185,7 +187,6 @@ export function createBoardPane(
           <header class="board-minimap-head">
             <span class="board-minimap-title" data-i18n="board.minimap">Map</span>
             <div class="board-minimap-actions">
-              <button type="button" class="icon ghost" id="btn-board-map-fit" data-i18n-title="board.zoomFit" title="Fit all">${icons.zoomFit(12)}</button>
               <button type="button" class="icon ghost" id="btn-board-map-toggle" data-i18n-title="board.minimapToggle" title="Toggle map">${icons.chevronDown(12)}</button>
             </div>
           </header>
@@ -193,15 +194,16 @@ export function createBoardPane(
             <div class="board-minimap-world" id="board-minimap-world"></div>
             <div class="board-minimap-view" id="board-minimap-view"></div>
           </div>
-        </aside>
-        <div class="board-chrome-actions">
-          <div class="board-zoom-hud" role="group" aria-label="Zoom">
-            <button type="button" class="icon ghost" id="btn-board-arrange" data-i18n-title="board.arrange" title="${t("board.arrange")}" aria-label="${t("board.arrange")}">${icons.arrange(14)}</button>
-            <button type="button" class="icon ghost" id="btn-board-tile" data-i18n-title="board.tileTerminals" title="${t("board.tileTerminals")}" aria-label="${t("board.tileTerminals")}">${icons.tileTerminals(14)}</button>
+          <div class="board-minimap-zoom" role="group" aria-label="Zoom">
             <button type="button" class="icon ghost" id="btn-board-zoom-out" data-i18n-title="board.zoomOut" title="Zoom out">${icons.zoomOut(14)}</button>
             <button type="button" class="board-zoom-label" id="btn-board-zoom-reset" data-i18n-title="board.zoomReset" title="Reset zoom">100%</button>
             <button type="button" class="icon ghost" id="btn-board-zoom-in" data-i18n-title="board.zoomIn" title="Zoom in">${icons.zoomIn(14)}</button>
           </div>
+        </aside>
+        <div class="board-chrome-hud board-tools-hud" role="group" aria-label="Board tools">
+          <button type="button" class="icon ghost" id="btn-board-arrange" data-i18n-title="board.arrange" title="${t("board.arrange")}" aria-label="${t("board.arrange")}">${icons.arrange(14)}</button>
+          <button type="button" class="icon ghost" id="btn-board-tile" data-i18n-title="board.tileTerminals" title="${t("board.tileTerminals")}" aria-label="${t("board.tileTerminals")}">${icons.tileTerminals(14)}</button>
+          <button type="button" class="icon ghost" id="btn-board-lock" data-i18n-title="board.lockView" title="${t("board.lockView")}" aria-label="${t("board.lockView")}" aria-pressed="false">${icons.lockView(14)}</button>
         </div>
       </div>
     </div>
@@ -214,6 +216,13 @@ export function createBoardPane(
   const zoomLabel = root.querySelector(
     "#btn-board-zoom-reset"
   ) as HTMLButtonElement;
+  const lockBtn = root.querySelector("#btn-board-lock") as HTMLButtonElement;
+  const zoomInBtn = root.querySelector(
+    "#btn-board-zoom-in"
+  ) as HTMLButtonElement;
+  const zoomOutBtn = root.querySelector(
+    "#btn-board-zoom-out"
+  ) as HTMLButtonElement;
   const minimap = root.querySelector("#board-minimap") as HTMLElement;
   const minimapBody = root.querySelector("#board-minimap-body") as HTMLElement;
   const minimapWorld = root.querySelector(
@@ -223,6 +232,35 @@ export function createBoardPane(
   const mapToggleBtn = root.querySelector(
     "#btn-board-map-toggle"
   ) as HTMLButtonElement;
+
+  function syncViewLockUi(): void {
+    viewport.classList.toggle("is-view-locked", viewLocked);
+    lockBtn.classList.toggle("is-active", viewLocked);
+    lockBtn.setAttribute("aria-pressed", viewLocked ? "true" : "false");
+    const label = viewLocked ? t("board.unlockView") : t("board.lockView");
+    lockBtn.title = label;
+    lockBtn.setAttribute("aria-label", label);
+    lockBtn.setAttribute("data-i18n-title", viewLocked ? "board.unlockView" : "board.lockView");
+    lockBtn.innerHTML = viewLocked ? icons.unlockView(14) : icons.lockView(14);
+    for (const btn of [zoomInBtn, zoomOutBtn, zoomLabel]) {
+      btn.disabled = viewLocked;
+      btn.toggleAttribute("aria-disabled", viewLocked);
+    }
+  }
+
+  function setViewLocked(locked: boolean): void {
+    if (viewLocked === locked) {
+      syncViewLockUi();
+      return;
+    }
+    viewLocked = locked;
+    if (locked) {
+      panning = false;
+      spaceHeld = false;
+      viewport.classList.remove("is-panning", "is-space");
+    }
+    syncViewLockUi();
+  }
 
   const snow: BoardSnow = createBoardSnow({
     viewport,
@@ -577,6 +615,7 @@ export function createBoardPane(
   }
 
   function zoomAt(nextZoom: number, clientX: number, clientY: number): void {
+    if (viewLocked) return;
     const rect = viewport.getBoundingClientRect();
     const vx = clientX - rect.left;
     const vy = clientY - rect.top;
@@ -589,6 +628,7 @@ export function createBoardPane(
   }
 
   function zoomByFactor(factor: number): void {
+    if (viewLocked) return;
     const rect = viewport.getBoundingClientRect();
     zoomAt(
       camera.zoom * factor,
@@ -598,6 +638,7 @@ export function createBoardPane(
   }
 
   function fitAll(): void {
+    if (viewLocked) return;
     const bounds = contentBounds();
     const vw = viewport.clientWidth || 1;
     const vh = viewport.clientHeight || 1;
@@ -677,6 +718,7 @@ export function createBoardPane(
     updateLinks();
     markMinimapDirty();
     schedulePersist();
+    setViewLocked(true);
     root.dispatchEvent(
       new CustomEvent("board:refit-terminals", { bubbles: true })
     );
@@ -686,6 +728,7 @@ export function createBoardPane(
   function arrangeCards(): void {
     if (cards.length === 0) return;
 
+    setViewLocked(false);
     for (const card of cards) {
       if (card.kind === "terminal") {
         cardEls.get(card.id)?.classList.remove("is-tiled");
@@ -836,6 +879,7 @@ export function createBoardPane(
   }
 
   function centerCameraOnWorld(worldX: number, worldY: number): void {
+    if (viewLocked) return;
     const vw = viewport.clientWidth || 1;
     const vh = viewport.clientHeight || 1;
     camera.x = vw / 2 - worldX * camera.zoom;
@@ -1281,6 +1325,7 @@ export function createBoardPane(
   }
 
   function startPan(e: PointerEvent): void {
+    if (viewLocked) return;
     panning = true;
     const startX = e.clientX;
     const startY = e.clientY;
@@ -1288,7 +1333,7 @@ export function createBoardPane(
     const originY = camera.y;
     viewport.classList.add("is-panning");
     const onMove = (ev: PointerEvent) => {
-      if (!panning) return;
+      if (!panning || viewLocked) return;
       camera.x = originX + (ev.clientX - startX);
       camera.y = originY + (ev.clientY - startY);
       applyCamera();
@@ -1312,6 +1357,10 @@ export function createBoardPane(
       const target = e.target as HTMLElement;
       if (target.closest(".board-chrome")) return;
       const overCard = Boolean(target.closest(".board-card"));
+      if (viewLocked) {
+        if (e.button === 0 && !overCard) setFocus(null);
+        return;
+      }
       const wantPan =
         e.button === 1 || spaceHeld || (e.button === 0 && !overCard);
       if (!wantPan) return;
@@ -1332,6 +1381,7 @@ export function createBoardPane(
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         e.stopPropagation();
+        if (viewLocked) return;
         const dy = wheelDeltaY(e);
         // Trackpad pinch sends tiny deltas; mouse notches are ~100.
         const intensity = Math.abs(dy) < 12 ? 0.014 : 0.0032;
@@ -1341,20 +1391,21 @@ export function createBoardPane(
       const target = e.target;
       if (target instanceof Element && focus) {
         const cardEl = cardEls.get(focus.cardId);
-        const surface =
+        const scrollSurface =
           cardEl?.contains(target) ? cardScrollSurface(target) : null;
-        if (surface) {
+        if (scrollSurface) {
           const dx = e.deltaX;
           const dy = wheelDeltaY(e);
           // Shift+wheel or sideways-dominant trackpad → pan board left/right.
           if (e.shiftKey || Math.abs(dx) > Math.abs(dy)) {
             e.preventDefault();
             e.stopPropagation();
+            if (viewLocked) return;
             camera.x -= e.shiftKey ? dy : dx;
             applyCamera(true);
             return;
           }
-          if (canScrollVertically(surface, dy)) {
+          if (canScrollVertically(scrollSurface, dy)) {
             return;
           }
           // No more vertical room — fall through to board pan.
@@ -1363,6 +1414,7 @@ export function createBoardPane(
 
       e.preventDefault();
       e.stopPropagation();
+      if (viewLocked) return;
       camera.x -= e.deltaX;
       camera.y -= wheelDeltaY(e);
       applyCamera(true);
@@ -1396,6 +1448,7 @@ export function createBoardPane(
     if (isTypingTarget(e.target)) return;
 
     if (e.code === "Space" && !e.repeat) {
+      if (viewLocked) return;
       spaceHeld = true;
       viewport.classList.add("is-space");
       e.preventDefault();
@@ -1404,32 +1457,32 @@ export function createBoardPane(
 
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key === "0") {
-      resetZoom();
+      if (!viewLocked) resetZoom();
       e.preventDefault();
       return;
     }
     if (mod && e.key === "1") {
-      fitAll();
+      if (!viewLocked) fitAll();
       e.preventDefault();
       return;
     }
     if (e.key === "=" || e.key === "+") {
-      zoomByFactor(ZOOM_BTN_STEP);
+      if (!viewLocked) zoomByFactor(ZOOM_BTN_STEP);
       e.preventDefault();
       return;
     }
     if (e.key === "-" || e.key === "_") {
-      zoomByFactor(1 / ZOOM_BTN_STEP);
+      if (!viewLocked) zoomByFactor(1 / ZOOM_BTN_STEP);
       e.preventDefault();
       return;
     }
     if (e.key === "0" && !mod) {
-      resetZoom();
+      if (!viewLocked) resetZoom();
       e.preventDefault();
       return;
     }
     if (e.key === "1" && !mod) {
-      fitAll();
+      if (!viewLocked) fitAll();
       e.preventDefault();
     }
   });
@@ -1443,13 +1496,13 @@ export function createBoardPane(
   // Minimap: click / drag to move camera; drag view rect feels like Figma
   let mapDragging = false;
   minimapBody.addEventListener("pointerdown", (e) => {
-    if (mapCollapsed) return;
+    if (mapCollapsed || viewLocked) return;
     mapDragging = true;
     minimap.classList.add("is-dragging");
     const world = clientToWorldOnMap(e.clientX, e.clientY);
     centerCameraOnWorld(world.x, world.y);
     const onMove = (ev: PointerEvent) => {
-      if (!mapDragging) return;
+      if (!mapDragging || viewLocked) return;
       const next = clientToWorldOnMap(ev.clientX, ev.clientY);
       centerCameraOnWorld(next.x, next.y);
     };
@@ -1466,7 +1519,7 @@ export function createBoardPane(
   });
 
   minimapBody.addEventListener("dblclick", (e) => {
-    fitAll();
+    if (!viewLocked) fitAll();
     e.preventDefault();
   });
 
@@ -1476,14 +1529,14 @@ export function createBoardPane(
   root.querySelector("#btn-board-tile")!.addEventListener("click", () => {
     tileOpenTerminals();
   });
+  lockBtn.addEventListener("click", () => {
+    setViewLocked(!viewLocked);
+  });
   root.querySelector("#btn-board-zoom-in")!.addEventListener("click", () => {
     zoomByFactor(ZOOM_BTN_STEP);
   });
   root.querySelector("#btn-board-zoom-out")!.addEventListener("click", () => {
     zoomByFactor(1 / ZOOM_BTN_STEP);
-  });
-  root.querySelector("#btn-board-map-fit")!.addEventListener("click", () => {
-    fitAll();
   });
   zoomLabel.addEventListener("click", () => {
     resetZoom();
@@ -1705,12 +1758,25 @@ export function createBoardPane(
       );
     },
     applyPersisted(state, liveTabIds) {
-      cards = [];
-      for (const el of cardEls.values()) el.remove();
-      cardEls.clear();
-      zCounter = 1;
+      // Keep live terminal cards (openLocal may already have mounted them).
+      // Only replace prompt cards from disk — never wipe active terminals.
+      const keptTerminals = cards.filter(
+        (c): c is TerminalCard =>
+          c.kind === "terminal" && liveTabIds.has(c.tabId)
+      );
+      for (const [id, el] of [...cardEls]) {
+        const existing = cards.find((c) => c.id === id);
+        if (existing?.kind === "terminal" && liveTabIds.has(existing.tabId)) {
+          continue;
+        }
+        el.remove();
+        cardEls.delete(id);
+      }
+      cards = [...keptTerminals];
+      zCounter = Math.max(1, ...keptTerminals.map((c) => c.z), 1);
+
       for (const raw of state.cards) {
-        if (raw.kind === "terminal") continue;
+        if (raw.kind !== "prompt") continue;
         if (!liveTabIds.has(raw.tabId)) continue;
         const card: PromptCard = {
           ...raw,
@@ -1728,8 +1794,9 @@ export function createBoardPane(
         if (!ids.has(card.parentId)) delete card.parentId;
       }
       for (const card of cards) {
+        if (card.kind !== "prompt") continue;
         mountCard(card);
-        if (card.kind === "prompt") syncPromptStatusBadge(card);
+        syncPromptStatusBadge(card);
       }
       if (state.camera) {
         camera = {
@@ -1739,8 +1806,31 @@ export function createBoardPane(
         };
       }
       applyCamera();
+      // Saved camera can leave the new terminal off-screen — bring focus into view.
+      const focused =
+        (focus && cards.find((c) => c.id === focus!.cardId)) ||
+        keptTerminals[0];
+      if (focused) {
+        ensureCardVisible(focused);
+        if (!focus || focus.cardId !== focused.id) {
+          if (focused.kind === "terminal") {
+            setFocus({
+              kind: "terminal",
+              cardId: focused.id,
+              tabId: focused.tabId,
+            });
+          }
+        } else {
+          markMinimapDirty();
+          updateMinimap();
+        }
+      } else {
+        setFocus(null);
+      }
       syncEmpty();
       updateLinks();
+      markMinimapDirty();
+      updateMinimap();
     },
     toPersisted() {
       return {
@@ -1821,6 +1911,7 @@ export function createBoardPane(
 
   syncEmpty();
   syncAddPromptEnabled();
+  syncViewLockUi();
   applyCamera();
   return api;
 }

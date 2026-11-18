@@ -1795,7 +1795,40 @@ function registerIpc(): void {
     return { ok: true as const };
   });
 
+  ipcMain.handle("shell:open-path", async (_e, targetPath?: string) => {
+    if (typeof targetPath !== "string" || !targetPath.trim()) {
+      return { ok: false as const, error: "empty" };
+    }
+    const err = await shell.openPath(targetPath.trim());
+    if (err) return { ok: false as const, error: err };
+    return { ok: true as const };
+  });
+
   ipcMain.handle("fs:home", async () => os.homedir());
+
+  ipcMain.handle(
+    "fs:pick-directory",
+    async (_e, opts?: { title?: string; defaultPath?: string }) => {
+      const dialogOpts = {
+        title:
+          typeof opts?.title === "string" && opts.title.trim()
+            ? opts.title.trim()
+            : "Choose folder",
+        defaultPath:
+          typeof opts?.defaultPath === "string" && opts.defaultPath.trim()
+            ? opts.defaultPath.trim()
+            : os.homedir(),
+        properties: ["openDirectory", "createDirectory"] as Array<
+          "openDirectory" | "createDirectory"
+        >,
+      };
+      const result = mainWindow
+        ? await dialog.showOpenDialog(mainWindow, dialogOpts)
+        : await dialog.showOpenDialog(dialogOpts);
+      if (result.canceled || !result.filePaths[0]) return null;
+      return result.filePaths[0];
+    }
+  );
 
   ipcMain.handle("ssh:list-identities", async () => listSshIdentities());
 

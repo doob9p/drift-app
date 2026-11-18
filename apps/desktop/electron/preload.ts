@@ -145,11 +145,18 @@ export type DesktopApi = {
     decision: ApprovalDecision;
   }) => Promise<void>;
   openExternal: (url: string) => Promise<{ ok: boolean }>;
+  openPath: (
+    targetPath: string
+  ) => Promise<{ ok: true } | { ok: false; error?: string }>;
   onShortcut: (
     cb: (payload: { action: string; index?: number }) => void
   ) => () => void;
   getPathForFile: (file: File) => string;
   getHomeDir: () => Promise<string>;
+  pickDirectory: (opts?: {
+    title?: string;
+    defaultPath?: string;
+  }) => Promise<string | null>;
   listSshIdentities: () => Promise<
     Array<{ path: string; label: string; hasPublicKey: boolean }>
   >;
@@ -596,6 +603,7 @@ const api: DesktopApi = {
   resolveApproval: (input) =>
     ipcRenderer.invoke("agent:resolve-approval", input),
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
+  openPath: (targetPath) => ipcRenderer.invoke("shell:open-path", targetPath),
   onShortcut: (cb) => {
     const listener = (
       _e: Electron.IpcRendererEvent,
@@ -612,6 +620,7 @@ const api: DesktopApi = {
     }
   },
   getHomeDir: () => ipcRenderer.invoke("fs:home"),
+  pickDirectory: (opts) => ipcRenderer.invoke("fs:pick-directory", opts),
   listSshIdentities: () => ipcRenderer.invoke("ssh:list-identities"),
   defaultSshIdentity: () => ipcRenderer.invoke("ssh:default-identity"),
   pickSshIdentity: () => ipcRenderer.invoke("ssh:pick-identity"),
