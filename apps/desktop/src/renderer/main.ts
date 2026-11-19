@@ -162,6 +162,18 @@ const state = {
   christmasSnowAmount: 0.55,
   christmasSnowSpeed: 0.5,
   christmasSnowSmooth: false,
+  autumnTheme: false,
+  autumnLeafAmount: 0.55,
+  autumnLeafSpeed: 0.5,
+  sakuraTheme: false,
+  sakuraPetalAmount: 0.55,
+  sakuraPetalSpeed: 0.5,
+  rainTheme: false,
+  rainAmount: 0.55,
+  rainSpeed: 0.5,
+  firefliesTheme: false,
+  firefliesAmount: 0.55,
+  firefliesSpeed: 0.5,
   models: [] as ModelOption[],
   lastUsage: null as TokenUsageSnapshot | null,
   lastCostCents: null as number | null,
@@ -380,27 +392,28 @@ app.innerHTML = `
                   >Applies to newly opened local terminals.</span
                 >
               </label>
-              <label class="settings-toggle-row" for="settings-christmas-theme">
-                <span class="settings-toggle-copy">
-                  <span data-i18n="settings.christmasTheme">Christmas board theme</span>
-                  <span class="settings-hint" data-i18n="settings.christmasThemeHint"
-                    >Move mouse to sweep snow. ⌥ + move to make a snowball. Bump two balls to build a snowman.</span
-                  >
-                </span>
-                <input
-                  type="checkbox"
-                  id="settings-christmas-theme"
-                  class="settings-toggle"
-                />
+              <label class="settings-board-theme" id="settings-board-theme-row">
+                <span data-i18n="settings.boardTheme">Board theme</span>
+                <select id="settings-board-theme">
+                  <option value="off" data-i18n="settings.boardThemeOff">Off</option>
+                  <option value="christmas" data-i18n="settings.boardThemeChristmas">Christmas snow</option>
+                  <option value="autumn" data-i18n="settings.boardThemeAutumn">Autumn leaves</option>
+                  <option value="sakura" data-i18n="settings.boardThemeSakura">Cherry blossoms</option>
+                  <option value="rain" data-i18n="settings.boardThemeRain">Rain</option>
+                  <option value="fireflies" data-i18n="settings.boardThemeFireflies">Fireflies</option>
+                </select>
+                <span class="settings-hint" id="settings-board-theme-hint" data-i18n="settings.boardThemeHintOff"
+                  >Seasonal overlays for the board. Pick one theme at a time.</span
+                >
               </label>
-              <div class="settings-snow-controls" id="settings-snow-controls" hidden>
-                <label class="settings-snow-slider" for="settings-snow-amount">
-                  <span class="settings-snow-slider-label" data-i18n="settings.christmasSnowAmount">Amount</span>
+              <div class="settings-snow-controls" id="settings-board-theme-controls" hidden>
+                <label class="settings-snow-slider" for="settings-theme-amount">
+                  <span class="settings-snow-slider-label" data-i18n="settings.themeAmount">Amount</span>
                   <div class="settings-snow-slider-track">
                     <span class="settings-snow-end low" aria-hidden="true">···</span>
                     <input
                       type="range"
-                      id="settings-snow-amount"
+                      id="settings-theme-amount"
                       min="0"
                       max="100"
                       step="1"
@@ -409,13 +422,13 @@ app.innerHTML = `
                     <span class="settings-snow-end high" aria-hidden="true">••••</span>
                   </div>
                 </label>
-                <label class="settings-snow-slider" for="settings-snow-speed">
-                  <span class="settings-snow-slider-label" data-i18n="settings.christmasSnowSpeed">Speed</span>
+                <label class="settings-snow-slider" for="settings-theme-speed">
+                  <span class="settings-snow-slider-label" data-i18n="settings.themeSpeed">Speed</span>
                   <div class="settings-snow-slider-track">
                     <span class="settings-snow-end low" aria-hidden="true">›</span>
                     <input
                       type="range"
-                      id="settings-snow-speed"
+                      id="settings-theme-speed"
                       min="0"
                       max="100"
                       step="1"
@@ -424,7 +437,12 @@ app.innerHTML = `
                     <span class="settings-snow-end high" aria-hidden="true">»</span>
                   </div>
                 </label>
-                <label class="settings-toggle-row settings-snow-smooth" for="settings-snow-smooth">
+                <label
+                  class="settings-toggle-row settings-snow-smooth"
+                  for="settings-snow-smooth"
+                  id="settings-snow-smooth-row"
+                  hidden
+                >
                   <span class="settings-toggle-copy">
                     <span data-i18n="settings.christmasSnowSmooth">Smoother (uses more CPU)</span>
                   </span>
@@ -437,10 +455,10 @@ app.innerHTML = `
                 <button
                   type="button"
                   class="settings-snow-clear"
-                  id="btn-clear-snow"
-                  data-i18n="settings.christmasSnowClear"
+                  id="btn-clear-theme"
+                  data-i18n="settings.themeClear"
                 >
-                  Clear all snow
+                  Clear overlay
                 </button>
               </div>
             </div>
@@ -650,23 +668,29 @@ const els = {
   settingsLocalShell: document.getElementById(
     "settings-local-shell"
   ) as HTMLSelectElement,
-  settingsChristmasTheme: document.getElementById(
-    "settings-christmas-theme"
-  ) as HTMLInputElement,
-  settingsSnowControls: document.getElementById(
-    "settings-snow-controls"
+  settingsBoardTheme: document.getElementById(
+    "settings-board-theme"
+  ) as HTMLSelectElement,
+  settingsBoardThemeHint: document.getElementById(
+    "settings-board-theme-hint"
   ) as HTMLElement,
-  settingsSnowAmount: document.getElementById(
-    "settings-snow-amount"
+  settingsBoardThemeControls: document.getElementById(
+    "settings-board-theme-controls"
+  ) as HTMLElement,
+  settingsThemeAmount: document.getElementById(
+    "settings-theme-amount"
   ) as HTMLInputElement,
-  settingsSnowSpeed: document.getElementById(
-    "settings-snow-speed"
+  settingsThemeSpeed: document.getElementById(
+    "settings-theme-speed"
   ) as HTMLInputElement,
+  settingsSnowSmoothRow: document.getElementById(
+    "settings-snow-smooth-row"
+  ) as HTMLElement,
   settingsSnowSmooth: document.getElementById(
     "settings-snow-smooth"
   ) as HTMLInputElement,
-  btnClearSnow: document.getElementById(
-    "btn-clear-snow"
+  btnClearTheme: document.getElementById(
+    "btn-clear-theme"
   ) as HTMLButtonElement,
   modePopover: document.getElementById("mode-popover")!,
   modeTip: document.getElementById("mode-tip")!,
@@ -873,8 +897,7 @@ function applyUiLocale(): void {
   if (!els.settingsShellRow.hidden) {
     els.settingsLocalShell.value = state.localShell;
   }
-  els.settingsChristmasTheme.checked = state.christmasTheme;
-  syncSnowControlsUi();
+  syncBoardThemeUi();
   if (board) {
     applyDomI18n(board.root);
     for (const card of board.getCards()) {
@@ -3644,17 +3667,92 @@ function clampUnitUi(n: number, fallback: number): number {
   return Math.min(1, Math.max(0, n));
 }
 
-function syncSnowControlsUi(): void {
-  const on = state.christmasTheme;
-  els.settingsSnowControls.hidden = !on;
-  els.settingsSnowControls.classList.toggle("is-open", on);
-  els.settingsSnowAmount.value = String(
-    Math.round(state.christmasSnowAmount * 100)
-  );
-  els.settingsSnowSpeed.value = String(
-    Math.round(state.christmasSnowSpeed * 100)
-  );
+type BoardThemeId =
+  | "off"
+  | "christmas"
+  | "autumn"
+  | "sakura"
+  | "rain"
+  | "fireflies";
+
+function currentBoardTheme(): BoardThemeId {
+  if (state.christmasTheme) return "christmas";
+  if (state.autumnTheme) return "autumn";
+  if (state.sakuraTheme) return "sakura";
+  if (state.rainTheme) return "rain";
+  if (state.firefliesTheme) return "fireflies";
+  return "off";
+}
+
+function boardThemeHintKey(theme: BoardThemeId): string {
+  if (theme === "christmas") return "settings.christmasThemeHint";
+  if (theme === "autumn") return "settings.autumnThemeHint";
+  if (theme === "sakura") return "settings.sakuraThemeHint";
+  if (theme === "rain") return "settings.rainThemeHint";
+  if (theme === "fireflies") return "settings.firefliesThemeHint";
+  return "settings.boardThemeHintOff";
+}
+
+function themeAmount(theme: BoardThemeId): number {
+  if (theme === "autumn") return state.autumnLeafAmount;
+  if (theme === "sakura") return state.sakuraPetalAmount;
+  if (theme === "rain") return state.rainAmount;
+  if (theme === "fireflies") return state.firefliesAmount;
+  return state.christmasSnowAmount;
+}
+
+function themeSpeed(theme: BoardThemeId): number {
+  if (theme === "autumn") return state.autumnLeafSpeed;
+  if (theme === "sakura") return state.sakuraPetalSpeed;
+  if (theme === "rain") return state.rainSpeed;
+  if (theme === "fireflies") return state.firefliesSpeed;
+  return state.christmasSnowSpeed;
+}
+
+function setThemeAmount(theme: BoardThemeId, v: number): void {
+  if (theme === "autumn") state.autumnLeafAmount = v;
+  else if (theme === "sakura") state.sakuraPetalAmount = v;
+  else if (theme === "rain") state.rainAmount = v;
+  else if (theme === "fireflies") state.firefliesAmount = v;
+  else state.christmasSnowAmount = v;
+}
+
+function setThemeSpeed(theme: BoardThemeId, v: number): void {
+  if (theme === "autumn") state.autumnLeafSpeed = v;
+  else if (theme === "sakura") state.sakuraPetalSpeed = v;
+  else if (theme === "rain") state.rainSpeed = v;
+  else if (theme === "fireflies") state.firefliesSpeed = v;
+  else state.christmasSnowSpeed = v;
+}
+
+function themeClearKey(theme: BoardThemeId): string {
+  if (theme === "autumn") return "settings.autumnLeafClear";
+  if (theme === "sakura") return "settings.sakuraPetalClear";
+  if (theme === "rain") return "settings.rainClear";
+  if (theme === "fireflies") return "settings.firefliesClear";
+  return "settings.christmasSnowClear";
+}
+
+function syncBoardThemeUi(): void {
+  const theme = currentBoardTheme();
+  els.settingsBoardTheme.value = theme;
+  els.settingsBoardThemeHint.setAttribute("data-i18n", boardThemeHintKey(theme));
+  els.settingsBoardThemeHint.textContent = t(boardThemeHintKey(theme));
+
+  const on = theme !== "off";
+  els.settingsBoardThemeControls.hidden = !on;
+  els.settingsBoardThemeControls.classList.toggle("is-open", on);
+
+  els.settingsThemeAmount.value = String(Math.round(themeAmount(theme) * 100));
+  els.settingsThemeSpeed.value = String(Math.round(themeSpeed(theme) * 100));
+
+  const isChristmas = theme === "christmas";
+  els.settingsSnowSmoothRow.hidden = !isChristmas;
   els.settingsSnowSmooth.checked = state.christmasSnowSmooth;
+
+  const clearKey = themeClearKey(theme);
+  els.btnClearTheme.setAttribute("data-i18n", clearKey);
+  els.btnClearTheme.textContent = t(clearKey);
 }
 
 function applySnowOptionsToBoard(): void {
@@ -3665,54 +3763,195 @@ function applySnowOptionsToBoard(): void {
   });
 }
 
-els.settingsChristmasTheme.onchange = async () => {
-  const enabled = els.settingsChristmasTheme.checked;
-  state.christmasTheme = enabled;
-  syncSnowControlsUi();
-  board.setChristmasTheme(enabled);
-  if (enabled) applySnowOptionsToBoard();
-  await api.setChristmasTheme(enabled);
-  chat.addSystem(
-    enabled
-      ? t("settings.christmasThemeOn")
-      : t("settings.christmasThemeOff")
-  );
-};
-
-let snowPatchTimer: number | undefined;
-function queueSnowPatch(patch: {
-  amount?: number;
-  speed?: number;
-  smooth?: boolean;
-}): void {
-  applySnowOptionsToBoard();
-  window.clearTimeout(snowPatchTimer);
-  snowPatchTimer = window.setTimeout(() => {
-    void api.setChristmasSnow(patch);
-  }, 180);
+function applyAutumnOptionsToBoard(): void {
+  board?.setAutumnLeafOptions({
+    amount: state.autumnLeafAmount,
+    speed: state.autumnLeafSpeed,
+  });
 }
 
-els.settingsSnowAmount.oninput = () => {
-  state.christmasSnowAmount = clampUnitUi(
-    Number(els.settingsSnowAmount.value) / 100,
-    state.christmasSnowAmount
-  );
-  queueSnowPatch({ amount: state.christmasSnowAmount });
+function applySakuraOptionsToBoard(): void {
+  board?.setSakuraPetalOptions({
+    amount: state.sakuraPetalAmount,
+    speed: state.sakuraPetalSpeed,
+  });
+}
+
+function applyRainOptionsToBoard(): void {
+  board?.setRainOptions({
+    amount: state.rainAmount,
+    speed: state.rainSpeed,
+  });
+}
+
+function applyFirefliesOptionsToBoard(): void {
+  board?.setFirefliesOptions({
+    amount: state.firefliesAmount,
+    speed: state.firefliesSpeed,
+  });
+}
+
+async function applyBoardTheme(theme: BoardThemeId): Promise<void> {
+  const prev = currentBoardTheme();
+  if (prev === theme) {
+    syncBoardThemeUi();
+    return;
+  }
+
+  state.christmasTheme = theme === "christmas";
+  state.autumnTheme = theme === "autumn";
+  state.sakuraTheme = theme === "sakura";
+  state.rainTheme = theme === "rain";
+  state.firefliesTheme = theme === "fireflies";
+  syncBoardThemeUi();
+
+  board.setChristmasTheme(state.christmasTheme);
+  board.setAutumnTheme(state.autumnTheme);
+  board.setSakuraTheme(state.sakuraTheme);
+  board.setRainTheme(state.rainTheme);
+  board.setFirefliesTheme(state.firefliesTheme);
+  if (state.christmasTheme) applySnowOptionsToBoard();
+  if (state.autumnTheme) applyAutumnOptionsToBoard();
+  if (state.sakuraTheme) applySakuraOptionsToBoard();
+  if (state.rainTheme) applyRainOptionsToBoard();
+  if (state.firefliesTheme) applyFirefliesOptionsToBoard();
+
+  if (theme === "christmas") {
+    await api.setChristmasTheme(true);
+  } else if (theme === "autumn") {
+    await api.setAutumnTheme(true);
+  } else if (theme === "sakura") {
+    await api.setSakuraTheme(true);
+  } else if (theme === "rain") {
+    await api.setRainTheme(true);
+  } else if (theme === "fireflies") {
+    await api.setFirefliesTheme(true);
+  } else if (prev === "christmas") {
+    await api.setChristmasTheme(false);
+  } else if (prev === "autumn") {
+    await api.setAutumnTheme(false);
+  } else if (prev === "sakura") {
+    await api.setSakuraTheme(false);
+  } else if (prev === "rain") {
+    await api.setRainTheme(false);
+  } else if (prev === "fireflies") {
+    await api.setFirefliesTheme(false);
+  }
+
+  const onKey =
+    theme === "christmas"
+      ? "settings.christmasThemeOn"
+      : theme === "autumn"
+        ? "settings.autumnThemeOn"
+        : theme === "sakura"
+          ? "settings.sakuraThemeOn"
+          : theme === "rain"
+            ? "settings.rainThemeOn"
+            : theme === "fireflies"
+              ? "settings.firefliesThemeOn"
+              : "settings.boardThemeCleared";
+  chat.addSystem(t(onKey));
+}
+
+els.settingsBoardTheme.onchange = () => {
+  const raw = els.settingsBoardTheme.value;
+  const theme: BoardThemeId =
+    raw === "christmas" ||
+    raw === "autumn" ||
+    raw === "sakura" ||
+    raw === "rain" ||
+    raw === "fireflies"
+      ? raw
+      : "off";
+  void applyBoardTheme(theme);
 };
-els.settingsSnowSpeed.oninput = () => {
-  state.christmasSnowSpeed = clampUnitUi(
-    Number(els.settingsSnowSpeed.value) / 100,
-    state.christmasSnowSpeed
-  );
-  queueSnowPatch({ speed: state.christmasSnowSpeed });
+
+let themePatchTimer: number | undefined;
+function queueActiveThemePatch(): void {
+  const theme = currentBoardTheme();
+  if (theme === "christmas") {
+    applySnowOptionsToBoard();
+    window.clearTimeout(themePatchTimer);
+    themePatchTimer = window.setTimeout(() => {
+      void api.setChristmasSnow({
+        amount: state.christmasSnowAmount,
+        speed: state.christmasSnowSpeed,
+        smooth: state.christmasSnowSmooth,
+      });
+    }, 180);
+  } else if (theme === "autumn") {
+    applyAutumnOptionsToBoard();
+    window.clearTimeout(themePatchTimer);
+    themePatchTimer = window.setTimeout(() => {
+      void api.setAutumnLeaves({
+        amount: state.autumnLeafAmount,
+        speed: state.autumnLeafSpeed,
+      });
+    }, 180);
+  } else if (theme === "sakura") {
+    applySakuraOptionsToBoard();
+    window.clearTimeout(themePatchTimer);
+    themePatchTimer = window.setTimeout(() => {
+      void api.setSakuraPetals({
+        amount: state.sakuraPetalAmount,
+        speed: state.sakuraPetalSpeed,
+      });
+    }, 180);
+  } else if (theme === "rain") {
+    applyRainOptionsToBoard();
+    window.clearTimeout(themePatchTimer);
+    themePatchTimer = window.setTimeout(() => {
+      void api.setRain({
+        amount: state.rainAmount,
+        speed: state.rainSpeed,
+      });
+    }, 180);
+  } else if (theme === "fireflies") {
+    applyFirefliesOptionsToBoard();
+    window.clearTimeout(themePatchTimer);
+    themePatchTimer = window.setTimeout(() => {
+      void api.setFireflies({
+        amount: state.firefliesAmount,
+        speed: state.firefliesSpeed,
+      });
+    }, 180);
+  }
+}
+
+els.settingsThemeAmount.oninput = () => {
+  const theme = currentBoardTheme();
+  const v = clampUnitUi(Number(els.settingsThemeAmount.value) / 100, themeAmount(theme));
+  setThemeAmount(theme, v);
+  queueActiveThemePatch();
+};
+els.settingsThemeSpeed.oninput = () => {
+  const theme = currentBoardTheme();
+  const v = clampUnitUi(Number(els.settingsThemeSpeed.value) / 100, themeSpeed(theme));
+  setThemeSpeed(theme, v);
+  queueActiveThemePatch();
 };
 els.settingsSnowSmooth.onchange = () => {
   state.christmasSnowSmooth = els.settingsSnowSmooth.checked;
-  queueSnowPatch({ smooth: state.christmasSnowSmooth });
+  queueActiveThemePatch();
 };
-els.btnClearSnow.onclick = () => {
-  board.clearChristmasSnow();
-  chat.addSystem(t("settings.christmasSnowCleared"));
+els.btnClearTheme.onclick = () => {
+  const theme = currentBoardTheme();
+  if (theme === "autumn") {
+    board.clearAutumnLeaves();
+    chat.addSystem(t("settings.autumnLeafCleared"));
+  } else if (theme === "sakura") {
+    board.clearSakuraPetals();
+    chat.addSystem(t("settings.sakuraPetalCleared"));
+  } else if (theme === "rain") {
+    board.clearRain();
+    chat.addSystem(t("settings.rainCleared"));
+  } else if (theme === "fireflies") {
+    board.clearFireflies();
+    chat.addSystem(t("settings.firefliesCleared"));
+  } else {
+    board.clearChristmasSnow();
+    chat.addSystem(t("settings.christmasSnowCleared"));
+  }
 };
 els.settingsLocalShell.onchange = async () => {
   const next = els.settingsLocalShell.value as LocalShellId;
@@ -4071,6 +4310,29 @@ void (async () => {
     );
     state.christmasSnowSpeed = clampUnitUi(settings.christmasSnowSpeed, 0.5);
     state.christmasSnowSmooth = settings.christmasSnowSmooth === true;
+    state.autumnTheme = settings.autumnTheme === true;
+    state.autumnLeafAmount = clampUnitUi(settings.autumnLeafAmount, 0.55);
+    state.autumnLeafSpeed = clampUnitUi(settings.autumnLeafSpeed, 0.5);
+    state.sakuraTheme = settings.sakuraTheme === true;
+    state.sakuraPetalAmount = clampUnitUi(settings.sakuraPetalAmount, 0.55);
+    state.sakuraPetalSpeed = clampUnitUi(settings.sakuraPetalSpeed, 0.5);
+    state.rainTheme = settings.rainTheme === true;
+    state.rainAmount = clampUnitUi(settings.rainAmount, 0.55);
+    state.rainSpeed = clampUnitUi(settings.rainSpeed, 0.5);
+    state.firefliesTheme = settings.firefliesTheme === true;
+    state.firefliesAmount = clampUnitUi(settings.firefliesAmount, 0.55);
+    state.firefliesSpeed = clampUnitUi(settings.firefliesSpeed, 0.5);
+    const flags = [
+      "christmasTheme",
+      "autumnTheme",
+      "sakuraTheme",
+      "rainTheme",
+      "firefliesTheme",
+    ] as const;
+    const active = flags.filter((k) => state[k]);
+    if (active.length > 1) {
+      for (const k of flags) state[k] = k === active[0];
+    }
     setLocale(state.locale);
     const status = await api.getApiKeyStatus();
     state.hasKey = status.hasKey;
@@ -4101,7 +4363,15 @@ void (async () => {
     await openLocal();
     restoreSavedPrompts(savedBoard);
     applySnowOptionsToBoard();
+    applyAutumnOptionsToBoard();
+    applySakuraOptionsToBoard();
+    applyRainOptionsToBoard();
+    applyFirefliesOptionsToBoard();
     board.setChristmasTheme(state.christmasTheme);
+    board.setAutumnTheme(state.autumnTheme);
+    board.setSakuraTheme(state.sakuraTheme);
+    board.setRainTheme(state.rainTheme);
+    board.setFirefliesTheme(state.firefliesTheme);
     refreshStatusStrip();
     void refreshStripMetrics();
     void refreshAccountUsage();

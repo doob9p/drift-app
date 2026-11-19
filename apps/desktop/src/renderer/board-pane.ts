@@ -5,6 +5,26 @@ import {
   type BoardSnow,
   type BoardSnowOptions,
 } from "./board-snow.js";
+import {
+  createBoardLeaves,
+  type BoardLeaves,
+  type BoardLeavesOptions,
+} from "./board-leaves.js";
+import {
+  createBoardSakura,
+  type BoardSakura,
+  type BoardSakuraOptions,
+} from "./board-sakura.js";
+import {
+  createBoardRain,
+  type BoardRain,
+  type BoardRainOptions,
+} from "./board-rain.js";
+import {
+  createBoardFireflies,
+  type BoardFireflies,
+  type BoardFirefliesOptions,
+} from "./board-fireflies.js";
 import type {
   BoardCamera,
   BoardCard,
@@ -70,6 +90,18 @@ export type BoardPane = {
   setChristmasTheme: (enabled: boolean) => void;
   setChristmasSnowOptions: (opts: Partial<BoardSnowOptions>) => void;
   clearChristmasSnow: () => void;
+  setAutumnTheme: (enabled: boolean) => void;
+  setAutumnLeafOptions: (opts: Partial<BoardLeavesOptions>) => void;
+  clearAutumnLeaves: () => void;
+  setSakuraTheme: (enabled: boolean) => void;
+  setSakuraPetalOptions: (opts: Partial<BoardSakuraOptions>) => void;
+  clearSakuraPetals: () => void;
+  setRainTheme: (enabled: boolean) => void;
+  setRainOptions: (opts: Partial<BoardRainOptions>) => void;
+  clearRain: () => void;
+  setFirefliesTheme: (enabled: boolean) => void;
+  setFirefliesOptions: (opts: Partial<BoardFirefliesOptions>) => void;
+  clearFireflies: () => void;
   arrangeCards: () => void;
   tileOpenTerminals: () => void;
 };
@@ -262,20 +294,60 @@ export function createBoardPane(
     syncViewLockUi();
   }
 
+  const roofProvider = () =>
+    cards
+      .filter(
+        (c): c is TerminalCard => c.kind === "terminal" && !c.minimized
+      )
+      .map((c) => {
+        const { w, h } = cardSize(c);
+        return { id: c.id, x: c.x, y: c.y, w, h, z: c.z };
+      });
+
   const snow: BoardSnow = createBoardSnow({
     viewport,
     world: WORLD,
     getCamera: () => camera,
-    getRoofs: () =>
-      cards
-        .filter(
-          (c): c is TerminalCard => c.kind === "terminal" && !c.minimized
-        )
-        .map((c) => {
-          const { w, h } = cardSize(c);
-          return { id: c.id, x: c.x, y: c.y, w, h, z: c.z };
-        }),
+    getRoofs: roofProvider,
   });
+
+  const leaves: BoardLeaves = createBoardLeaves({
+    viewport,
+    world: WORLD,
+    getCamera: () => camera,
+    getRoofs: roofProvider,
+  });
+
+  const sakura: BoardSakura = createBoardSakura({
+    viewport,
+    world: WORLD,
+    getCamera: () => camera,
+    getRoofs: roofProvider,
+  });
+
+  const rain: BoardRain = createBoardRain({
+    viewport,
+    world: WORLD,
+    getCamera: () => camera,
+    getRoofs: roofProvider,
+  });
+
+  const fireflies: BoardFireflies = createBoardFireflies({
+    viewport,
+    world: WORLD,
+    getCamera: () => camera,
+    getRoofs: roofProvider,
+  });
+
+  function disableSeasonalExcept(
+    keep: "snow" | "leaves" | "sakura" | "rain" | "fireflies" | null
+  ): void {
+    if (keep !== "snow") snow.setEnabled(false);
+    if (keep !== "leaves") leaves.setEnabled(false);
+    if (keep !== "sakura") sakura.setEnabled(false);
+    if (keep !== "rain") rain.setEnabled(false);
+    if (keep !== "fireflies") fireflies.setEnabled(false);
+  }
 
   function nextZ(): number {
     zCounter += 1;
@@ -1046,6 +1118,10 @@ export function createBoardPane(
       clampCardInWorld(card);
       if (card.kind === "terminal" && !card.minimized) {
         snow.shake(card.id, card.x - lastCardX);
+        leaves.shake(card.id, card.x - lastCardX);
+        sakura.shake(card.id, card.x - lastCardX);
+        rain.shake(card.id, card.x - lastCardX);
+        fireflies.shake(card.id, card.x - lastCardX);
       }
       lastCardX = card.x;
       layoutCard(card);
@@ -1623,7 +1699,13 @@ export function createBoardPane(
     minimizeOtherTerminals(exceptTabId) {
       for (const c of cards) {
         if (c.kind === "terminal" && c.tabId !== exceptTabId) {
-          if (!c.minimized) snow.dump(c.id);
+          if (!c.minimized) {
+            snow.dump(c.id);
+            leaves.dump(c.id);
+            sakura.dump(c.id);
+            rain.dump(c.id);
+            fireflies.dump(c.id);
+          }
           c.minimized = true;
           layoutCard(c);
         }
@@ -1647,7 +1729,13 @@ export function createBoardPane(
       const removeIds = cards
         .filter((c) => c.tabId === tabId)
         .map((c) => c.id);
-      for (const id of removeIds) snow.dump(id);
+      for (const id of removeIds) {
+        snow.dump(id);
+        leaves.dump(id);
+        sakura.dump(id);
+        rain.dump(id);
+        fireflies.dump(id);
+      }
       cards = cards.filter((c) => c.tabId !== tabId);
       for (const id of removeIds) removeCardEl(id);
       // Closing the focused terminal clears selection — do not auto-pick
@@ -1863,7 +1951,13 @@ export function createBoardPane(
     setMinimized(cardId, minimized) {
       const card = cards.find((c) => c.id === cardId);
       if (!card || card.kind !== "terminal") return;
-      if (minimized && !card.minimized) snow.dump(cardId);
+      if (minimized && !card.minimized) {
+        snow.dump(cardId);
+        leaves.dump(cardId);
+        sakura.dump(cardId);
+        rain.dump(cardId);
+        fireflies.dump(cardId);
+      }
       card.minimized = minimized;
       layoutCard(card);
       markMinimapDirty();
@@ -1873,6 +1967,7 @@ export function createBoardPane(
       return cards.find((c) => c.id === cardId);
     },
     setChristmasTheme(enabled) {
+      if (enabled) disableSeasonalExcept("snow");
       snow.setEnabled(enabled);
     },
     setChristmasSnowOptions(opts) {
@@ -1880,6 +1975,46 @@ export function createBoardPane(
     },
     clearChristmasSnow() {
       snow.clearAll();
+    },
+    setAutumnTheme(enabled) {
+      if (enabled) disableSeasonalExcept("leaves");
+      leaves.setEnabled(enabled);
+    },
+    setAutumnLeafOptions(opts) {
+      leaves.setOptions(opts);
+    },
+    clearAutumnLeaves() {
+      leaves.clearAll();
+    },
+    setSakuraTheme(enabled) {
+      if (enabled) disableSeasonalExcept("sakura");
+      sakura.setEnabled(enabled);
+    },
+    setSakuraPetalOptions(opts) {
+      sakura.setOptions(opts);
+    },
+    clearSakuraPetals() {
+      sakura.clearAll();
+    },
+    setRainTheme(enabled) {
+      if (enabled) disableSeasonalExcept("rain");
+      rain.setEnabled(enabled);
+    },
+    setRainOptions(opts) {
+      rain.setOptions(opts);
+    },
+    clearRain() {
+      rain.clearAll();
+    },
+    setFirefliesTheme(enabled) {
+      if (enabled) disableSeasonalExcept("fireflies");
+      fireflies.setEnabled(enabled);
+    },
+    setFirefliesOptions(opts) {
+      fireflies.setOptions(opts);
+    },
+    clearFireflies() {
+      fireflies.clearAll();
     },
     arrangeCards() {
       arrangeCards();
@@ -1895,7 +2030,13 @@ export function createBoardPane(
           .map((c) => c.id),
       ];
       if (!cards.some((c) => c.id === cardId)) return;
-      for (const id of removeIds) snow.dump(id);
+      for (const id of removeIds) {
+        snow.dump(id);
+        leaves.dump(id);
+        sakura.dump(id);
+        rain.dump(id);
+        fireflies.dump(id);
+      }
       cards = cards.filter((c) => !removeIds.includes(c.id));
       for (const id of removeIds) removeCardEl(id);
       if (focus && removeIds.includes(focus.cardId)) {

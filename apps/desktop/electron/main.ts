@@ -165,6 +165,18 @@ let appSettings: AppSettings = {
   christmasSnowAmount: 0.55,
   christmasSnowSpeed: 0.5,
   christmasSnowSmooth: false,
+  autumnTheme: false,
+  autumnLeafAmount: 0.55,
+  autumnLeafSpeed: 0.5,
+  sakuraTheme: false,
+  sakuraPetalAmount: 0.55,
+  sakuraPetalSpeed: 0.5,
+  rainTheme: false,
+  rainAmount: 0.55,
+  rainSpeed: 0.5,
+  firefliesTheme: false,
+  firefliesAmount: 0.55,
+  firefliesSpeed: 0.5,
 };
 
 function normalizeLocalShell(value: unknown): LocalShellId {
@@ -309,6 +321,18 @@ async function loadSettings(): Promise<AppSettings> {
       christmasSnowAmount: clampUnit(parsed.christmasSnowAmount, 0.55),
       christmasSnowSpeed: clampUnit(parsed.christmasSnowSpeed, 0.5),
       christmasSnowSmooth: parsed.christmasSnowSmooth === true,
+      autumnTheme: parsed.autumnTheme === true,
+      autumnLeafAmount: clampUnit(parsed.autumnLeafAmount, 0.55),
+      autumnLeafSpeed: clampUnit(parsed.autumnLeafSpeed, 0.5),
+      sakuraTheme: parsed.sakuraTheme === true,
+      sakuraPetalAmount: clampUnit(parsed.sakuraPetalAmount, 0.55),
+      sakuraPetalSpeed: clampUnit(parsed.sakuraPetalSpeed, 0.5),
+      rainTheme: parsed.rainTheme === true,
+      rainAmount: clampUnit(parsed.rainAmount, 0.55),
+      rainSpeed: clampUnit(parsed.rainSpeed, 0.5),
+      firefliesTheme: parsed.firefliesTheme === true,
+      firefliesAmount: clampUnit(parsed.firefliesAmount, 0.55),
+      firefliesSpeed: clampUnit(parsed.firefliesSpeed, 0.5),
     };
   } catch {
     return {
@@ -320,6 +344,18 @@ async function loadSettings(): Promise<AppSettings> {
       christmasSnowAmount: 0.55,
       christmasSnowSpeed: 0.5,
       christmasSnowSmooth: false,
+      autumnTheme: false,
+      autumnLeafAmount: 0.55,
+      autumnLeafSpeed: 0.5,
+      sakuraTheme: false,
+      sakuraPetalAmount: 0.55,
+      sakuraPetalSpeed: 0.5,
+      rainTheme: false,
+      rainAmount: 0.55,
+      rainSpeed: 0.5,
+      firefliesTheme: false,
+      firefliesAmount: 0.55,
+      firefliesSpeed: 0.5,
     };
   }
 }
@@ -1733,9 +1769,14 @@ function registerIpc(): void {
   ipcMain.handle(
     "settings:set-christmas-theme",
     async (_e, enabled: unknown) => {
+      const on = enabled === true;
       await saveSettings({
         ...appSettings,
-        christmasTheme: enabled === true,
+        christmasTheme: on,
+        autumnTheme: on ? false : appSettings.autumnTheme,
+        sakuraTheme: on ? false : appSettings.sakuraTheme,
+        rainTheme: on ? false : appSettings.rainTheme,
+        firefliesTheme: on ? false : appSettings.firefliesTheme,
       });
       return appSettings;
     }
@@ -1765,6 +1806,167 @@ function registerIpc(): void {
           patch?.smooth === undefined
             ? appSettings.christmasSnowSmooth
             : patch.smooth === true,
+      });
+      return appSettings;
+    }
+  );
+
+  ipcMain.handle(
+    "settings:set-autumn-theme",
+    async (_e, enabled: unknown) => {
+      const on = enabled === true;
+      await saveSettings({
+        ...appSettings,
+        autumnTheme: on,
+        christmasTheme: on ? false : appSettings.christmasTheme,
+        sakuraTheme: on ? false : appSettings.sakuraTheme,
+        rainTheme: on ? false : appSettings.rainTheme,
+        firefliesTheme: on ? false : appSettings.firefliesTheme,
+      });
+      return appSettings;
+    }
+  );
+
+  ipcMain.handle(
+    "settings:set-autumn-leaves",
+    async (
+      _e,
+      patch: {
+        amount?: unknown;
+        speed?: unknown;
+      }
+    ) => {
+      await saveSettings({
+        ...appSettings,
+        autumnLeafAmount:
+          patch?.amount === undefined
+            ? appSettings.autumnLeafAmount
+            : clampUnit(patch.amount, appSettings.autumnLeafAmount),
+        autumnLeafSpeed:
+          patch?.speed === undefined
+            ? appSettings.autumnLeafSpeed
+            : clampUnit(patch.speed, appSettings.autumnLeafSpeed),
+      });
+      return appSettings;
+    }
+  );
+
+  ipcMain.handle(
+    "settings:set-sakura-theme",
+    async (_e, enabled: unknown) => {
+      const on = enabled === true;
+      await saveSettings({
+        ...appSettings,
+        sakuraTheme: on,
+        christmasTheme: on ? false : appSettings.christmasTheme,
+        autumnTheme: on ? false : appSettings.autumnTheme,
+        rainTheme: on ? false : appSettings.rainTheme,
+        firefliesTheme: on ? false : appSettings.firefliesTheme,
+      });
+      return appSettings;
+    }
+  );
+
+  ipcMain.handle(
+    "settings:set-sakura-petals",
+    async (
+      _e,
+      patch: {
+        amount?: unknown;
+        speed?: unknown;
+      }
+    ) => {
+      await saveSettings({
+        ...appSettings,
+        sakuraPetalAmount:
+          patch?.amount === undefined
+            ? appSettings.sakuraPetalAmount
+            : clampUnit(patch.amount, appSettings.sakuraPetalAmount),
+        sakuraPetalSpeed:
+          patch?.speed === undefined
+            ? appSettings.sakuraPetalSpeed
+            : clampUnit(patch.speed, appSettings.sakuraPetalSpeed),
+      });
+      return appSettings;
+    }
+  );
+
+  ipcMain.handle(
+    "settings:set-rain-theme",
+    async (_e, enabled: unknown) => {
+      const on = enabled === true;
+      await saveSettings({
+        ...appSettings,
+        rainTheme: on,
+        christmasTheme: on ? false : appSettings.christmasTheme,
+        autumnTheme: on ? false : appSettings.autumnTheme,
+        sakuraTheme: on ? false : appSettings.sakuraTheme,
+        firefliesTheme: on ? false : appSettings.firefliesTheme,
+      });
+      return appSettings;
+    }
+  );
+
+  ipcMain.handle(
+    "settings:set-rain",
+    async (
+      _e,
+      patch: {
+        amount?: unknown;
+        speed?: unknown;
+      }
+    ) => {
+      await saveSettings({
+        ...appSettings,
+        rainAmount:
+          patch?.amount === undefined
+            ? appSettings.rainAmount
+            : clampUnit(patch.amount, appSettings.rainAmount),
+        rainSpeed:
+          patch?.speed === undefined
+            ? appSettings.rainSpeed
+            : clampUnit(patch.speed, appSettings.rainSpeed),
+      });
+      return appSettings;
+    }
+  );
+
+  
+  ipcMain.handle(
+    "settings:set-fireflies-theme",
+    async (_e, enabled: unknown) => {
+      const on = enabled === true;
+      await saveSettings({
+        ...appSettings,
+        firefliesTheme: on,
+        christmasTheme: on ? false : appSettings.christmasTheme,
+        autumnTheme: on ? false : appSettings.autumnTheme,
+        sakuraTheme: on ? false : appSettings.sakuraTheme,
+        rainTheme: on ? false : appSettings.rainTheme,
+      });
+      return appSettings;
+    }
+  );
+
+  ipcMain.handle(
+    "settings:set-fireflies",
+    async (
+      _e,
+      patch: {
+        amount?: unknown;
+        speed?: unknown;
+      }
+    ) => {
+      await saveSettings({
+        ...appSettings,
+        firefliesAmount:
+          patch?.amount === undefined
+            ? appSettings.firefliesAmount
+            : clampUnit(patch.amount, appSettings.firefliesAmount),
+        firefliesSpeed:
+          patch?.speed === undefined
+            ? appSettings.firefliesSpeed
+            : clampUnit(patch.speed, appSettings.firefliesSpeed),
       });
       return appSettings;
     }

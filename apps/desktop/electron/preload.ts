@@ -81,6 +81,26 @@ export type DesktopApi = {
     speed?: number;
     smooth?: boolean;
   }) => Promise<AppSettings>;
+  setAutumnTheme: (enabled: boolean) => Promise<AppSettings>;
+  setAutumnLeaves: (patch: {
+    amount?: number;
+    speed?: number;
+  }) => Promise<AppSettings>;
+  setSakuraTheme: (enabled: boolean) => Promise<AppSettings>;
+  setSakuraPetals: (patch: {
+    amount?: number;
+    speed?: number;
+  }) => Promise<AppSettings>;
+  setRainTheme: (enabled: boolean) => Promise<AppSettings>;
+  setRain: (patch: {
+    amount?: number;
+    speed?: number;
+  }) => Promise<AppSettings>;
+  setFirefliesTheme: (enabled: boolean) => Promise<AppSettings>;
+  setFireflies: (patch: {
+    amount?: number;
+    speed?: number;
+  }) => Promise<AppSettings>;
   listLocalShells: () => Promise<{
     platform: string;
     current: LocalShellId;
@@ -554,6 +574,20 @@ const api: DesktopApi = {
     ipcRenderer.invoke("settings:set-christmas-theme", enabled),
   setChristmasSnow: (patch) =>
     ipcRenderer.invoke("settings:set-christmas-snow", patch),
+  setAutumnTheme: (enabled) =>
+    ipcRenderer.invoke("settings:set-autumn-theme", enabled),
+  setAutumnLeaves: (patch) =>
+    ipcRenderer.invoke("settings:set-autumn-leaves", patch),
+  setSakuraTheme: (enabled) =>
+    ipcRenderer.invoke("settings:set-sakura-theme", enabled),
+  setSakuraPetals: (patch) =>
+    ipcRenderer.invoke("settings:set-sakura-petals", patch),
+  setRainTheme: (enabled) =>
+    ipcRenderer.invoke("settings:set-rain-theme", enabled),
+  setRain: (patch) => ipcRenderer.invoke("settings:set-rain", patch),
+  setFirefliesTheme: (enabled) =>
+    ipcRenderer.invoke("settings:set-fireflies-theme", enabled),
+  setFireflies: (patch) => ipcRenderer.invoke("settings:set-fireflies", patch),
   listLocalShells: () => ipcRenderer.invoke("settings:list-local-shells"),
   listModels: () => ipcRenderer.invoke("settings:list-models"),
   getBoard: () => ipcRenderer.invoke("board:get"),

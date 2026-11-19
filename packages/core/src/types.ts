@@ -149,6 +149,30 @@ export interface AppSettings {
   christmasSnowSpeed: number;
   /** Higher-quality snow (more CPU). Default: false. */
   christmasSnowSmooth: boolean;
+  /** Autumn falling leaves board overlay. Default: false. */
+  autumnTheme: boolean;
+  /** Leaf fall amount 0–1. Default: 0.55. */
+  autumnLeafAmount: number;
+  /** Leaf fall / tumble speed 0–1. Default: 0.5. */
+  autumnLeafSpeed: number;
+  /** Sakura falling petals board overlay. Default: false. */
+  sakuraTheme: boolean;
+  /** Petal fall amount 0–1. Default: 0.55. */
+  sakuraPetalAmount: number;
+  /** Petal fall / flutter speed 0–1. Default: 0.5. */
+  sakuraPetalSpeed: number;
+  /** Rain board overlay. Default: false. */
+  rainTheme: boolean;
+  /** Rain amount 0–1. Default: 0.55. */
+  rainAmount: number;
+  /** Rain speed 0–1. Default: 0.5. */
+  rainSpeed: number;
+  /** Fireflies board overlay. Default: false. */
+  firefliesTheme: boolean;
+  /** Firefly density 0–1. Default: 0.55. */
+  firefliesAmount: number;
+  /** Firefly drift speed 0–1. Default: 0.5. */
+  firefliesSpeed: number;
 }
 
 export interface TabState {

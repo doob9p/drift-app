@@ -1182,7 +1182,8 @@ body.is-resizing-col {
   border-radius: 8px;
 }
 
-.settings-shell .settings-hint {
+.settings-shell .settings-hint,
+.settings-board-theme .settings-hint {
   display: block;
   margin-top: 0.45rem;
   font-size: 0.7rem;
@@ -1368,6 +1369,168 @@ body.is-resizing-col {
 
 .board-viewport.is-christmas.is-snow-gather {
   cursor: grab;
+}
+
+.board-leaves-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.board-leaves-back {
+  z-index: 1;
+}
+
+.board-leaves-front {
+  z-index: 3;
+}
+
+.board-viewport.is-autumn {
+  background:
+    radial-gradient(
+      980px 520px at 48% -12%,
+      rgba(255, 186, 92, 0.14),
+      transparent 58%
+    ),
+    radial-gradient(
+      620px 380px at 12% 28%,
+      rgba(232, 92, 58, 0.09),
+      transparent 52%
+    ),
+    radial-gradient(
+      720px 440px at 94% 8%,
+      rgba(255, 140, 66, 0.08),
+      transparent 48%
+    ),
+    radial-gradient(
+      560px 360px at 78% 88%,
+      rgba(92, 118, 160, 0.07),
+      transparent 55%
+    ),
+    color-mix(in srgb, var(--panel) 40%, var(--chrome));
+}
+
+.board-viewport.is-autumn .board-grid {
+  opacity: 0.3;
+}
+
+.board-sakura-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.board-sakura-back {
+  z-index: 1;
+}
+
+.board-sakura-front {
+  z-index: 3;
+}
+
+.board-viewport.is-sakura {
+  background:
+    radial-gradient(
+      980px 520px at 46% -10%,
+      rgba(255, 196, 214, 0.16),
+      transparent 58%
+    ),
+    radial-gradient(
+      640px 400px at 10% 22%,
+      rgba(255, 160, 190, 0.09),
+      transparent 52%
+    ),
+    radial-gradient(
+      700px 420px at 92% 12%,
+      rgba(255, 220, 230, 0.1),
+      transparent 50%
+    ),
+    radial-gradient(
+      560px 360px at 72% 90%,
+      rgba(140, 170, 210, 0.08),
+      transparent 55%
+    ),
+    color-mix(in srgb, var(--panel) 40%, var(--chrome));
+}
+
+.board-viewport.is-sakura .board-grid {
+  opacity: 0.3;
+}
+
+.board-rain-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.board-rain-back {
+  z-index: 1;
+}
+
+.board-rain-front {
+  z-index: 3;
+}
+
+.board-viewport.is-rain {
+  background:
+    radial-gradient(
+      1000px 560px at 50% -14%,
+      rgba(120, 160, 200, 0.14),
+      transparent 58%
+    ),
+    radial-gradient(
+      680px 420px at 8% 30%,
+      rgba(70, 100, 140, 0.1),
+      transparent 52%
+    ),
+    radial-gradient(
+      720px 440px at 94% 18%,
+      rgba(90, 130, 170, 0.08),
+      transparent 50%
+    ),
+    color-mix(in srgb, var(--panel) 36%, #0a121a);
+}
+
+.board-viewport.is-rain .board-grid {
+  opacity: 0.26;
+}
+
+.board-fireflies-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.board-fireflies-back {
+  z-index: 1;
+}
+
+.board-fireflies-front {
+  z-index: 3;
+}
+
+.board-viewport.is-fireflies {
+  background:
+    radial-gradient(
+      1000px 560px at 48% -10%,
+      rgba(40, 70, 40, 0.14),
+      transparent 58%
+    ),
+    radial-gradient(
+      640px 420px at 12% 80%,
+      rgba(90, 120, 40, 0.08),
+      transparent 52%
+    ),
+    radial-gradient(
+      700px 400px at 92% 30%,
+      rgba(50, 60, 30, 0.1),
+      transparent 50%
+    ),
+    color-mix(in srgb, var(--panel) 34%, #0a100c);
+}
+
+.board-viewport.is-fireflies .board-grid {
+  opacity: 0.22;
 }
 
 .settings-key-help {
