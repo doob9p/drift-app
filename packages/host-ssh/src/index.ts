@@ -226,14 +226,32 @@ function pushPasswordAuthOptions(args: string[]): void {
   );
 }
 
-/** Shared control socket so password/key auth from the live PTY is reused by exec. */
-export function sshControlPath(session: SavedSession): string {
+/** Drift-private SSH state under ~/.ssh/drift (mux sockets, known_hosts). */
+export function sshDriftDir(): string {
   const dir = path.join(homeDir(), ".ssh", "drift");
   mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function toOpenSshPath(p: string): string {
+  // OpenSSH on Windows accepts forward slashes more reliably in -o paths.
+  return process.platform === "win32" ? p.replace(/\\/g, "/") : p;
+}
+
+/** Shared control socket so password/key auth from the live PTY is reused by exec. */
+export function sshControlPath(session: SavedSession): string {
   // %C = hash(local, host, port, user) — keeps the path short for sockaddr limits.
-  // OpenSSH on Windows accepts forward slashes in ControlPath more reliably.
-  const raw = path.join(dir, "cm-%C");
-  return process.platform === "win32" ? raw.replace(/\\/g, "/") : raw;
+  return toOpenSshPath(path.join(sshDriftDir(), "cm-%C"));
+}
+
+/** Isolate from other tools' ~/.ssh/known_hosts (stale keys, PuTTY leftovers, etc.). */
+export function sshKnownHostsPath(): string {
+  return toOpenSshPath(path.join(sshDriftDir(), "known_hosts"));
+}
+
+function pushHostKeyOptions(args: string[]): void {
+  args.push("-o", "StrictHostKeyChecking=accept-new");
+  args.push("-o", `UserKnownHostsFile=${sshKnownHostsPath()}`);
 }
 
 function pushMuxOptions(args: string[], session: SavedSession): void {
@@ -257,13 +275,12 @@ export function buildSshArgs(
   if (session.port) args.push("-p", String(session.port));
   if (session.identityFile) args.push("-i", expandHome(session.identityFile));
   if (session.proxyJump) args.push("-J", session.proxyJump);
-  args.push("-o", "StrictHostKeyChecking=accept-new");
+  pushHostKeyOptions(args);
   pushMuxOptions(args, session);
   if (opts?.batch) args.push("-o", "BatchMode=yes");
   args.push(`${session.user}@${session.host}`);
   return args;
 }
-
 function expandHome(p: string): string {
   if (p === "~") return homeDir();
   if (p.startsWith("~/") || p.startsWith("~\\")) {
@@ -518,7 +535,7 @@ export function buildScpArgs(
   if (session.port) args.push("-P", String(session.port));
   if (session.identityFile) args.push("-i", expandHome(session.identityFile));
   if (session.proxyJump) args.push("-o", `ProxyJump=${session.proxyJump}`);
-  args.push("-o", "StrictHostKeyChecking=accept-new");
+  pushHostKeyOptions(args);
   pushMuxOptions(args, session);
   if (opts?.passwordAuth) pushPasswordAuthOptions(args);
   else if (opts?.batch !== false) args.push("-o", "BatchMode=yes");
@@ -568,7 +585,7 @@ function buildRsyncShell(
   if (session.port) parts.push("-p", String(session.port));
   if (session.identityFile) parts.push("-i", expandHome(session.identityFile));
   if (session.proxyJump) parts.push("-o", `ProxyJump=${session.proxyJump}`);
-  parts.push("-o", "StrictHostKeyChecking=accept-new");
+  pushHostKeyOptions(parts);
   pushMuxOptions(parts, session);
   if (opts?.passwordAuth) pushPasswordAuthOptions(parts);
   else parts.push("-o", "BatchMode=yes");
