@@ -793,13 +793,10 @@ function createPane(
       e.preventDefault();
       const row = select.closest("[data-path]") as HTMLElement | null;
       const p = row?.dataset.path;
-      const kind = row?.dataset.kind;
       if (!p) return;
+      // Single click selects only. Folders open on double-click;
+      // chevron still expands/collapses in place.
       selectRow(p);
-      // Enter folders on click (chevron only expands in place).
-      if (kind === "dir") {
-        goToDir(p);
-      }
     }
   });
 
@@ -811,9 +808,13 @@ function createPane(
       target.closest(".fs-row[data-path]")) as HTMLElement | null;
     const p = row?.dataset.path;
     const kind = row?.dataset.kind;
-    if (!p || !kind || kind === "dir") return;
+    if (!p || !kind) return;
     e.preventDefault();
     selectRow(p);
+    if (kind === "dir") {
+      goToDir(p);
+      return;
+    }
     if (opts.onOpenFile) {
       void opts.onOpenFile(p);
     } else {
