@@ -63,12 +63,29 @@ function download(url, dest) {
 function unzip(zipPath, dest) {
   mkdirSync(dest, { recursive: true });
   if (process.platform === "win32") {
+    // Prefer tar: Expand-Archive on PowerShell 7 can fail with
+    // ZipFileExtensions.ExtractToDirectory overload errors on GHA runners.
+    try {
+      execFileSync("tar.exe", ["-xf", zipPath, "-C", dest], {
+        stdio: "inherit",
+      });
+      return;
+    } catch {
+      /* fall through to .NET ZipFile (2-arg) */
+    }
     execFileSync(
       "powershell.exe",
       [
         "-NoProfile",
         "-Command",
-        `Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${dest.replace(/'/g, "''")}' -Force`,
+        [
+          "Add-Type -AssemblyName System.IO.Compression.FileSystem;",
+          `$z = '${zipPath.replace(/'/g, "''")}';`,
+          `$d = '${dest.replace(/'/g, "''")}';`,
+          "if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force };",
+          "New-Item -ItemType Directory -Path $d | Out-Null;",
+          "[System.IO.Compression.ZipFile]::ExtractToDirectory($z, $d);",
+        ].join(" "),
       ],
       { stdio: "inherit" }
     );
