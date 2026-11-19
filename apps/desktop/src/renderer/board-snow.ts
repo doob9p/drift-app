@@ -5,7 +5,7 @@
  * - Move mouse → carve/sweep piled snow
  * - ⌥ + move → gather / roll snowball (pushSnowballs then sweep)
  * - Cursor rolls balls ahead on the pile (with rotation), not a velocity shove
- * - Bump two snowballs → snowman; drag snowman
+ * - collideSnowballs: soft push-apart, hard roll/impact → snowman (or combine)
  * - Overlapping terminals: isHidden occlusion (back roof snow clipped by front cards)
  *
  * Pile look (SnowRenderer Metal + Pile):
@@ -63,6 +63,11 @@ type Snowball = {
   vx: number;
   vy: number;
   roofId: string | null;
+  /**
+   * SnowDesk collideSnowballs: hard merge when a ball was rolled/pushed
+   * this frame (or |vy| is high); otherwise overlapping balls only separate.
+   */
+  active: boolean;
 };
 
 type SnowmanEntity = {
@@ -73,6 +78,11 @@ type SnowmanEntity = {
   vx: number;
   vy: number;
   roofId: string | null;
+  /**
+   * Pile height when last seated (SnowDesk stores this on Snowman).
+   * Do not re-read the live pile every frame — cursor carve would bob the sprite.
+   */
+  seatH: number;
 };
 
 /** SnowDesk Pile: discrete columns + repose avalanche. */
@@ -145,6 +155,18 @@ const PUSH_AHEAD = 0.75;
 const PUSH_MAX_SPEED = 1350;
 /** Idle Option gap that clears gatherTravel / gathered (SnowDesk ~1s). */
 const GATHER_IDLE_RESET = 1;
+/** SnowDesk collideSnowballs: |dx| < (r1+r2) * 0.9 (0x3f666666). */
+const COLLIDE_SEP = 0.9;
+/** SnowDesk soft vs hard: |vy| ≤ 25 → separate; else can merge (0x4039). */
+const COLLIDE_SOFT_VY = 25;
+/** Soft separation minimum push (0x3ff8 → 1.5). */
+const COLLIDE_PUSH_MIN = 1.5;
+/** SnowDesk: max(r) ≥ 10 → snowman; else leftover combined ball (0x4024). */
+const SNOWMAN_MIN_R = 10;
+/** Combined leftover radius cap (0x42200000). */
+const COMBINE_MAX_R = 40;
+/** SnowDesk snowman y lift uses largerR * 0.95 (0x3f733333). */
+const SNOWMAN_Y_LIFT = 0.95;
 
 function uid(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
@@ -666,6 +688,16 @@ export function createBoardSnow(opts: {
         }
         // Ledge under a front card — don't carve (or refill via relax) there.
         if (isPileColHidden(roof, c)) continue;
+        // Don't dig out the seat under a snowman (avoids a hollow under the sprite).
+        if (
+          men.some(
+            (m) =>
+              m.roofId === roof.id &&
+              Math.abs(colX - m.x) <= 14 + 6 * m.scale
+          )
+        ) {
+          continue;
+        }
 
         // New surface = bottom of the brush disc, clamped into the column.
         // (Previously used biteTop and residual stayed ≈ h, so take was always 0.)
@@ -753,6 +785,7 @@ export function createBoardSnow(opts: {
     ball.vy = Math.max(12, Math.min(45, Math.abs(dx) * 1.5 + 14));
     if (ball.r > 0.5) ball.rotation += dir * 0.35;
     ball.roofId = null;
+    ball.active = true;
   }
 
   /**
@@ -861,6 +894,7 @@ export function createBoardSnow(opts: {
     ball.roofId = roof.id;
     ball.vx = dx * 10;
     ball.vy = 0;
+    ball.active = true;
   }
 
   function midOr(roof: SnowRoof): number {
@@ -947,31 +981,104 @@ export function createBoardSnow(opts: {
     return pushed;
   }
 
-  function tryMergeBalls(): void {
+  /**
+   * SnowDesk SnowWorld.collideSnowballs (REA 0x1000157f0):
+   * - Same surface only
+   * - Horizontal overlap: |dx| < (r1+r2)*0.9
+   * - Soft (both quiet): push apart
+   * - Hard (rolled this frame or |vy|>25): remove both;
+   *   maxR < 10 → one combined ball; else snowman
+   */
+  function collideSnowballs(): void {
     for (let i = 0; i < balls.length; i++) {
       for (let j = i + 1; j < balls.length; j++) {
         const a = balls[i]!;
         const b = balls[j]!;
-        if (a.r < BALL_MIN_R + 3 || b.r < BALL_MIN_R + 3) continue;
-        const dx = a.x - b.x;
-        const dy = a.y - b.y;
-        const need = (a.r + b.r) * 0.82;
-        if (dx * dx + dy * dy > need * need) continue;
-        if (men.length >= MAX_MEN) return;
-        men.push({
-          id: uid("man"),
-          x: (a.x + b.x) / 2,
-          y: Math.min(a.y, b.y) - 4,
-          scale: Math.min(1.4, 0.75 + (a.r + b.r) / 64),
-          vx: 0,
-          vy: 0,
-          roofId: a.roofId ?? b.roofId,
-        });
+        if (!a.roofId || !b.roofId || a.roofId !== b.roofId) continue;
+        const absDx = Math.abs(a.x - b.x);
+        const need = (a.r + b.r) * COLLIDE_SEP;
+        if (absDx >= need) continue;
+
+        const soft =
+          !a.active &&
+          !b.active &&
+          Math.abs(a.vy) <= COLLIDE_SOFT_VY &&
+          Math.abs(b.vy) <= COLLIDE_SOFT_VY;
+        if (soft) {
+          const push = Math.max(COLLIDE_PUSH_MIN, (need - absDx) * 0.5);
+          if (a.x <= b.x) {
+            a.x -= push;
+            b.x += push;
+          } else {
+            a.x += push;
+            b.x -= push;
+          }
+          const roof = roofById(a.roofId);
+          if (roof) {
+            const pile = ensurePile(roof);
+            const minX = roof.x + Math.min(a.r, b.r) * 0.5;
+            const maxX = roof.x + roof.w - Math.min(a.r, b.r) * 0.5;
+            a.x = Math.max(minX, Math.min(maxX, a.x));
+            b.x = Math.max(minX, Math.min(maxX, b.x));
+            a.y = seatBallY(roof.y, pileHeightAt(pile, a.x - roof.x), a.r);
+            b.y = seatBallY(roof.y, pileHeightAt(pile, b.x - roof.x), b.r);
+          }
+          continue;
+        }
+
+        const big = a.r >= b.r ? a : b;
+        const maxR = Math.max(a.r, b.r);
+        const combinedR = Math.min(
+          COMBINE_MAX_R,
+          Math.sqrt(a.r * a.r + b.r * b.r)
+        );
+        const combinedMass = a.mass + b.mass;
+        const roofId = a.roofId;
+        const cx = big.x;
+        const cy = Math.min(a.y, b.y);
+        const rot = big.rotation;
+        const vx = (a.vx + b.vx) * 0.5;
+
         balls.splice(j, 1);
         balls.splice(i, 1);
+
+        if (maxR < SNOWMAN_MIN_R) {
+          if (balls.length < MAX_BALLS) {
+            const r = Math.max(BALL_MIN_R, combinedR);
+            balls.push({
+              id: uid("ball"),
+              x: cx,
+              y: cy,
+              r,
+              mass: Math.max(combinedMass, (r / 1.05) * (r / 1.05)),
+              rotation: rot,
+              vx,
+              vy: 0,
+              roofId,
+              active: false,
+            });
+          }
+        } else if (men.length < MAX_MEN) {
+          const roof = roofById(roofId);
+          const pile = roof ? ensurePile(roof) : null;
+          const seatH =
+            roof && pile ? pileHeightAt(pile, cx - roof.x) : 0;
+          men.push({
+            id: uid("man"),
+            x: cx,
+            y: roof ? roof.y - seatH - 2 : cy - maxR * SNOWMAN_Y_LIFT * 0.2,
+            scale: Math.min(1.45, 0.55 + maxR / 36),
+            vx: 0,
+            vy: 0,
+            roofId,
+            seatH,
+          });
+        }
+        for (const b of balls) b.active = false;
         return;
       }
     }
+    for (const b of balls) b.active = false;
   }
 
   function dump(roofId: string): void {
@@ -1310,10 +1417,9 @@ export function createBoardSnow(opts: {
       if (m.roofId === GROUND_ID || (m.roofId && roofs.has(m.roofId))) {
         const roof =
           m.roofId === GROUND_ID ? groundRoof() : roofs.get(m.roofId!)!;
-        const pile = ensurePile(roof);
-        const h = pileHeightAt(pile, m.x - roof.x);
         m.x = Math.max(roof.x + 12, Math.min(roof.x + roof.w - 12, m.x));
-        m.y = roof.y - h - 2;
+        // Keep captured seatH — live pileHeightAt would bounce under cursor carve.
+        m.y = roof.y - m.seatH - 2;
         m.vx *= 0.85;
         m.vy = 0;
         if (isHidden(m.x, m.y, roof.z)) m.vx = 0;
@@ -1332,18 +1438,33 @@ export function createBoardSnow(opts: {
         vy: m.vy,
       };
       settleBody(proxy, roofs);
+      if (proxy.roofId && proxy.roofId !== m.roofId) {
+        const roof =
+          proxy.roofId === GROUND_ID
+            ? groundRoof()
+            : roofs.get(proxy.roofId) ?? null;
+        if (roof) {
+          const pile = ensurePile(roof);
+          m.seatH = pileHeightAt(pile, m.x - roof.x);
+          m.y = roof.y - m.seatH - 2;
+        }
+      }
       m.roofId = proxy.roofId;
-      m.y = proxy.y;
       m.vy = proxy.vy;
       if (!m.roofId && m.y >= gy - 4) {
-        m.y = gy - 4;
+        const roof = groundRoof();
+        const pile = ensureGroundPile();
+        m.seatH = pileHeightAt(pile, m.x - roof.x);
+        m.y = roof.y - m.seatH - 2;
         m.roofId = GROUND_ID;
         m.vy = 0;
         m.vx *= 0.72;
+      } else if (m.roofId) {
+        m.y = proxy.y;
       }
     }
 
-    tryMergeBalls();
+    collideSnowballs();
   }
 
   /**
@@ -1418,6 +1539,15 @@ export function createBoardSnow(opts: {
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  /**
+   * SnowDesk appendSnowball: rotation snapped to k·π/2
+   * (`round(rot / (π/2)) * (π/2)`) so pixel sprites don't smear.
+   */
+  function snowballSpriteRotation(rotation: number): number {
+    const q = Math.PI / 2;
+    return Math.round(rotation / q) * q;
   }
 
   function drawSprite(
@@ -1495,7 +1625,15 @@ export function createBoardSnow(opts: {
         if (isHidden(b.x, b.y, gRoof.z)) continue;
         const p = toScreen(b.x, b.y);
         const s = b.r * 2 * cam.zoom;
-        drawSprite(frontCtx, ballImg, p.x, p.y, s, s, b.rotation);
+        drawSprite(
+          frontCtx,
+          ballImg,
+          p.x,
+          p.y,
+          s,
+          s,
+          snowballSpriteRotation(b.rotation)
+        );
       }
       for (const m of men) {
         if (m.roofId !== GROUND_ID) continue;
@@ -1522,7 +1660,15 @@ export function createBoardSnow(opts: {
         if (isHidden(b.x, b.y, roof.z)) continue;
         const p = toScreen(b.x, b.y);
         const s = b.r * 2 * cam.zoom;
-        drawSprite(frontCtx, ballImg, p.x, p.y, s, s, b.rotation);
+        drawSprite(
+          frontCtx,
+          ballImg,
+          p.x,
+          p.y,
+          s,
+          s,
+          snowballSpriteRotation(b.rotation)
+        );
       }
       for (const m of men) {
         if (m.roofId !== roof.id) continue;
@@ -1543,7 +1689,15 @@ export function createBoardSnow(opts: {
       if (isHidden(b.x, b.y, coverZ)) continue;
       const p = toScreen(b.x, b.y);
       const s = b.r * 2 * cam.zoom;
-      drawSprite(frontCtx, ballImg, p.x, p.y, s, s, b.rotation);
+      drawSprite(
+        frontCtx,
+        ballImg,
+        p.x,
+        p.y,
+        s,
+        s,
+        snowballSpriteRotation(b.rotation)
+      );
     }
     for (const m of men) {
       if (m.roofId === GROUND_ID) continue;
@@ -1728,6 +1882,7 @@ export function createBoardSnow(opts: {
               vx: dir * 12,
               vy: 0,
               roofId: hit.roof.id,
+              active: false,
             });
             spawned = true;
           }
