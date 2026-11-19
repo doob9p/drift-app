@@ -104,6 +104,7 @@ export type BoardPane = {
   clearFireflies: () => void;
   arrangeCards: () => void;
   tileOpenTerminals: () => void;
+  fitOpenTerminals: () => void;
 };
 
 function uid(prefix: string): string {
@@ -215,6 +216,12 @@ export function createBoardPane(
         <svg class="board-links" id="board-links" aria-hidden="true"></svg>
       </div>
       <div class="board-chrome" id="board-chrome">
+        <div class="board-chrome-hud board-tools-hud" role="group" aria-label="Board tools">
+          <button type="button" class="icon ghost" id="btn-board-arrange" data-i18n-title="board.arrange" title="${t("board.arrange")}" aria-label="${t("board.arrange")}">${icons.arrange(14)}</button>
+          <button type="button" class="icon ghost" id="btn-board-tile-fill" data-i18n-title="board.tileFill" title="${t("board.tileFill")}" aria-label="${t("board.tileFill")}">${icons.tileFill(14)}</button>
+          <button type="button" class="icon ghost" id="btn-board-tile-fit" data-i18n-title="board.tileFit" title="${t("board.tileFit")}" aria-label="${t("board.tileFit")}">${icons.tileFit(14)}</button>
+          <button type="button" class="icon ghost" id="btn-board-lock" data-i18n-title="board.lockView" title="${t("board.lockView")}" aria-label="${t("board.lockView")}" aria-pressed="false">${icons.lockView(14)}</button>
+        </div>
         <aside class="board-minimap" id="board-minimap" aria-label="${t("board.minimap")}">
           <header class="board-minimap-head">
             <span class="board-minimap-title" data-i18n="board.minimap">Map</span>
@@ -232,11 +239,6 @@ export function createBoardPane(
             <button type="button" class="icon ghost" id="btn-board-zoom-in" data-i18n-title="board.zoomIn" title="Zoom in">${icons.zoomIn(14)}</button>
           </div>
         </aside>
-        <div class="board-chrome-hud board-tools-hud" role="group" aria-label="Board tools">
-          <button type="button" class="icon ghost" id="btn-board-arrange" data-i18n-title="board.arrange" title="${t("board.arrange")}" aria-label="${t("board.arrange")}">${icons.arrange(14)}</button>
-          <button type="button" class="icon ghost" id="btn-board-tile" data-i18n-title="board.tileTerminals" title="${t("board.tileTerminals")}" aria-label="${t("board.tileTerminals")}">${icons.tileTerminals(14)}</button>
-          <button type="button" class="icon ghost" id="btn-board-lock" data-i18n-title="board.lockView" title="${t("board.lockView")}" aria-label="${t("board.lockView")}" aria-pressed="false">${icons.lockView(14)}</button>
-        </div>
       </div>
     </div>
   `;
@@ -724,10 +726,11 @@ export function createBoardPane(
   }
 
   /**
-   * Pack open (non-minimized) terminals into the viewport with no gaps —
-   * 1 → full screen, 2 → halves, 3+ → grid (last row stretched to fill).
+   * Pack open (non-minimized) terminals into the viewport.
+   * - fill: edge-to-edge, no gaps (flush chrome)
+   * - fit: small outer margin + gaps so every terminal is visible at once
    */
-  function tileOpenTerminals(): void {
+  function layoutOpenTerminals(mode: "fill" | "fit"): void {
     const terms = cards.filter(
       (c): c is TerminalCard => c.kind === "terminal" && !c.minimized
     );
@@ -738,6 +741,10 @@ export function createBoardPane(
     const n = terms.length;
     const cols = Math.ceil(Math.sqrt(n));
     const rows = Math.ceil(n / cols);
+    const pad = mode === "fit" ? 20 : 0;
+    const gap = mode === "fit" ? 12 : 0;
+    const usableW = Math.max(1, vw - pad * 2);
+    const usableH = Math.max(1, vh - pad * 2);
 
     // Keep the tile block inside the world canvas at zoom 1.
     const maxOriginX = Math.max(WORLD.x, WORLD.x + WORLD.w - vw);
@@ -760,11 +767,12 @@ export function createBoardPane(
       const rowStart = row * cols;
       const itemsInRow = Math.min(cols, n - rowStart);
       const col = i - rowStart;
-      const cellW = vw / itemsInRow;
-      const cellH = vh / rows;
+      const cellW =
+        (usableW - gap * Math.max(0, itemsInRow - 1)) / itemsInRow;
+      const cellH = (usableH - gap * Math.max(0, rows - 1)) / rows;
       const term = terms[i]!;
-      term.x = originX + col * cellW;
-      term.y = originY + row * cellH;
+      term.x = originX + pad + col * (cellW + gap);
+      term.y = originY + pad + row * (cellH + gap);
       term.w = cellW;
       term.h = cellH;
       term.z = nextZ();
@@ -774,7 +782,7 @@ export function createBoardPane(
     for (const term of terms) {
       const el = cardEls.get(term.id);
       el?.classList.add("is-arranging");
-      el?.classList.add("is-tiled");
+      if (mode === "fill") el?.classList.add("is-tiled");
     }
     void surface.offsetWidth;
     applyCamera(true);
@@ -794,6 +802,14 @@ export function createBoardPane(
     root.dispatchEvent(
       new CustomEvent("board:refit-terminals", { bubbles: true })
     );
+  }
+
+  function tileOpenTerminals(): void {
+    layoutOpenTerminals("fill");
+  }
+
+  function fitOpenTerminals(): void {
+    layoutOpenTerminals("fit");
   }
 
   /** Tidy cards by session: terminal left, linked prompts stacked to the right. */
@@ -1606,8 +1622,11 @@ export function createBoardPane(
   root.querySelector("#btn-board-arrange")!.addEventListener("click", () => {
     arrangeCards();
   });
-  root.querySelector("#btn-board-tile")!.addEventListener("click", () => {
+  root.querySelector("#btn-board-tile-fill")!.addEventListener("click", () => {
     tileOpenTerminals();
+  });
+  root.querySelector("#btn-board-tile-fit")!.addEventListener("click", () => {
+    fitOpenTerminals();
   });
   lockBtn.addEventListener("click", () => {
     setViewLocked(!viewLocked);
@@ -2021,6 +2040,9 @@ export function createBoardPane(
     },
     tileOpenTerminals() {
       tileOpenTerminals();
+    },
+    fitOpenTerminals() {
+      fitOpenTerminals();
     },
     removeCard(cardId) {
       const removeIds = [

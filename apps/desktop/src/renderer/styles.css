@@ -2534,12 +2534,14 @@ body.is-resizing-col {
 }
 
 .board-chrome-hud {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-items: center;
-  width: 100%;
-  padding: 0.15rem;
+  justify-content: center;
+  gap: 2px;
+  width: auto;
+  align-self: flex-end;
+  padding: 0.2rem;
   border: 1px solid color-mix(in srgb, var(--line-strong) 80%, transparent);
   border-radius: 10px;
   background: color-mix(in srgb, var(--panel) 92%, transparent);
@@ -2621,7 +2623,7 @@ body.is-resizing-col {
     height 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-/* Flush pane look after “tile terminals”. */
+/* Flush pane look after “fill terminals” (edge-to-edge). */
 .board-card.board-card-terminal.is-tiled {
   border-radius: 0;
   box-shadow: none;

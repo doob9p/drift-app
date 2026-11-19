@@ -46,7 +46,8 @@ import {
   BotMessageSquare,
   Grid2x2,
   GitBranch,
-  Columns2,
+  Expand,
+  LayoutGrid,
   Lock,
   LockOpen,
 } from "lucide";
@@ -128,9 +129,12 @@ export const icons = {
   plus: (size = 14) => lucideSvg(Plus, { size }),
   /** Open / attach an AI prompt card. */
   addPrompt: (size = 14) => lucideSvg(BotMessageSquare, { size }),
+  /** Tidy cards by session (terminal + linked prompts). */
   arrange: (size = 14) => lucideSvg(Grid2x2, { size }),
-  /** Tile open terminals to fill the viewport with no gaps. */
-  tileTerminals: (size = 14) => lucideSvg(Columns2, { size }),
+  /** Pack open terminals edge-to-edge in the viewport. */
+  tileFill: (size = 14) => lucideSvg(Expand, { size }),
+  /** Fit open terminals on screen with small gaps. */
+  tileFit: (size = 14) => lucideSvg(LayoutGrid, { size }),
   lockView: (size = 14) => lucideSvg(Lock, { size }),
   unlockView: (size = 14) => lucideSvg(LockOpen, { size }),
   addSub: (size = 14) => lucideSvg(GitBranch, { size }),

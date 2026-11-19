@@ -520,14 +520,19 @@ function buildApplicationMenu(): void {
       },
       { type: "separator" },
       {
-        label: "Arrange Cards",
+        label: "Arrange Cards by Session",
         accelerator: "Alt+CmdOrCtrl+A",
         click: () => sendShortcut("arrange-cards"),
       },
       {
-        label: "Tile Terminals",
+        label: "Fill Terminals Edge to Edge",
         accelerator: "Alt+CmdOrCtrl+S",
         click: () => sendShortcut("tile-terminals"),
+      },
+      {
+        label: "Fit Terminals with Gaps",
+        accelerator: "Alt+CmdOrCtrl+F",
+        click: () => sendShortcut("fit-terminals"),
       },
       { type: "separator" },
       { role: "reload" },
@@ -1598,9 +1603,9 @@ function registerIpc(): void {
       try {
         const cols = Math.max(2, Math.floor(size?.cols ?? 120));
         const rows = Math.max(1, Math.floor(size?.rows ?? 30));
-        const password = session.identityFile?.trim()
-          ? ""
-          : await loadSshPassword(session.id);
+        // Always load a saved password. On Windows there is no ControlMaster, so
+        // metrics/files exec need ASKPASS even when an IdentityFile is set.
+        const password = await loadSshPassword(session.id);
         const backend = createSshPty(session, {
           cols,
           rows,

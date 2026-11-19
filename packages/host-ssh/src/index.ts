@@ -218,11 +218,16 @@ function createNonMuxAskpass(password?: string): AskpassHandle | null {
   return createAskpassHandle(pw);
 }
 
-function pushPasswordAuthOptions(args: string[]): void {
+function pushPasswordAuthOptions(
+  args: string[],
+  opts?: { allowPublicKey?: boolean }
+): void {
   args.push("-o", "NumberOfPasswordPrompts=1");
   args.push(
     "-o",
-    "PreferredAuthentications=password,keyboard-interactive"
+    opts?.allowPublicKey
+      ? "PreferredAuthentications=publickey,password,keyboard-interactive"
+      : "PreferredAuthentications=password,keyboard-interactive"
   );
 }
 
@@ -315,19 +320,19 @@ export function createSshPty(
 ): SshPtyBackend {
   const id = newId();
   const args = buildSshArgs(session, { tty: true });
-  // Prefer key auth when an identity is set; password is for password-only sessions.
-  const password =
-    !session.identityFile?.trim() && opts?.password?.trim()
-      ? opts.password.trim()
-      : "";
-  if (password) {
+  // Keep any saved password for Windows exec (metrics/files) even when a key
+  // is configured. Interactive PTY still prefers the key when present.
+  const storedPassword = opts?.password?.trim() || "";
+  const ptyPassword =
+    !session.identityFile?.trim() && storedPassword ? storedPassword : "";
+  if (ptyPassword) {
     // Avoid hanging on host key prompts when automating password login.
     args.push("-o", "NumberOfPasswordPrompts=1");
   }
   args.push(buildRemoteShellCommand(session.startDir));
 
   const bin = sshBinary();
-  const askpass = password ? createAskpassHandle(password) : null;
+  const askpass = ptyPassword ? createAskpassHandle(ptyPassword) : null;
   const env = { ...cleanEnv(), ...(askpass?.env ?? {}) };
   let pty: IPty;
   try {
@@ -356,12 +361,12 @@ export function createSshPty(
   const exitListeners = new Set<(info: { exitCode: number; signal?: number }) => void>();
 
   pty.onData((data) => {
-    if (password && !passwordInjected) {
+    if (ptyPassword && !passwordInjected) {
       const plain = stripAnsi(data);
       if (/password:\s*$/im.test(plain)) {
         passwordInjected = true;
         try {
-          pty.write(`${password}\r`);
+          pty.write(`${ptyPassword}\r`);
         } catch {
           /* ignore */
         }
@@ -379,7 +384,7 @@ export function createSshPty(
   return {
     id,
     session,
-    authPassword: password || undefined,
+    authPassword: storedPassword || undefined,
     get target(): TargetRef {
       return {
         kind: "ssh",
@@ -408,7 +413,7 @@ export function createSshPty(
         command,
         execOpts?.cwd ?? cwdGuess,
         execOpts?.timeoutMs,
-        password || undefined,
+        storedPassword || undefined,
         execOpts?.stdin
       );
     },
@@ -537,8 +542,13 @@ export function buildScpArgs(
   if (session.proxyJump) args.push("-o", `ProxyJump=${session.proxyJump}`);
   pushHostKeyOptions(args);
   pushMuxOptions(args, session);
-  if (opts?.passwordAuth) pushPasswordAuthOptions(args);
-  else if (opts?.batch !== false) args.push("-o", "BatchMode=yes");
+  if (opts?.passwordAuth) {
+    pushPasswordAuthOptions(args, {
+      allowPublicKey: Boolean(session.identityFile?.trim()),
+    });
+  } else if (opts?.batch !== false) {
+    args.push("-o", "BatchMode=yes");
+  }
   return args;
 }
 
@@ -587,8 +597,13 @@ function buildRsyncShell(
   if (session.proxyJump) parts.push("-o", `ProxyJump=${session.proxyJump}`);
   pushHostKeyOptions(parts);
   pushMuxOptions(parts, session);
-  if (opts?.passwordAuth) pushPasswordAuthOptions(parts);
-  else parts.push("-o", "BatchMode=yes");
+  if (opts?.passwordAuth) {
+    pushPasswordAuthOptions(parts, {
+      allowPublicKey: Boolean(session.identityFile?.trim()),
+    });
+  } else {
+    parts.push("-o", "BatchMode=yes");
+  }
   return parts.map((p) => (/\s/.test(p) ? `"${p.replace(/"/g, '\\"')}"` : p)).join(" ");
 }
 
@@ -1125,7 +1140,11 @@ function runSshExec(
     { ...session, startDir: undefined },
     { tty: false, batch: !passwordAuth }
   );
-  if (passwordAuth) pushPasswordAuthOptions(base);
+  if (passwordAuth) {
+    pushPasswordAuthOptions(base, {
+      allowPublicKey: Boolean(session.identityFile?.trim()),
+    });
+  }
   base.push(remote);
 
   const env = askpass

@@ -529,13 +529,17 @@ app.innerHTML = `
           </label>
         </div>
         <div class="ssh-password-field">
-          <span class="field-label" data-i18n="ssh.password">Password</span>
+          <span class="field-label"
+            ><span data-i18n="ssh.password">Password</span
+            ><abbr class="req" data-i18n-title="ssh.required" title="Required">*</abbr></span
+          >
           <div class="ssh-password-row" id="ssh-password-unset">
             <input
               id="ssh-password"
               type="password"
               autocomplete="new-password"
               spellcheck="false"
+              required
               data-i18n-placeholder="ssh.passwordPlaceholder"
               placeholder="Stored encrypted on this device"
             />
@@ -1804,11 +1808,16 @@ function sshFormEls() {
   };
 }
 
+/** True when the open SSH modal already has an encrypted password on disk. */
+let sshModalHasPassword = false;
+
 function syncSshPasswordUi(hasSaved: boolean): void {
   const form = sshFormEls();
   const editing = Boolean(form.editId.value.trim());
+  sshModalHasPassword = hasSaved;
   form.passwordUnset.classList.toggle("hidden", hasSaved);
   form.passwordSet.classList.toggle("hidden", !hasSaved);
+  form.password.required = !hasSaved;
   // Edit: save password immediately via the inline button (like settings API key).
   // Add: password is saved with the bottom session Save.
   form.passwordSave.classList.toggle("hidden", hasSaved || !editing);
@@ -1840,7 +1849,11 @@ async function openSshModal(session?: SavedSession): Promise<void> {
       syncSshPasswordUi(status.hasPassword);
     }
   }
-  requestAnimationFrame(() => form.name.focus());
+  requestAnimationFrame(() => {
+    if (!form.name.value.trim()) form.name.focus();
+    else if (!sshModalHasPassword) form.password.focus();
+    else form.name.focus();
+  });
 }
 
 function closeSshModal(): void {
@@ -2516,6 +2529,9 @@ function handleShortcut(payload: {
       break;
     case "tile-terminals":
       board.tileOpenTerminals();
+      break;
+    case "fit-terminals":
+      board.fitOpenTerminals();
       break;
     default:
       break;
@@ -3542,10 +3558,18 @@ document.getElementById("btn-save-ssh")!.onclick = async () => {
   const portRaw = form.port.value;
   const proxyJump = form.jump.value.trim();
   const startDir = form.dir.value.trim();
-  const password = form.password.value;
+  const password = form.password.value.trim();
   if (!name || !host || !user) {
     showToast(t("ssh.requiredHint"), "info");
     (!name ? form.name : !host ? form.host : form.user).focus();
+    return;
+  }
+  // Password is required for create and edit (Windows file listing cannot
+  // reuse the interactive login without a stored password).
+  if (!sshModalHasPassword && !password) {
+    showToast(t("ssh.passwordRequiredHint"), "info");
+    syncSshPasswordUi(false);
+    form.password.focus();
     return;
   }
   const editId = form.editId.value.trim();
@@ -3564,9 +3588,12 @@ document.getElementById("btn-save-ssh")!.onclick = async () => {
     proxyJump: proxyJump || undefined,
     startDir: startDir || undefined,
   });
-  // Add flow: password is stored with the session. Edit flow uses the inline Save.
-  if (!editId && password.trim()) {
-    await api.setSshPassword(saved.id, password);
+  if (password) {
+    const result = await api.setSshPassword(saved.id, password);
+    if (!result.ok) {
+      showToast(t("ssh.passwordSaveFail"), "error");
+      return;
+    }
   }
   closeSshModal();
   await refreshSessions();
