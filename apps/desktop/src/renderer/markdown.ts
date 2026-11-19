@@ -21,6 +21,59 @@ export function renderMarkdown(src: string): string {
   return parts.join("");
 }
 
+function isTableRow(line: string): boolean {
+  const t = line.trim();
+  return t.startsWith("|") && t.includes("|", 1);
+}
+
+function isTableSeparator(line: string): boolean {
+  const t = line.trim();
+  if (!t.includes("|")) return false;
+  // | --- | :---: | ---: |
+  return /^\|?[\s:|-]+\|[\s:|-]*\|?$/.test(t) && /:-+:?|:?-+:?/.test(t);
+}
+
+function splitTableCells(line: string): string[] {
+  let t = line.trim();
+  if (t.startsWith("|")) t = t.slice(1);
+  if (t.endsWith("|")) t = t.slice(0, -1);
+  return t.split("|").map((c) => c.trim());
+}
+
+function parseAlign(cell: string): "left" | "center" | "right" | null {
+  const t = cell.trim();
+  if (/^:?-+:$/.test(t)) return "center";
+  if (/^-+:$/.test(t)) return "right";
+  if (/^:?-+$/.test(t)) return "left";
+  return null;
+}
+
+function renderTable(header: string, separator: string, rows: string[]): string {
+  const heads = splitTableCells(header);
+  const aligns = splitTableCells(separator).map(parseAlign);
+  const ths = heads
+    .map((cell, idx) => {
+      const align = aligns[idx];
+      const style = align ? ` style="text-align:${align}"` : "";
+      return `<th${style}>${formatInline(cell)}</th>`;
+    })
+    .join("");
+  const body = rows
+    .map((row) => {
+      const cells = splitTableCells(row);
+      const tds = heads
+        .map((_, idx) => {
+          const align = aligns[idx];
+          const style = align ? ` style="text-align:${align}"` : "";
+          return `<td${style}>${formatInline(cells[idx] ?? "")}</td>`;
+        })
+        .join("");
+      return `<tr>${tds}</tr>`;
+    })
+    .join("");
+  return `<div class="md-table-wrap"><table class="md-table"><thead><tr>${ths}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
 function renderBlocks(text: string): string {
   if (!text.trim()) return "";
   const lines = text.replace(/\r\n/g, "\n").split("\n");
@@ -41,6 +94,27 @@ function renderBlocks(text: string): string {
         `<h${level} class="md-h">${formatInline(heading[2]!.trim())}</h${level}>`
       );
       i += 1;
+      continue;
+    }
+
+    // GFM table: header + separator + rows
+    if (
+      isTableRow(line) &&
+      i + 1 < lines.length &&
+      isTableSeparator(lines[i + 1] ?? "")
+    ) {
+      const header = line;
+      const separator = lines[i + 1] ?? "";
+      i += 2;
+      const rows: string[] = [];
+      while (i < lines.length) {
+        const cur = lines[i] ?? "";
+        if (!cur.trim()) break;
+        if (!isTableRow(cur) || isTableSeparator(cur)) break;
+        rows.push(cur);
+        i += 1;
+      }
+      out.push(renderTable(header, separator, rows));
       continue;
     }
 
@@ -69,6 +143,13 @@ function renderBlocks(text: string): string {
       if (!cur.trim()) break;
       if (/^#{1,3}\s+/.test(cur)) break;
       if (/^[-*] /.test(cur) || /^\d+\. /.test(cur)) break;
+      if (
+        isTableRow(cur) &&
+        i + 1 < lines.length &&
+        isTableSeparator(lines[i + 1] ?? "")
+      ) {
+        break;
+      }
       para.push(cur);
       i += 1;
     }

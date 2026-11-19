@@ -1,7 +1,7 @@
 {
   "name": "@drift/desktop",
   "productName": "Drift",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "private": true,
   "description": "Drift — terminal + SSH sessions with Cursor agent",
   "author": "doob9p",
@@ -49,7 +49,8 @@
     "@xterm/xterm": "^5.5.0",
     "codemirror": "^6.0.2",
     "electron-updater": "^6.8.11",
-    "lucide": "^1.71.0"
+    "lucide": "^1.71.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.1",

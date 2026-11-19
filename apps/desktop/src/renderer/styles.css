@@ -3373,6 +3373,44 @@ body.is-resizing-editor {
   margin: 0.15rem 0;
 }
 
+.msg-body.md .md-table-wrap {
+  margin: 0.45rem 0 0.65rem;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
+}
+
+.msg-body.md .md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.msg-body.md .md-table th,
+.msg-body.md .md-table td {
+  padding: 0.42rem 0.65rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.msg-body.md .md-table th {
+  font-weight: 650;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--panel-2) 85%, transparent);
+  white-space: nowrap;
+}
+
+.msg-body.md .md-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.msg-body.md .md-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--hover) 55%, transparent);
+}
+
 .msg-body.md .md-inline,
 .msg-body.md p code,
 .msg-body.md li code {

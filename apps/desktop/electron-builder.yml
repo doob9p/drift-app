@@ -16,6 +16,8 @@ asar: true
 asarUnpack:
   - "**/*.node"
   - "**/node-pty/**"
+  # Cursor SDK ships platform binaries (rg, sandbox, tree-sitter) that must run outside asar.
+  - "**/@cursor/sdk-*/**"
 mac:
   category: public.app-category.developer-tools
   icon: resources/brand/icon.icns

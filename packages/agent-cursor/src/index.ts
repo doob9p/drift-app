@@ -75,27 +75,30 @@ export async function* sendAgent(
   }
 
   try {
-    const sdk = await import("@cursor/sdk").catch(() => null);
+    const sdk = await import("@cursor/sdk");
     if (sdk?.Agent) {
       yield* runWithCursorSdk(sdk, input);
       return;
     }
+    yield {
+      type: "status",
+      status: "error",
+      detail:
+        "Cursor SDK loaded without Agent export. Reinstall Drift or check @cursor/sdk packaging.",
+    };
+    return;
   } catch (err) {
     if (isAborted(input.signal) || (err instanceof Error && err.name === "AbortError")) {
       yield { type: "status", status: "cancelled", detail: "Stopped" };
       return;
     }
     yield {
-      type: "text",
-      text: `Cursor SDK call failed: ${err instanceof Error ? err.message : String(err)}\nFalling back to local proposer.\n`,
+      type: "status",
+      status: "error",
+      detail: `Cursor SDK unavailable: ${err instanceof Error ? err.message : String(err)}`,
     };
-  }
-
-  if (isAborted(input.signal)) {
-    yield { type: "status", status: "cancelled", detail: "Stopped" };
     return;
   }
-  yield* runLocalProposer(input);
 }
 
 function buildPrompt(input: AgentSendInput): string {
