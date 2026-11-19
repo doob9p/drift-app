@@ -3,6 +3,8 @@
  * and scatter when the cursor sweeps past.
  */
 
+import { publicAsset } from "./public-asset.js";
+
 export type SakuraRoof = {
   id: string;
   y: number;
@@ -52,10 +54,10 @@ const LAND_JITTER = 3;
 const SPRITE_DRAW = 16;
 
 const PETAL_SRCS = [
-  "/sakura/petal-pink.png",
-  "/sakura/petal-blush.png",
-  "/sakura/petal-soft.png",
-  "/sakura/petal-deep.png",
+  "sakura/petal-pink.png",
+  "sakura/petal-blush.png",
+  "sakura/petal-soft.png",
+  "sakura/petal-deep.png",
 ] as const;
 
 type Petal = {
@@ -76,7 +78,7 @@ type Petal = {
 function loadImage(src: string): HTMLImageElement {
   const img = new Image();
   img.decoding = "async";
-  img.src = src;
+  img.src = publicAsset(src);
   return img;
 }
 

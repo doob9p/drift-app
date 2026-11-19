@@ -16,6 +16,8 @@
  * - Flakes are soft point sprites (smoothstep disc)
  */
 
+import { publicAsset } from "./public-asset.js";
+
 export type SnowRoof = {
   id: string;
   y: number;
@@ -175,7 +177,7 @@ function uid(prefix: string): string {
 function loadImage(src: string): HTMLImageElement {
   const img = new Image();
   img.decoding = "async";
-  img.src = src;
+  img.src = publicAsset(src);
   return img;
 }
 
@@ -320,8 +322,8 @@ export function createBoardSnow(opts: {
   const backCtx = back.getContext("2d");
   const frontCtx = front.getContext("2d");
 
-  const ballImg = loadImage("/christmas/snowball.png");
-  const manImg = loadImage("/christmas/snowman.png");
+  const ballImg = loadImage("christmas/snowball.png");
+  const manImg = loadImage("christmas/snowman.png");
 
   let enabled = false;
   let raf = 0;

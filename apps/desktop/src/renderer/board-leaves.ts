@@ -3,6 +3,8 @@
  * tumble in the air, and scatter when the cursor sweeps past.
  */
 
+import { publicAsset } from "./public-asset.js";
+
 export type LeafRoof = {
   id: string;
   y: number;
@@ -52,10 +54,10 @@ const LAND_JITTER = 4;
 const SPRITE_DRAW = 18;
 
 const LEAF_SRCS = [
-  "/autumn/leaf-maple-red.png",
-  "/autumn/leaf-maple-orange.png",
-  "/autumn/leaf-maple-yellow.png",
-  "/autumn/leaf-oak-brown.png",
+  "autumn/leaf-maple-red.png",
+  "autumn/leaf-maple-orange.png",
+  "autumn/leaf-maple-yellow.png",
+  "autumn/leaf-oak-brown.png",
 ] as const;
 
 type Leaf = {
@@ -77,7 +79,7 @@ type Leaf = {
 function loadImage(src: string): HTMLImageElement {
   const img = new Image();
   img.decoding = "async";
-  img.src = src;
+  img.src = publicAsset(src);
   return img;
 }
 
