@@ -1091,8 +1091,10 @@ export function createBoardPane(
       if (!resizing) return;
       const card = cards.find((c) => c.id === cardId);
       if (!card || (card.kind === "terminal" && card.minimized)) return;
-      card.w = Math.max(280, originW + (e.clientX - startX) / camera.zoom);
-      card.h = Math.max(200, originH + (e.clientY - startY) / camera.zoom);
+      const minW = card.kind === "prompt" ? 300 : 280;
+      const minH = card.kind === "prompt" ? 280 : 200;
+      card.w = Math.max(minW, originW + (e.clientX - startX) / camera.zoom);
+      card.h = Math.max(minH, originH + (e.clientY - startY) / camera.zoom);
       card.w = Math.min(card.w, WORLD.x + WORLD.w - card.x);
       card.h = Math.min(card.h, WORLD.y + WORLD.h - card.y);
       layoutCard(card);
@@ -1109,6 +1111,7 @@ export function createBoardPane(
     handle.addEventListener("pointerdown", (e) => {
       const card = cards.find((c) => c.id === cardId);
       if (!card || (card.kind === "terminal" && card.minimized)) return;
+      if (e.button !== 0) return;
       resizing = true;
       el.classList.remove("is-tiled");
       startX = e.clientX;
@@ -1116,6 +1119,7 @@ export function createBoardPane(
       originW = card.w;
       originH = card.h;
       bringToFront(cardId);
+      handle.setPointerCapture?.(e.pointerId);
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
       e.preventDefault();

@@ -181,6 +181,11 @@ export interface SshPtyBackend {
   readonly id: string;
   readonly session: SavedSession;
   readonly target: TargetRef;
+  /**
+   * Saved password kept for the tab lifetime. On Windows (no ControlMaster)
+   * exec/scp open a fresh SSH and need this via SSH_ASKPASS.
+   */
+  readonly authPassword?: string;
   onData(cb: (chunk: string) => void): () => void;
   onExit(cb: (info: { exitCode: number; signal?: number }) => void): () => void;
   write(data: string): void;
@@ -201,6 +206,24 @@ export interface SshPtyBackend {
  */
 export function sshMuxSupported(): boolean {
   return process.platform !== "win32";
+}
+
+/**
+ * When mux is unavailable, password auth needs ASKPASS instead of BatchMode.
+ * Returns null when BatchMode (key/mux) is enough.
+ */
+function createNonMuxAskpass(password?: string): AskpassHandle | null {
+  const pw = password?.trim();
+  if (!pw || sshMuxSupported()) return null;
+  return createAskpassHandle(pw);
+}
+
+function pushPasswordAuthOptions(args: string[]): void {
+  args.push("-o", "NumberOfPasswordPrompts=1");
+  args.push(
+    "-o",
+    "PreferredAuthentications=password,keyboard-interactive"
+  );
 }
 
 /** Shared control socket so password/key auth from the live PTY is reused by exec. */
@@ -339,11 +362,13 @@ export function createSshPty(
   return {
     id,
     session,
+    authPassword: password || undefined,
     get target(): TargetRef {
       return {
         kind: "ssh",
         sessionId: session.id,
-        hostLabel: session.name || `${session.user}@${session.host}`,        cwd: cwdGuess,
+        hostLabel: session.name || `${session.user}@${session.host}`,
+        cwd: cwdGuess,
       };
     },
     onData(cb) {
@@ -365,7 +390,8 @@ export function createSshPty(
         session,
         command,
         execOpts?.cwd ?? cwdGuess,
-        execOpts?.timeoutMs
+        execOpts?.timeoutMs,
+        password || undefined
       );
     },
     async getCwd() {
@@ -483,14 +509,18 @@ function scpBinary(): string {
 }
 
 /** Shared options with the interactive tab's ControlMaster (no remote argv). */
-export function buildScpArgs(session: SavedSession): string[] {
+export function buildScpArgs(
+  session: SavedSession,
+  opts?: { batch?: boolean; passwordAuth?: boolean }
+): string[] {
   const args: string[] = ["-r"];
   if (session.port) args.push("-P", String(session.port));
   if (session.identityFile) args.push("-i", expandHome(session.identityFile));
   if (session.proxyJump) args.push("-o", `ProxyJump=${session.proxyJump}`);
   args.push("-o", "StrictHostKeyChecking=accept-new");
   pushMuxOptions(args, session);
-  args.push("-o", "BatchMode=yes");
+  if (opts?.passwordAuth) pushPasswordAuthOptions(args);
+  else if (opts?.batch !== false) args.push("-o", "BatchMode=yes");
   return args;
 }
 
@@ -529,14 +559,18 @@ function rsyncSupportsProgress2(bin: string): boolean {
 }
 
 /** ssh command string for `rsync -e` (reuses the tab ControlMaster). */
-function buildRsyncShell(session: SavedSession): string {
+function buildRsyncShell(
+  session: SavedSession,
+  opts?: { passwordAuth?: boolean }
+): string {
   const parts: string[] = [sshBinary()];
   if (session.port) parts.push("-p", String(session.port));
   if (session.identityFile) parts.push("-i", expandHome(session.identityFile));
   if (session.proxyJump) parts.push("-o", `ProxyJump=${session.proxyJump}`);
   parts.push("-o", "StrictHostKeyChecking=accept-new");
   pushMuxOptions(parts, session);
-  parts.push("-o", "BatchMode=yes");
+  if (opts?.passwordAuth) pushPasswordAuthOptions(parts);
+  else parts.push("-o", "BatchMode=yes");
   return parts.map((p) => (/\s/.test(p) ? `"${p.replace(/"/g, '\\"')}"` : p)).join(" ");
 }
 
@@ -659,12 +693,19 @@ export async function uploadFilesViaScp(
   opts?: {
     timeoutMs?: number;
     onProgress?: (p: UploadProgress) => void;
+    /** Required on Windows for password-auth hosts (no ControlMaster). */
+    password?: string;
   }
 ): Promise<{ ok: true } | { error: string }> {
   const cleaned = localPaths.map((p) => p.trim()).filter(Boolean);
   if (!cleaned.length) return { error: "No files" };
   const timeoutMs = opts?.timeoutMs ?? 120_000;
   const onProgress = opts?.onProgress;
+  const askpass = createNonMuxAskpass(opts?.password);
+  const passwordAuth = Boolean(askpass);
+  const transferEnv = askpass
+    ? { ...cleanEnv(), ...askpass.env }
+    : process.env;
   const remote = remoteDir.trim() || "~";
   const dest = `${session.user}@${session.host}:${remote.replace(/\/?$/, "/")}`;
   const total = await totalLocalBytes(cleaned);
@@ -675,6 +716,7 @@ export async function uploadFilesViaScp(
     currentName: path.basename(cleaned[0] || ""),
   });
 
+  try {
   const tryRsync = (
     progressMode: "progress2" | "classic"
   ): Promise<{ ok: true } | { error: string } | "missing" | "unsupported"> =>
@@ -685,11 +727,14 @@ export async function uploadFilesViaScp(
           ? ["--info=progress2"]
           : ["--progress"]),
         "-e",
-        buildRsyncShell(session),
+        buildRsyncShell(session, { passwordAuth }),
         ...cleaned,
         dest,
       ];
-      const child = spawn(rsyncBinary(), args, { env: process.env });
+      const child = spawn(rsyncBinary(), args, {
+        env: transferEnv,
+        windowsHide: true,
+      });
       let stderr = "";
       let settled = false;
       const classicState: ClassicProgressState = {
@@ -788,9 +833,19 @@ export async function uploadFilesViaScp(
         total > 0 ? Math.min(99, Math.round((doneBytes / total) * 100)) : 0,
       currentName: path.basename(src),
     });
-    const args = [...buildScpArgs(session), src, dest];
+    const args = [
+      ...buildScpArgs(session, {
+        batch: !passwordAuth,
+        passwordAuth,
+      }),
+      src,
+      dest,
+    ];
     const one = await new Promise<{ ok: true } | { error: string }>((resolve) => {
-      const child = spawn(scpBinary(), args, { env: process.env });
+      const child = spawn(scpBinary(), args, {
+        env: transferEnv,
+        windowsHide: true,
+      });
       let stderr = "";
       let settled = false;
       const timer = setTimeout(() => {
@@ -832,6 +887,9 @@ export async function uploadFilesViaScp(
     });
   }
   return { ok: true };
+  } finally {
+    askpass?.cleanup();
+  }
 }
 
 /** Pull remote paths into a local directory over the live ControlMaster. */
@@ -842,6 +900,8 @@ export async function downloadFilesViaScp(
   opts?: {
     timeoutMs?: number;
     onProgress?: (p: UploadProgress) => void;
+    /** Required on Windows for password-auth hosts (no ControlMaster). */
+    password?: string;
   }
 ): Promise<{ ok: true } | { error: string }> {
   const cleaned = remotePaths.map((p) => p.trim()).filter(Boolean);
@@ -850,6 +910,11 @@ export async function downloadFilesViaScp(
   if (!destDir) return { error: "No destination" };
   const timeoutMs = opts?.timeoutMs ?? 120_000;
   const onProgress = opts?.onProgress;
+  const askpass = createNonMuxAskpass(opts?.password);
+  const passwordAuth = Boolean(askpass);
+  const transferEnv = askpass
+    ? { ...cleanEnv(), ...askpass.env }
+    : process.env;
   const remotes = cleaned.map(
     (p) => `${session.user}@${session.host}:${p}`
   );
@@ -861,6 +926,7 @@ export async function downloadFilesViaScp(
     currentName: path.basename(cleaned[0] || ""),
   });
 
+  try {
   const tryRsync = (
     progressMode: "progress2" | "classic"
   ): Promise<{ ok: true } | { error: string } | "missing" | "unsupported"> =>
@@ -871,11 +937,14 @@ export async function downloadFilesViaScp(
           ? ["--info=progress2"]
           : ["--progress"]),
         "-e",
-        buildRsyncShell(session),
+        buildRsyncShell(session, { passwordAuth }),
         ...remotes,
         dest,
       ];
-      const child = spawn(rsyncBinary(), args, { env: process.env });
+      const child = spawn(rsyncBinary(), args, {
+        env: transferEnv,
+        windowsHide: true,
+      });
       let stderr = "";
       let settled = false;
       const classicState: ClassicProgressState = {
@@ -963,9 +1032,19 @@ export async function downloadFilesViaScp(
           : 0,
       currentName: name,
     });
-    const args = [...buildScpArgs(session), remote, dest];
+    const args = [
+      ...buildScpArgs(session, {
+        batch: !passwordAuth,
+        passwordAuth,
+      }),
+      remote,
+      dest,
+    ];
     const one = await new Promise<{ ok: true } | { error: string }>((resolve) => {
-      const child = spawn(scpBinary(), args, { env: process.env });
+      const child = spawn(scpBinary(), args, {
+        env: transferEnv,
+        windowsHide: true,
+      });
       let stderr = "";
       let settled = false;
       const timer = setTimeout(() => {
@@ -1007,34 +1086,50 @@ export async function downloadFilesViaScp(
     });
   }
   return { ok: true };
+  } finally {
+    askpass?.cleanup();
+  }
 }
 
 function runSshExec(
   session: SavedSession,
   command: string,
   cwd: string,
-  timeoutMs = 60_000
+  timeoutMs = 60_000,
+  password?: string
 ): Promise<ExecResult> {
   const remote = `cd ${shellQuote(cwd)} 2>/dev/null; ${command}`;
-  // Slave connection: reuse ControlMaster from the interactive tab (no TTY, fail fast).
+  const askpass = createNonMuxAskpass(password);
+  const passwordAuth = Boolean(askpass);
+  // Mux platforms: slave reuses ControlMaster (BatchMode). Windows: ASKPASS.
   const base = buildSshArgs(
     { ...session, startDir: undefined },
-    { tty: false, batch: true }
+    { tty: false, batch: !passwordAuth }
   );
+  if (passwordAuth) pushPasswordAuthOptions(base);
   base.push(remote);
+
+  const env = askpass
+    ? { ...cleanEnv(), ...askpass.env }
+    : process.env;
 
   return new Promise((resolve) => {
     const child = spawn(sshBinary(), base, {
-      env: process.env,
+      env,
+      windowsHide: true,
     });
     let stdout = "";
     let stderr = "";
     let settled = false;
+    const finish = (result: ExecResult) => {
+      askpass?.cleanup();
+      resolve(result);
+    };
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
       child.kill("SIGKILL");
-      resolve({ stdout, stderr, exitCode: null, timedOut: true });
+      finish({ stdout, stderr, exitCode: null, timedOut: true });
     }, timeoutMs);
 
     child.stdout.on("data", (d: Buffer) => {
@@ -1043,11 +1138,21 @@ function runSshExec(
     child.stderr.on("data", (d: Buffer) => {
       stderr += d.toString("utf8");
     });
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      finish({
+        stdout,
+        stderr: stderr || err.message,
+        exitCode: 1,
+      });
+    });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ stdout, stderr, exitCode: code });
+      finish({ stdout, stderr, exitCode: code });
     });
   });
 }

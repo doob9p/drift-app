@@ -1340,13 +1340,22 @@ async function listRemoteDir(
           errText
         ))
     ) {
-      return {
-        error:
-          errText ||
-          "SSH listing failed — keep the session connected (password sessions need the live tab)",
-        path: target,
-        entries: [],
-      };
+      let error =
+        errText ||
+        (process.platform === "win32"
+          ? "SSH listing failed — save the host password in Drift (Windows cannot reuse the terminal login)"
+          : "SSH listing failed — keep the session connected (password sessions need the live tab)");
+      if (
+        process.platform === "win32" &&
+        /Permission denied/i.test(error) &&
+        backend.target.kind === "ssh" &&
+        !("authPassword" in backend && (backend as SshPtyBackend).authPassword) &&
+        !(backend as SshPtyBackend).session.identityFile?.trim()
+      ) {
+        error +=
+          " — save the SSH password for this host in Drift (Edit → Password)";
+      }
+      return { error, path: target, entries: [] };
     }
     return parseRemoteLs(text, target);
   } catch (err) {
@@ -2059,11 +2068,10 @@ function registerIpc(): void {
         .filter(Boolean);
       const transferId = (input.transferId || "").trim() || newId();
       if (!sources.length) return { error: "No files" };
-      return uploadFilesViaScp(
-        (backend as SshPtyBackend).session,
-        sources,
-        destDir,
-        {
+      {
+        const ssh = backend as SshPtyBackend;
+        return uploadFilesViaScp(ssh.session, sources, destDir, {
+          password: ssh.authPassword,
           onProgress: (p) =>
             emitTransferProgress({
               transferId,
@@ -2072,8 +2080,8 @@ function registerIpc(): void {
               total: p.total,
               currentName: p.currentName,
             }),
-        }
-      );
+        });
+      }
     }
   );
 
@@ -2108,11 +2116,10 @@ function registerIpc(): void {
           error: err instanceof Error ? err.message : String(err),
         };
       }
-      return downloadFilesViaScp(
-        (backend as SshPtyBackend).session,
-        sources,
-        destDir,
-        {
+      {
+        const ssh = backend as SshPtyBackend;
+        return downloadFilesViaScp(ssh.session, sources, destDir, {
+          password: ssh.authPassword,
           onProgress: (p) =>
             emitTransferProgress({
               transferId,
@@ -2121,8 +2128,8 @@ function registerIpc(): void {
               total: p.total,
               currentName: p.currentName,
             }),
-        }
-      );
+        });
+      }
     }
   );
 

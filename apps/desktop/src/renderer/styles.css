@@ -2562,22 +2562,30 @@ body.is-resizing-col {
 .board-prompt-compose {
   flex: 0 0 auto;
   border-top: 1px solid var(--line);
+  /* Keep the SE resize grip free of the send button. */
+  padding-right: 0.2rem;
+  padding-bottom: 0.15rem;
+}
+
+.board-card-prompt .composer-foot {
+  padding-right: 0.55rem;
 }
 
 .board-card-resize {
   position: absolute;
   right: 0;
   bottom: 0;
-  width: 14px;
-  height: 14px;
+  z-index: 6;
+  width: 18px;
+  height: 18px;
   cursor: nwse-resize;
   background:
     linear-gradient(
       135deg,
       transparent 0 45%,
-      rgba(255, 255, 255, 0.18) 45% 55%,
+      rgba(255, 255, 255, 0.22) 45% 55%,
       transparent 55% 70%,
-      rgba(255, 255, 255, 0.18) 70% 80%,
+      rgba(255, 255, 255, 0.22) 70% 80%,
       transparent 80%
     );
 }
