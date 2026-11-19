@@ -567,6 +567,11 @@ function createPane(
   function goToDir(next: string): void {
     if (!next || !enabled) return;
     if (rootPath && samePath(next, rootPath)) return;
+    // Click/breadcrumb/up navigates into a folder — it is not a chevron
+    // expand. Clear in-tree expands so going back to the parent does not
+    // re-open the folder we left (that left "Empty" wedged between siblings).
+    expanded.clear();
+    expanded.add(next);
     rootPath = next;
     syncUpBtn();
     void opts.onOpenDir(rootPath);
@@ -791,9 +796,8 @@ function createPane(
       const kind = row?.dataset.kind;
       if (!p) return;
       selectRow(p);
-      // Enter folders on click (chevron only expands). Records Back history.
+      // Enter folders on click (chevron only expands in place).
       if (kind === "dir") {
-        expanded.add(p);
         goToDir(p);
       }
     }
@@ -1169,13 +1173,14 @@ function createPane(
         await render();
         return;
       }
+      const pathChanged = !rootPath || !samePath(rootPath, next);
       rootPath = next;
-      // Keep per-session expanded dirs when switching back to the same terminal.
-      if (expanded.size === 0) {
+      // New cwd (terminal follow / external set): drop stale expands so a
+      // previously visited child is not shown open with "Empty" mid-list.
+      if (pathChanged) {
+        expanded.clear();
         expanded.add(next);
-      } else if (
-        ![...expanded].some((p) => p === next || p.startsWith(next + "/"))
-      ) {
+      } else if (expanded.size === 0) {
         expanded.add(next);
       }
       cache.clear();
@@ -1185,6 +1190,10 @@ function createPane(
       if (res.error) errors.set(res.path || next, res.error);
       else cache.set(res.path || next, res.entries);
       rootPath = res.path || next;
+      if (pathChanged || expanded.size === 0) {
+        expanded.clear();
+        expanded.add(rootPath);
+      }
       if (res.path && res.path !== next) {
         cache.set(next, res.entries);
         if (res.error) errors.set(next, res.error);

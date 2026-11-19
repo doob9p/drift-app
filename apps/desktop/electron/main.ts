@@ -1251,9 +1251,11 @@ async function writeRemoteTextFile(
   const q = shellSingleQuote(target);
   const b64 = Buffer.from(content, "utf8").toString("base64");
   try {
+    // Pipe base64 on stdin — do not put the body in argv. Windows
+    // CreateProcess fails with spawn ENAMETOOLONG for medium/large files.
     const result = await backend.exec(
-      `(base64 -d 2>/dev/null || base64 -D) > ${q} <<'DRIFT_B64'\n${b64}\nDRIFT_B64`,
-      { timeoutMs: 30_000 }
+      `(base64 -d 2>/dev/null || base64 -D) > ${q}`,
+      { timeoutMs: 30_000, stdin: b64 }
     );
     if (result.timedOut) return { error: "Write timed out" };
     if (result.exitCode != null && result.exitCode !== 0) {
@@ -1332,8 +1334,15 @@ async function listRemoteDir(
     if (result.exitCode === 41 || /exit 41/.test(errText)) {
       return { error: `Cannot open ${target}`, path: target, entries: [] };
     }
+    // CTPWD/CTHOME markers alone mean ls produced nothing — treat like empty
+    // stdout when the remote command failed (avoid a false "Empty" row).
+    const listingBody = text
+      .split(/\r?\n/)
+      .filter((l) => l && !l.startsWith("CTPWD:") && !l.startsWith("CTHOME:"))
+      .join("\n")
+      .trim();
     if (
-      !text.trim() &&
+      !listingBody &&
       (result.exitCode == null ||
         result.exitCode !== 0 ||
         /Permission denied|Connection refused|Connection reset|Broken pipe|No such file/i.test(

@@ -192,7 +192,7 @@ export interface SshPtyBackend {
   resize(cols: number, rows: number): void;
   exec(
     command: string,
-    opts?: { cwd?: string; timeoutMs?: number }
+    opts?: { cwd?: string; timeoutMs?: number; stdin?: string | Buffer }
   ): Promise<ExecResult>;
   getCwd(): Promise<string>;
   setCwd(cwd: string): void;
@@ -391,7 +391,8 @@ export function createSshPty(
         command,
         execOpts?.cwd ?? cwdGuess,
         execOpts?.timeoutMs,
-        password || undefined
+        password || undefined,
+        execOpts?.stdin
       );
     },
     async getCwd() {
@@ -1096,7 +1097,8 @@ function runSshExec(
   command: string,
   cwd: string,
   timeoutMs = 60_000,
-  password?: string
+  password?: string,
+  stdin?: string | Buffer
 ): Promise<ExecResult> {
   const remote = `cd ${shellQuote(cwd)} 2>/dev/null; ${command}`;
   const askpass = createNonMuxAskpass(password);
@@ -1117,6 +1119,7 @@ function runSshExec(
     const child = spawn(sshBinary(), base, {
       env,
       windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
@@ -1154,5 +1157,22 @@ function runSshExec(
       clearTimeout(timer);
       finish({ stdout, stderr, exitCode: code });
     });
+
+    // Keep argv short (Windows CreateProcess ~8KB limit). Large editor
+    // saves stream the payload on stdin instead of embedding in the command.
+    const payload =
+      stdin == null
+        ? null
+        : typeof stdin === "string"
+          ? Buffer.from(stdin, "utf8")
+          : stdin;
+    if (!payload || payload.length === 0) {
+      child.stdin.end();
+      return;
+    }
+    child.stdin.on("error", () => {
+      /* ignore EPIPE after remote exit */
+    });
+    child.stdin.end(payload);
   });
 }

@@ -23,7 +23,7 @@ export interface LocalPtyBackend {
   resize(cols: number, rows: number): void;
   exec(
     command: string,
-    opts?: { cwd?: string; timeoutMs?: number }
+    opts?: { cwd?: string; timeoutMs?: number; stdin?: string | Buffer }
   ): Promise<ExecResult>;
   getCwd(): Promise<string>;
   dispose(): Promise<void>;
