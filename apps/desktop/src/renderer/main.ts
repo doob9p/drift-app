@@ -2862,7 +2862,14 @@ function setBroadcastInput(on: boolean): void {
   syncBroadcastChrome();
 }
 
+let lastBroadcastToggleAt = 0;
+
 function toggleBroadcastInput(): void {
+  // Menu accelerator + xterm/window keydown can both fire for ⌥⌘B;
+  // ignore the duplicate so we don't on→off in one keypress.
+  const now = Date.now();
+  if (now - lastBroadcastToggleAt < 250) return;
+  lastBroadcastToggleAt = now;
   setBroadcastInput(!broadcastOn);
 }
 
@@ -3038,9 +3045,12 @@ function createTermTheme(): ConstructorParameters<typeof Terminal>[0] {
     cursorBlink: true,
     fontFamily: TERM_FONT_FAMILY,
     fontSize: TERM_FONT_SIZE,
-    lineHeight: 1,
+    // Meslo / Powerline (agnoster) needs a bit of leading — lineHeight 1
+    // clips the top of prompt segments like iTerm never does.
+    lineHeight: 1.2,
     letterSpacing: 0,
-    customGlyphs: false,
+    // Cleared box-drawing / block glyphs render closer to iTerm.
+    customGlyphs: true,
     rescaleOverlappingGlyphs: true,
     // Required to set term.unicode.activeVersion (Hangul width).
     allowProposedApi: true,
@@ -3121,7 +3131,8 @@ function mountTabView(
       !ev.shiftKey &&
       ev.key.toLowerCase() === "b"
     ) {
-      toggleBroadcastInput();
+      // View menu accelerator toggles broadcast; swallow so the PTY
+      // never sees the chord (and so we don't double-toggle).
       return false;
     }
     const mod = ev.metaKey || ev.ctrlKey;
@@ -3129,6 +3140,13 @@ function mountTabView(
     const key = ev.key.toLowerCase();
     if (key === "k" && !ev.shiftKey) {
       term.clear();
+      // Local UI clear — also wipe linked broadcast terminals' scrollback.
+      if (broadcastOn && broadcastMembers.has(tabId)) {
+        for (const otherId of broadcastMembers) {
+          if (otherId === tabId) continue;
+          state.tabs.get(otherId)?.term.clear();
+        }
+      }
       return false;
     }
     if (key === "c" && !ev.shiftKey && term.hasSelection()) {

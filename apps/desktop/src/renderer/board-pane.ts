@@ -137,7 +137,7 @@ const GRID_BASE = 24;
  * Keep modest: a huge painted DOM layer trips Chromium tile memory limits
  * ("tile memory limits exceeded") when zooming with terminal canvases.
  */
-const WORLD = { x: 0, y: 0, w: 3600, h: 2400 };
+const WORLD = { x: 0, y: 0, w: 2400, h: 1600 };
 
 function wheelDeltaY(e: WheelEvent): number {
   let dy = e.deltaY;
@@ -1253,6 +1253,7 @@ export function createBoardPane(
         <button type="button" class="board-card-broadcast-chip" data-broadcast-member data-i18n-title="board.broadcastMember" title="${t("board.broadcastMember")}" aria-label="${t("board.broadcastMember")}" aria-pressed="false">${icons.broadcastMember(12)}</button>
         <span class="board-card-ico" aria-hidden="true">${icons.terminal(13)}</span>
         <span class="board-card-title"></span>
+        <span class="board-card-broadcast-badge is-hidden" data-broadcast-badge aria-hidden="true"></span>
         <div class="board-card-actions">
           <button type="button" class="icon ghost board-card-add-prompt" data-i18n-title="board.addPrompt" title="${t("board.addPrompt")}" aria-label="${t("board.addPrompt")}">${icons.addPrompt(13)}</button>
           <button type="button" class="icon ghost board-card-min" data-i18n-title="board.minimize" title="Minimize">${icons.chevronDown(12)}</button>
@@ -1300,8 +1301,11 @@ export function createBoardPane(
     memberTabIds: Iterable<string>
   ): void {
     broadcastActive = active;
+    // Snapshot first — callers often pass `broadcastMembers` itself; clearing
+    // that live Set before iterating would wipe every member (focus changes).
+    const nextMembers = new Set(memberTabIds);
     broadcastMembers.clear();
-    for (const id of memberTabIds) broadcastMembers.add(id);
+    for (const id of nextMembers) broadcastMembers.add(id);
     viewport.classList.toggle("is-broadcast", active);
     broadcastBtn.classList.toggle("is-active", active);
     broadcastBtn.setAttribute("aria-pressed", active ? "true" : "false");
@@ -1325,18 +1329,32 @@ export function createBoardPane(
       const chip = el.querySelector(
         "[data-broadcast-member]"
       ) as HTMLButtonElement | null;
-      if (!chip) continue;
-      chip.classList.toggle("is-member", member);
-      chip.setAttribute("aria-pressed", member ? "true" : "false");
-      const chipLabel = member
-        ? t("board.broadcastMemberOff")
-        : t("board.broadcastMember");
-      chip.title = chipLabel;
-      chip.setAttribute("aria-label", chipLabel);
-      chip.setAttribute(
-        "data-i18n-title",
-        member ? "board.broadcastMemberOff" : "board.broadcastMember"
-      );
+      if (chip) {
+        chip.classList.toggle("is-member", member);
+        chip.setAttribute("aria-pressed", member ? "true" : "false");
+        const chipLabel = member
+          ? t("board.broadcastMemberOff")
+          : t("board.broadcastMember");
+        chip.title = chipLabel;
+        chip.setAttribute("aria-label", chipLabel);
+        chip.setAttribute(
+          "data-i18n-title",
+          member ? "board.broadcastMemberOff" : "board.broadcastMember"
+        );
+      }
+      const badge = el.querySelector(
+        "[data-broadcast-badge]"
+      ) as HTMLElement | null;
+      if (badge) {
+        badge.classList.toggle("is-hidden", !member);
+        badge.classList.toggle("is-source", Boolean(source));
+        badge.textContent = member
+          ? source
+            ? t("board.broadcastBadgeSource")
+            : t("board.broadcastBadge")
+          : "";
+        badge.setAttribute("aria-hidden", member ? "false" : "true");
+      }
     }
   }
 
@@ -1617,11 +1635,8 @@ export function createBoardPane(
         }
         return;
       }
-      if (e.key.toLowerCase() === "b") {
-        e.preventDefault();
-        handlers.onToggleBroadcast();
-        return;
-      }
+      // ⌥⌘B broadcast is owned by the View menu (same as arrange/tile), so
+      // do not toggle here — that double-fires with the accelerator.
     }
 
     if (

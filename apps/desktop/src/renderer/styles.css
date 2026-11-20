@@ -32,6 +32,9 @@
   --ok-soft: rgba(61, 191, 122, 0.14);
   --warn: #d4a35a;
   --warn-soft: rgba(212, 163, 90, 0.16);
+  /* Linked broadcast terminals — distinct from focus accent. */
+  --broadcast: #d4a35a;
+  --broadcast-soft: rgba(212, 163, 90, 0.16);
   --danger: #d97884;
   --danger-soft: rgba(217, 120, 132, 0.14);
   --term: #0c0e12;
@@ -2630,11 +2633,12 @@ body.is-resizing-col {
 }
 
 .board-card.board-card-terminal.is-tiled.is-broadcast {
-  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--broadcast) 55%, transparent);
 }
 
-.board-card.board-card-terminal.is-tiled.is-broadcast.is-broadcast-source {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 75%, transparent);
+.board-card.board-card-terminal.is-tiled.is-broadcast.is-broadcast-source,
+.board-card.board-card-terminal.is-tiled.is-broadcast.is-focused {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--broadcast) 80%, transparent);
 }
 
 .board-card-broadcast-chip {
@@ -2661,24 +2665,53 @@ body.is-resizing-col {
 }
 
 .board-card-broadcast-chip.is-member {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--broadcast);
+  background: var(--broadcast-soft);
 }
 
 .board-card.board-card-terminal.is-broadcast {
+  border-color: color-mix(in srgb, var(--broadcast) 65%, var(--line-strong));
   box-shadow:
-    0 0 0 1.5px color-mix(in srgb, var(--accent) 45%, transparent),
+    0 0 0 1.5px color-mix(in srgb, var(--broadcast) 55%, transparent),
     0 10px 28px rgba(0, 0, 0, 0.28);
 }
 
 .board-card.board-card-terminal.is-broadcast.is-broadcast-source {
+  border-color: var(--broadcast);
   box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--accent) 75%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--broadcast) 80%, transparent),
     0 12px 32px rgba(0, 0, 0, 0.32);
 }
 
 .board-card.board-card-terminal.is-broadcast .board-card-head {
-  background: color-mix(in srgb, var(--accent) 8%, var(--panel-2));
+  background: color-mix(in srgb, var(--broadcast) 10%, var(--panel-2));
+}
+
+.board-card-broadcast-badge {
+  flex: 0 0 auto;
+  max-width: 5.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.08rem 0.42rem;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+  color: var(--broadcast);
+  background: var(--broadcast-soft);
+  border: 1px solid color-mix(in srgb, var(--broadcast) 35%, transparent);
+}
+
+.board-card-broadcast-badge.is-source {
+  color: #1a1408;
+  background: var(--broadcast);
+  border-color: transparent;
+}
+
+.board-card-broadcast-badge.is-hidden {
+  display: none;
 }
 
 .board-card.is-focused {
@@ -2686,6 +2719,14 @@ body.is-resizing-col {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent),
     0 12px 32px rgba(0, 0, 0, 0.34);
+}
+
+/* Broadcast ring must win over normal focus chrome for every linked member. */
+.board-card.board-card-terminal.is-broadcast.is-focused {
+  border-color: var(--broadcast);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--broadcast) 80%, transparent),
+    0 12px 32px rgba(0, 0, 0, 0.32);
 }
 
 .board-card-head {
@@ -2757,13 +2798,53 @@ body.is-resizing-col {
 }
 
 .board-term-host {
+  position: relative;
   flex: 1;
   min-height: 0;
   height: 100%;
+  /* Match .terminal-host inset so Powerline isn’t flush-clipped under the head. */
+  padding: 6px 10px 4px;
+  box-sizing: border-box;
 }
 
 .board-term-host > div {
   height: 100%;
+}
+
+.board-term-host .xterm {
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0;
+}
+
+/* Same overlay scrollbar behavior as .terminal-host */
+.board-term-host .xterm-viewport {
+  scrollbar-width: none;
+}
+
+.board-term-host .term-can-scroll:hover .xterm-viewport,
+.board-term-host .term-scrolling .xterm-viewport {
+  scrollbar-width: thin;
+}
+
+.board-term-host .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+
+.board-term-host .xterm-viewport::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.board-term-host .term-can-scroll:hover .xterm-viewport::-webkit-scrollbar-thumb,
+.board-term-host .term-scrolling .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 .board-prompt-body {
@@ -3303,8 +3384,9 @@ body.is-resizing-editor {
 
 .terminal-host {
   position: relative;
-  /* Keep horizontal inset equal to .tabstrip so the left edge lines up. */
-  padding: 6px 10px 0;
+  /* Keep horizontal inset equal to .tabstrip so the left edge lines up.
+     Bottom pad matches board cards so Powerline isn’t clipped. */
+  padding: 6px 10px 4px;
   box-sizing: border-box;
 }
 
