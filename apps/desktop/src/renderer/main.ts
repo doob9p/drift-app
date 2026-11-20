@@ -23,7 +23,7 @@ import {
 } from "./i18n.js";
 import { icons } from "./icons.js";
 import { createEditorPane } from "./editor-pane.js";
-import { askFsConfirm, createFilesBrowser } from "./files-tree.js";
+import { askFsConfirm, askFsText, createFilesBrowser } from "./files-tree.js";
 import {
   createMeetingPane,
   type MeetingPaneController,
@@ -273,19 +273,37 @@ app.innerHTML = `
               ${icons.terminal(14)}
               <span data-i18n="sidebar.local">Local terminal</span>
             </button>
-            <div class="btn-row btn-row-ssh">
-              <button type="button" id="btn-add-ssh" data-i18n="sidebar.addSsh">Add SSH</button>
+            <button type="button" class="sidebar-add-ssh" id="btn-add-ssh" data-i18n="sidebar.addSsh">Add SSH</button>
+          </div>
+          <div class="section-label section-label-hosts">
+            <span data-i18n="sidebar.ssh">Hosts</span>
+            <div class="section-label-actions" role="group" aria-label="Host folders">
               <button
                 type="button"
-                class="icon"
-                id="btn-import-ssh"
-                data-i18n-title="sidebar.import"
-                title="Import config"
-                aria-label="Import config"
-              >${icons.importConfig(14)}</button>
+                class="icon ghost section-label-btn"
+                id="btn-add-folder"
+                data-i18n-title="sidebar.addFolder"
+                title="New folder"
+                aria-label="New folder"
+              >${icons.folderPlus(14)}</button>
+              <button
+                type="button"
+                class="icon ghost section-label-btn"
+                id="btn-refresh-sessions"
+                data-i18n-title="sidebar.refreshHosts"
+                title="Refresh"
+                aria-label="Refresh"
+              >${icons.refresh(14)}</button>
+              <button
+                type="button"
+                class="icon ghost section-label-btn"
+                id="btn-collapse-folders"
+                data-i18n-title="sidebar.collapseFolders"
+                title="Collapse folders"
+                aria-label="Collapse folders"
+              >${icons.foldVertical(14)}</button>
             </div>
           </div>
-          <div class="section-label"><span data-i18n="sidebar.ssh">Hosts</span></div>
           <div class="session-empty" id="session-empty" data-i18n-html="sidebar.empty"></div>
           <ul class="session-list" id="session-list"></ul>
         </section>
@@ -996,8 +1014,185 @@ async function applyChatMode(mode: ChatMode): Promise<void> {
   chat.addSystem(t("mode.changed", { mode: t(`mode.${mode}`) }));
 }
 
+const SSH_FOLDERS_KEY = "drift.sshFolders";
+const SSH_FOLDERS_COLLAPSED_KEY = "drift.sshFoldersCollapsed";
+const SESSION_DND_TYPE = "application/x-drift-session-id";
+const FOLDER_DND_TYPE = "application/x-drift-folder-name";
+
+function normalizeFolderName(name: string): string {
+  return name.trim().replace(/\s+/g, " ");
+}
+
+function folderKey(name: string): string {
+  return name.toLocaleLowerCase("en");
+}
+
+function loadStoredFolderNames(): string[] {
+  try {
+    const raw = localStorage.getItem(SSH_FOLDERS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const item of parsed) {
+      if (typeof item !== "string") continue;
+      const name = normalizeFolderName(item);
+      if (!name) continue;
+      const key = folderKey(name);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(name);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredFolderNames(names: string[]): void {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of names) {
+    const name = normalizeFolderName(raw);
+    if (!name) continue;
+    const key = folderKey(name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  // Preserve caller order — folders can be reordered by drag.
+  try {
+    localStorage.setItem(SSH_FOLDERS_KEY, JSON.stringify(out));
+  } catch {
+    /* ignore quota */
+  }
+}
+
+function mergedFolderNames(sessions: SavedSession[]): string[] {
+  const names = loadStoredFolderNames();
+  const seen = new Set(names.map(folderKey));
+  let changed = false;
+  for (const s of sessions) {
+    const name = normalizeFolderName(s.folder ?? "");
+    if (!name) continue;
+    const key = folderKey(name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+    changed = true;
+  }
+  if (changed) saveStoredFolderNames(names);
+  return names;
+}
+
+function clearFolderReorderMarks(): void {
+  for (const el of els.sessionList.querySelectorAll(".session-folder")) {
+    el.classList.remove("is-drop-before", "is-drop-after", "is-dragging");
+  }
+}
+
+function reorderSshFolder(
+  from: string,
+  to: string,
+  place: "before" | "after"
+): void {
+  if (folderKey(from) === folderKey(to)) return;
+  const names = mergedFolderNames(state.sessions);
+  const fromIdx = names.findIndex((n) => folderKey(n) === folderKey(from));
+  if (fromIdx < 0) return;
+  const [item] = names.splice(fromIdx, 1);
+  if (!item) return;
+  let insertAt = names.findIndex((n) => folderKey(n) === folderKey(to));
+  if (insertAt < 0) return;
+  if (place === "after") insertAt += 1;
+  names.splice(insertAt, 0, item);
+  saveStoredFolderNames(names);
+  void refreshSessions();
+}
+
+function loadCollapsedFolders(): Set<string> {
+  try {
+    const raw = localStorage.getItem(SSH_FOLDERS_COLLAPSED_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(
+      parsed
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => folderKey(x))
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedFolders(keys: Set<string>): void {
+  try {
+    localStorage.setItem(
+      SSH_FOLDERS_COLLAPSED_KEY,
+      JSON.stringify([...keys])
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+function isFolderCollapsed(name: string): boolean {
+  return loadCollapsedFolders().has(folderKey(name));
+}
+
+function setFolderCollapsed(name: string, collapsed: boolean): void {
+  const keys = loadCollapsedFolders();
+  const key = folderKey(name);
+  if (collapsed) keys.add(key);
+  else keys.delete(key);
+  saveCollapsedFolders(keys);
+}
+
+function findFolderName(
+  names: string[],
+  needle: string
+): string | undefined {
+  const key = folderKey(needle);
+  return names.find((n) => folderKey(n) === key);
+}
+
+function sessionSaveInput(
+  session: SavedSession,
+  patch: Partial<SavedSession> = {}
+): Omit<SavedSession, "id" | "createdAt" | "updatedAt"> & { id?: string } {
+  const next = { ...session, ...patch };
+  return {
+    id: next.id,
+    name: next.name,
+    folder: next.folder,
+    host: next.host,
+    user: next.user,
+    port: next.port,
+    identityFile: next.identityFile,
+    authorizedKeyIdentity: next.authorizedKeyIdentity,
+    proxyJump: next.proxyJump,
+    startDir: next.startDir,
+    sshConfigHost: next.sshConfigHost,
+  };
+}
+
+async function setSessionFolder(
+  session: SavedSession,
+  folder: string | undefined
+): Promise<void> {
+  const next = folder ? normalizeFolderName(folder) || undefined : undefined;
+  const prev = normalizeFolderName(session.folder ?? "") || undefined;
+  if (prev === next) return;
+  await api.saveSession(sessionSaveInput(session, { folder: next }));
+  await refreshSessions();
+}
+
 function updateSessionEmpty(): void {
-  els.sessionEmpty.classList.toggle("hidden", state.sessions.length > 0);
+  const hasFolders = loadStoredFolderNames().length > 0;
+  const hasContent = state.sessions.length > 0 || hasFolders;
+  els.sessionEmpty.classList.toggle("hidden", hasContent);
 }
 
 function setGenerating(on: boolean, cardId?: string | null): void {
@@ -2052,42 +2247,389 @@ function closeSshModal(): void {
   syncSshPasswordUi(false);
 }
 
+function createSessionListItem(s: SavedSession): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className = "session-item";
+  li.draggable = true;
+  li.dataset.sessionId = s.id;
+  const open = document.createElement("button");
+  open.className = "row";
+  open.type = "button";
+  const hostMeta = `${s.user}@${s.host}${s.port && s.port !== 22 ? `:${s.port}` : ""}`;
+  open.innerHTML = `<strong title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</strong><span class="meta" title="${escapeHtml(hostMeta)}">${escapeHtml(hostMeta)}</span>`;
+  open.onclick = () => void openSsh(s.id);
+  const actions = document.createElement("div");
+  actions.className = "session-actions";
+  const edit = document.createElement("button");
+  edit.className = "session-action ghost";
+  edit.type = "button";
+  edit.title = t("ssh.edit");
+  edit.setAttribute("aria-label", `${t("ssh.edit")} ${s.name}`);
+  edit.innerHTML = icons.pencil(14);
+  edit.onclick = (e) => {
+    e.stopPropagation();
+    void openSshModal(s);
+  };
+  const del = document.createElement("button");
+  del.className = "session-action ghost";
+  del.type = "button";
+  del.title = t("ssh.delete");
+  del.setAttribute("aria-label", `${t("ssh.delete")} ${s.name}`);
+  del.innerHTML = icons.trash(14);
+  del.onclick = async (e) => {
+    e.stopPropagation();
+    await api.deleteSession(s.id);
+    await refreshSessions();
+  };
+  actions.append(edit, del);
+  li.append(open, actions);
+
+  li.addEventListener("dragstart", (e) => {
+    if (!e.dataTransfer) return;
+    e.dataTransfer.setData(SESSION_DND_TYPE, s.id);
+    e.dataTransfer.setData("text/plain", s.id);
+    e.dataTransfer.effectAllowed = "move";
+    li.classList.add("is-dragging");
+    els.sessionList.classList.add("is-dragging-session");
+  });
+  li.addEventListener("dragend", () => {
+    li.classList.remove("is-dragging");
+    els.sessionList.classList.remove("is-dragging-session");
+    els.sessionList.classList.remove("is-drop-ungrouped");
+    for (const el of els.sessionList.querySelectorAll(".is-drop-target")) {
+      el.classList.remove("is-drop-target");
+    }
+    clearFolderReorderMarks();
+  });
+
+  return li;
+}
+
+let sessionListDropWired = false;
+
+function wireFolderDropTarget(
+  el: HTMLElement,
+  folder: string | undefined
+): void {
+  el.addEventListener("dragover", (e) => {
+    if (!els.sessionList.classList.contains("is-dragging-session")) return;
+    e.preventDefault();
+    // Folder targets must stop bubbling so the root list does not also
+    // highlight as the ungrouped drop zone.
+    if (folder) e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    if (folder) {
+      el.classList.add("is-drop-target");
+      els.sessionList.classList.remove("is-drop-ungrouped");
+    } else {
+      els.sessionList.classList.add("is-drop-ungrouped");
+    }
+  });
+  el.addEventListener("dragleave", (e) => {
+    const related = e.relatedTarget as Node | null;
+    if (related && el.contains(related)) return;
+    el.classList.remove("is-drop-target");
+    if (!folder) els.sessionList.classList.remove("is-drop-ungrouped");
+  });
+  el.addEventListener("drop", (e) => {
+    if (!els.sessionList.classList.contains("is-dragging-session")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    el.classList.remove("is-drop-target");
+    els.sessionList.classList.remove("is-drop-ungrouped");
+    const id =
+      e.dataTransfer?.getData(SESSION_DND_TYPE) ||
+      e.dataTransfer?.getData("text/plain");
+    if (!id) return;
+    const session = state.sessions.find((s) => s.id === id);
+    if (!session) return;
+    void setSessionFolder(session, folder);
+  });
+}
+
+function createFolderElement(
+  folderName: string,
+  sessions: SavedSession[]
+): HTMLLIElement {
+  const collapsed = isFolderCollapsed(folderName);
+  const li = document.createElement("li");
+  li.className = `session-folder${collapsed ? " is-collapsed" : ""}`;
+  li.dataset.folder = folderName;
+  li.draggable = true;
+  wireFolderDropTarget(li, folderName);
+
+  li.addEventListener("dragstart", (e) => {
+    // Nested host rows own their own drag; ignore those here.
+    if ((e.target as HTMLElement | null)?.closest?.(".session-item")) return;
+    if (!e.dataTransfer) return;
+    e.dataTransfer.setData(FOLDER_DND_TYPE, folderName);
+    e.dataTransfer.setData("text/plain", folderName);
+    e.dataTransfer.effectAllowed = "move";
+    li.classList.add("is-dragging");
+    els.sessionList.classList.add("is-dragging-folder");
+  });
+  li.addEventListener("dragend", () => {
+    li.classList.remove("is-dragging");
+    els.sessionList.classList.remove("is-dragging-folder");
+    clearFolderReorderMarks();
+  });
+
+  const head = document.createElement("div");
+  head.className = "session-folder-head";
+
+  li.addEventListener("dragover", (e) => {
+    if (!els.sessionList.classList.contains("is-dragging-folder")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    const rect = li.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    for (const other of els.sessionList.querySelectorAll(".session-folder")) {
+      if (other === li) continue;
+      other.classList.remove("is-drop-before", "is-drop-after");
+    }
+    li.classList.toggle("is-drop-before", before);
+    li.classList.toggle("is-drop-after", !before);
+  });
+  li.addEventListener("dragleave", (e) => {
+    if (!els.sessionList.classList.contains("is-dragging-folder")) return;
+    const related = e.relatedTarget as Node | null;
+    if (related && li.contains(related)) return;
+    li.classList.remove("is-drop-before", "is-drop-after");
+  });
+  li.addEventListener("drop", (e) => {
+    if (!els.sessionList.classList.contains("is-dragging-folder")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const from =
+      e.dataTransfer?.getData(FOLDER_DND_TYPE) ||
+      e.dataTransfer?.getData("text/plain") ||
+      "";
+    const place = li.classList.contains("is-drop-before") ? "before" : "after";
+    clearFolderReorderMarks();
+    els.sessionList.classList.remove("is-dragging-folder");
+    if (!from) return;
+    reorderSshFolder(from, folderName, place);
+  });
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "session-folder-toggle";
+  toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  toggle.innerHTML = `
+    <span class="folder-chevron" aria-hidden="true">${icons.chevronDown(11)}</span>
+    <span class="folder-ico" aria-hidden="true">${collapsed ? icons.folder(13) : icons.folderOpen(13)}</span>
+    <span class="folder-name" title="${escapeHtml(folderName)}">${escapeHtml(folderName)}</span>
+    <span class="folder-count">${sessions.length}</span>
+  `;
+  toggle.onclick = () => {
+    const next = !isFolderCollapsed(folderName);
+    setFolderCollapsed(folderName, next);
+    void refreshSessions();
+  };
+
+  const actions = document.createElement("div");
+  actions.className = "session-folder-actions";
+
+  const openAll = document.createElement("button");
+  openAll.type = "button";
+  openAll.className = "session-action ghost";
+  openAll.title = t("sidebar.folderOpenAll");
+  openAll.setAttribute(
+    "aria-label",
+    `${t("sidebar.folderOpenAll")} ${folderName}`
+  );
+  openAll.innerHTML = icons.terminal(13);
+  openAll.disabled = sessions.length === 0;
+  openAll.onclick = (e) => {
+    e.stopPropagation();
+    void (async () => {
+      for (const s of sessions) await openSsh(s.id);
+    })();
+  };
+
+  const rename = document.createElement("button");
+  rename.type = "button";
+  rename.className = "session-action ghost";
+  rename.title = t("sidebar.folderRename");
+  rename.setAttribute(
+    "aria-label",
+    `${t("sidebar.folderRename")} ${folderName}`
+  );
+  rename.innerHTML = icons.pencil(13);
+  rename.onclick = (e) => {
+    e.stopPropagation();
+    void renameSshFolder(folderName);
+  };
+
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "session-action ghost";
+  del.title = t("sidebar.folderDelete");
+  del.setAttribute("aria-label", `${t("sidebar.folderDelete")} ${folderName}`);
+  del.innerHTML = icons.trash(13);
+  del.onclick = (e) => {
+    e.stopPropagation();
+    void deleteSshFolder(folderName);
+  };
+
+  actions.append(openAll, rename, del);
+  head.append(toggle, actions);
+
+  const list = document.createElement("ul");
+  list.className = "session-folder-list";
+  if (sessions.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "session-folder-empty";
+    empty.textContent = t("sidebar.folderEmpty");
+    list.append(empty);
+  } else {
+    for (const s of sessions) list.append(createSessionListItem(s));
+  }
+
+  li.append(head, list);
+  return li;
+}
+
+async function createSshFolder(): Promise<void> {
+  const raw = await askFsText({
+    title: t("sidebar.folderNewTitle"),
+    initial: "",
+    okLabel: t("sidebar.folderCreate"),
+    cancelLabel: t("files.dialogCancel"),
+  });
+  if (raw === null) return;
+  const name = normalizeFolderName(raw);
+  if (!name) {
+    showToast(t("sidebar.folderNameRequired"), "info");
+    return;
+  }
+  const folders = mergedFolderNames(state.sessions);
+  if (findFolderName(folders, name)) {
+    showToast(t("sidebar.folderExists"), "info");
+    return;
+  }
+  folders.push(name);
+  saveStoredFolderNames(folders);
+  setFolderCollapsed(name, false);
+  await refreshSessions();
+}
+
+async function renameSshFolder(from: string): Promise<void> {
+  const raw = await askFsText({
+    title: t("sidebar.folderRenameTitle"),
+    initial: from,
+    okLabel: t("sidebar.folderRename"),
+    cancelLabel: t("files.dialogCancel"),
+  });
+  if (raw === null) return;
+  const to = normalizeFolderName(raw);
+  if (!to) {
+    showToast(t("sidebar.folderNameRequired"), "info");
+    return;
+  }
+  if (folderKey(to) === folderKey(from)) {
+    // Same name ignoring case — still rewrite stored casing if changed.
+    if (to === from) return;
+  } else {
+    const folders = mergedFolderNames(state.sessions);
+    if (findFolderName(folders, to)) {
+      showToast(t("sidebar.folderExists"), "info");
+      return;
+    }
+  }
+
+  const members = state.sessions.filter(
+    (s) => folderKey(s.folder ?? "") === folderKey(from)
+  );
+  for (const s of members) {
+    await api.saveSession(sessionSaveInput(s, { folder: to }));
+  }
+
+  const nextNames = loadStoredFolderNames().map((n) =>
+    folderKey(n) === folderKey(from) ? to : n
+  );
+  if (!findFolderName(nextNames, to)) nextNames.push(to);
+  saveStoredFolderNames(nextNames);
+
+  const collapsed = loadCollapsedFolders();
+  if (collapsed.delete(folderKey(from))) {
+    collapsed.add(folderKey(to));
+    saveCollapsedFolders(collapsed);
+  }
+
+  await refreshSessions();
+}
+
+async function deleteSshFolder(name: string): Promise<void> {
+  const ok = await askFsConfirm({
+    title: t("sidebar.folderDelete"),
+    body: t("sidebar.folderDeleteConfirm"),
+    okLabel: t("sidebar.folderDelete"),
+    cancelLabel: t("files.dialogCancel"),
+    danger: true,
+  });
+  if (!ok) return;
+
+  const members = state.sessions.filter(
+    (s) => folderKey(s.folder ?? "") === folderKey(name)
+  );
+  for (const s of members) {
+    await api.saveSession(sessionSaveInput(s, { folder: undefined }));
+  }
+
+  saveStoredFolderNames(
+    loadStoredFolderNames().filter((n) => folderKey(n) !== folderKey(name))
+  );
+  const collapsed = loadCollapsedFolders();
+  collapsed.delete(folderKey(name));
+  saveCollapsedFolders(collapsed);
+
+  await refreshSessions();
+}
+
 async function refreshSessions(): Promise<void> {
   state.sessions = await api.getSessions();
+  const folders = mergedFolderNames(state.sessions);
   els.sessionList.innerHTML = "";
   updateSessionEmpty();
+
+  const byFolder = new Map<string, SavedSession[]>();
+  for (const name of folders) byFolder.set(folderKey(name), []);
+  const ungrouped: SavedSession[] = [];
   for (const s of state.sessions) {
-    const li = document.createElement("li");
-    li.className = "session-item";
-    const open = document.createElement("button");
-    open.className = "row";
-    const hostMeta = `${s.user}@${s.host}${s.port && s.port !== 22 ? `:${s.port}` : ""}`;
-    open.innerHTML = `<strong title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</strong><span class="meta" title="${escapeHtml(hostMeta)}">${escapeHtml(hostMeta)}</span>`;
-    open.onclick = () => void openSsh(s.id);
-    const actions = document.createElement("div");
-    actions.className = "session-actions";
-    const edit = document.createElement("button");
-    edit.className = "session-action ghost";
-    edit.title = t("ssh.edit");
-    edit.setAttribute("aria-label", `${t("ssh.edit")} ${s.name}`);
-    edit.innerHTML = icons.pencil(14);
-    edit.onclick = (e) => {
-      e.stopPropagation();
-      void openSshModal(s);
-    };
-    const del = document.createElement("button");
-    del.className = "session-action ghost";
-    del.title = t("ssh.delete");
-    del.setAttribute("aria-label", `${t("ssh.delete")} ${s.name}`);
-    del.innerHTML = icons.trash(14);
-    del.onclick = async (e) => {
-      e.stopPropagation();
-      await api.deleteSession(s.id);
-      await refreshSessions();
-    };
-    actions.append(edit, del);
-    li.append(open, actions);
-    els.sessionList.append(li);
+    const name = normalizeFolderName(s.folder ?? "");
+    if (!name) {
+      ungrouped.push(s);
+      continue;
+    }
+    const key = folderKey(name);
+    const bucket = byFolder.get(key);
+    if (bucket) bucket.push(s);
+    else ungrouped.push(s);
+  }
+
+  for (const name of folders) {
+    els.sessionList.append(
+      createFolderElement(name, byFolder.get(folderKey(name)) ?? [])
+    );
+  }
+
+  if (folders.length > 0 && ungrouped.length > 0) {
+    const label = document.createElement("li");
+    label.className = "session-ungrouped-label";
+    label.textContent = t("sidebar.ungrouped");
+    els.sessionList.append(label);
+  }
+
+  for (const s of ungrouped) {
+    els.sessionList.append(createSessionListItem(s));
+  }
+
+  // Root list accepts drops → move to ungrouped.
+  if (!sessionListDropWired) {
+    wireFolderDropTarget(els.sessionList, undefined);
+    sessionListDropWired = true;
   }
 }
 
@@ -3902,6 +4444,20 @@ els.meetingList.addEventListener("click", (e) => {
   ) as HTMLElement | null;
   if (open?.dataset.id) void openMeetingById(open.dataset.id);
 });
+document.getElementById("btn-add-folder")!.onclick = () => {
+  void createSshFolder();
+};
+document.getElementById("btn-refresh-sessions")!.onclick = () => {
+  void importSshHostsFromConfig();
+};
+document.getElementById("btn-collapse-folders")!.onclick = () => {
+  const folders = mergedFolderNames(state.sessions);
+  if (folders.length === 0) return;
+  const collapsed = loadCollapsedFolders();
+  for (const name of folders) collapsed.add(folderKey(name));
+  saveCollapsedFolders(collapsed);
+  void refreshSessions();
+};
 document.getElementById("btn-add-ssh")!.onclick = () => {
   void openSshModal();
 };
@@ -3979,6 +4535,8 @@ document.getElementById("btn-save-ssh")!.onclick = async () => {
     host,
     user,
     port: portRaw ? Number(portRaw) : undefined,
+    // Keep folder grouping when editing from the modal.
+    folder: existing?.folder,
     // Keep imported IdentityFile if present; the modal no longer edits keys.
     identityFile: existing?.identityFile,
     authorizedKeyIdentity: existing?.authorizedKeyIdentity,
@@ -3995,9 +4553,11 @@ document.getElementById("btn-save-ssh")!.onclick = async () => {
   closeSshModal();
   await refreshSessions();
 };
-document.getElementById("btn-import-ssh")!.onclick = async () => {
-  const btn = document.getElementById("btn-import-ssh") as HTMLButtonElement;
-  btn.disabled = true;
+async function importSshHostsFromConfig(): Promise<void> {
+  const btn = document.getElementById(
+    "btn-refresh-sessions"
+  ) as HTMLButtonElement | null;
+  if (btn) btn.disabled = true;
   try {
     const result = await api.importSshConfig();
     await refreshSessions();
@@ -4027,9 +4587,9 @@ document.getElementById("btn-import-ssh")!.onclick = async () => {
       "error"
     );
   } finally {
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
   }
-};
+}
 
 document.querySelectorAll<HTMLButtonElement>(".rail-btn[data-nav]").forEach((btn) => {
   btn.onclick = () => {

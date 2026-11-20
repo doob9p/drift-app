@@ -1512,6 +1512,10 @@ function registerIpc(): void {
         identityFile: item.identityFile,
         proxyJump: item.proxyJump,
         sshConfigHost: item.sshConfigHost,
+        // Keep Drift-only fields — refresh syncs config, not board grouping.
+        folder: existing?.folder,
+        startDir: existing?.startDir,
+        authorizedKeyIdentity: existing?.authorizedKeyIdentity,
       });
       if (existing) updated += 1;
       else created += 1;

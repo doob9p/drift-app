@@ -243,7 +243,7 @@ function closeFsDialog(): void {
 }
 
 /** Electron blocks window.prompt / window.confirm — use an in-app dialog. */
-function askFsText(opts: {
+export function askFsText(opts: {
   title: string;
   initial: string;
   okLabel: string;
