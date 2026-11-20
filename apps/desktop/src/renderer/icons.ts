@@ -50,6 +50,9 @@ import {
   LayoutGrid,
   Lock,
   LockOpen,
+  Megaphone,
+  Paperclip,
+  Radio,
 } from "lucide";
 
 type IconOpts = {
@@ -137,5 +140,10 @@ export const icons = {
   tileFit: (size = 14) => lucideSvg(LayoutGrid, { size }),
   lockView: (size = 14) => lucideSvg(Lock, { size }),
   unlockView: (size = 14) => lucideSvg(LockOpen, { size }),
+  /** Broadcast keystrokes to linked terminals. */
+  broadcast: (size = 14) => lucideSvg(Megaphone, { size }),
+  /** Per-card broadcast membership chip. */
+  broadcastMember: (size = 12) => lucideSvg(Radio, { size, strokeWidth: 2 }),
   addSub: (size = 14) => lucideSvg(GitBranch, { size }),
+  attach: (size = 14) => lucideSvg(Paperclip, { size }),
 };

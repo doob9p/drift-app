@@ -534,6 +534,11 @@ function buildApplicationMenu(): void {
         accelerator: "Alt+CmdOrCtrl+F",
         click: () => sendShortcut("fit-terminals"),
       },
+      {
+        label: "Broadcast Input",
+        accelerator: "Alt+CmdOrCtrl+B",
+        click: () => sendShortcut("broadcast-input"),
+      },
       { type: "separator" },
       { role: "reload" },
       { role: "toggleDevTools" },
@@ -2467,7 +2472,14 @@ function registerIpc(): void {
 
   ipcMain.handle(
     "agent:send",
-    async (_e, input: { tabId: string; message: string }) => {
+    async (
+      _e,
+      input: {
+        tabId: string;
+        message: string;
+        images?: Array<{ data: string; mimeType: string }>;
+      }
+    ) => {
       const tab = tabs.get(input.tabId);
       if (!tab?.backend) return { error: "No active terminal tab" };
       const backend = tab.backend;
@@ -2477,6 +2489,22 @@ function registerIpc(): void {
       activeAgentRuns.set(runId, abort);
       let countedUsage = false;
       let sawTerminalStatus = false;
+      const images = Array.isArray(input.images)
+        ? input.images
+            .filter(
+              (img) =>
+                img &&
+                typeof img.data === "string" &&
+                img.data.trim() &&
+                typeof img.mimeType === "string" &&
+                img.mimeType.trim()
+            )
+            .slice(0, 5)
+            .map((img) => ({
+              data: img.data.trim(),
+              mimeType: img.mimeType.trim(),
+            }))
+        : [];
 
       void (async () => {
         try {
@@ -2505,6 +2533,7 @@ function registerIpc(): void {
             chatMode: appSettings.chatMode,
             locale: appSettings.locale,
             signal: abort.signal,
+            images: images.length ? images : undefined,
             context: {
               notes,
               ...(terminalTail ? { terminalTail } : {}),

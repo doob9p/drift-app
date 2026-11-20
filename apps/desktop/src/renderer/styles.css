@@ -2370,6 +2370,24 @@ body.is-resizing-col {
   pointer-events: auto;
 }
 
+.board-tools-hud {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: auto;
+  align-self: flex-end;
+  padding: 0.2rem;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 80%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.16),
+    0 8px 20px rgba(0, 0, 0, 0.28);
+  box-sizing: border-box;
+}
+
 .board-minimap {
   display: flex;
   flex-direction: column;
@@ -2533,24 +2551,6 @@ body.is-resizing-col {
   pointer-events: none;
 }
 
-.board-chrome-hud {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  width: auto;
-  align-self: flex-end;
-  padding: 0.2rem;
-  border: 1px solid color-mix(in srgb, var(--line-strong) 80%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.16),
-    0 8px 20px rgba(0, 0, 0, 0.28);
-  box-sizing: border-box;
-}
-
 .board-card-add-prompt.is-hidden {
   display: none;
 }
@@ -2559,18 +2559,18 @@ body.is-resizing-col {
   display: none;
 }
 
-.board-chrome-hud .icon {
+.board-tools-hud .icon {
   width: 28px;
   height: 28px;
   flex: 0 0 auto;
 }
 
-.board-chrome-hud .icon.is-active {
+.board-tools-hud .icon.is-active {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
-.board-chrome-hud .icon:disabled,
+.board-tools-hud .icon:disabled,
 .board-zoom-label:disabled {
   opacity: 0.38;
   cursor: not-allowed;
@@ -2627,6 +2627,58 @@ body.is-resizing-col {
 .board-card.board-card-terminal.is-tiled {
   border-radius: 0;
   box-shadow: none;
+}
+
+.board-card.board-card-terminal.is-tiled.is-broadcast {
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.board-card.board-card-terminal.is-tiled.is-broadcast.is-broadcast-source {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 75%, transparent);
+}
+
+.board-card-broadcast-chip {
+  display: none;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.board-viewport.is-broadcast .board-card-terminal .board-card-broadcast-chip {
+  display: inline-grid;
+}
+
+.board-card-broadcast-chip:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.board-card-broadcast-chip.is-member {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.board-card.board-card-terminal.is-broadcast {
+  box-shadow:
+    0 0 0 1.5px color-mix(in srgb, var(--accent) 45%, transparent),
+    0 10px 28px rgba(0, 0, 0, 0.28);
+}
+
+.board-card.board-card-terminal.is-broadcast.is-broadcast-source {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 75%, transparent),
+    0 12px 32px rgba(0, 0, 0, 0.32);
+}
+
+.board-card.board-card-terminal.is-broadcast .board-card-head {
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel-2));
 }
 
 .board-card.is-focused {
@@ -3446,8 +3498,16 @@ body.is-resizing-editor {
   justify-content: flex-end;
 }
 
-.msg-user .msg-bubble {
+.msg-user-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
   max-width: 92%;
+}
+
+.msg-user .msg-bubble {
+  min-width: 0;
+  flex: 1 1 auto;
   padding: 0.55rem 0.75rem;
   border-radius: 14px 14px 5px 14px;
   background: var(--elevated);
@@ -3457,6 +3517,75 @@ body.is-resizing-editor {
   letter-spacing: -0.01em;
   display: grid;
   gap: 0.35rem;
+}
+
+.msg-user.is-queued .msg-bubble {
+  opacity: 0.78;
+  border: 1px dashed color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+.msg-queue-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.1rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-2);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.msg-queue-cancel {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.msg-queue-cancel:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.msg-stop-btn {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin-top: 0.15rem;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text-2);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.msg-user.is-running:hover .msg-stop-btn,
+.msg-user.is-running:focus-within .msg-stop-btn,
+.msg-stop-btn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.msg-stop-btn:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.msg-user:not(.is-running) .msg-stop-btn {
+  display: none;
 }
 
 .msg-user .msg-bubble-text {
@@ -3487,6 +3616,39 @@ body.is-resizing-editor {
 .msg-user .msg-ref-chip[data-kind="dir"] {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-2);
+}
+
+.msg-user .msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.msg-user .msg-att-thumb {
+  width: 72px;
+  height: 72px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--panel);
+}
+
+.msg-user .msg-att-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  max-width: 100%;
+  padding: 0.28rem 0.5rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text-2);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.msg-user .msg-att-file span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .msg-assistant {
@@ -3958,6 +4120,7 @@ body.is-resizing-editor {
 }
 
 .composer {
+  position: relative;
   display: grid;
   gap: 0.4rem;
   padding: 0.6rem 0.7rem 0.55rem;
@@ -3969,6 +4132,131 @@ body.is-resizing-editor {
 
 .composer:focus-within {
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.composer.is-dragover {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.composer.is-dragover .composer-drop-hint {
+  opacity: 1;
+  pointer-events: none;
+}
+
+.composer-drop-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--elevated) 72%, var(--accent) 28%);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.composer-attachments.hidden {
+  display: none;
+}
+
+.composer-att {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.28rem 0.4rem 0.28rem 0.28rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+
+.composer-att-thumb {
+  width: 36px;
+  height: 36px;
+  border-radius: 7px;
+  object-fit: cover;
+  background: var(--panel);
+  flex: 0 0 auto;
+}
+
+.composer-att-file {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text) 6%, var(--panel));
+  color: var(--text-2);
+  flex: 0 0 auto;
+}
+
+.composer-att-meta {
+  min-width: 0;
+  display: grid;
+  gap: 0.05rem;
+}
+
+.composer-att-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.composer-att-size {
+  font-size: 0.62rem;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-att-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 0.1rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.composer-att-remove:hover {
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text);
+}
+
+.composer-right {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.composer-attach-btn {
+  width: 30px;
+  height: 30px;
+  color: var(--text-2);
+}
+
+.composer-attach-btn:hover {
+  color: var(--text);
 }
 
 .composer-context {

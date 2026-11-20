@@ -44,6 +44,15 @@ import type {
   PromptCard,
   TerminalCard,
 } from "./board-types.js";
+import {
+  attachmentsToSdkImages,
+  buildAttachmentPromptSuffix,
+  fileToPromptAttachment,
+  filesFromDataTransfer,
+  formatAttachmentSize,
+  MAX_PROMPT_ATTACHMENTS,
+  type PromptAttachment,
+} from "./prompt-attachments.js";
 
 declare global {
   interface Window {
@@ -63,6 +72,8 @@ type TabView = {
   lastCols: number;
   lastRows: number;
   fitTimer?: number;
+  /** Watches the board term host so cols/rows track card resize / tile / arrange. */
+  hostRo?: ResizeObserver;
   /** Ignore fit/resize until this time so the first prompt keeps a stable COLUMNS. */
   sizeFreezeUntil?: number;
 };
@@ -702,9 +713,46 @@ const els = {
 };
 
 const promptChats = new Map<string, ChatController>();
+const promptAttachments = new Map<string, PromptAttachment[]>();
 let activePromptCardId: string | null = null;
 const runToPrompt = new Map<string, string>();
 const generatingCards = new Set<string>();
+
+type QueuedPrompt = {
+  id: string;
+  message: string;
+  payload: string;
+  images?: Array<{ data: string; mimeType: string }>;
+  refsForBubble: { name: string; kind: "file" | "dir" }[];
+  attsForBubble: {
+    name: string;
+    kind: "image" | "text" | "binary";
+    previewUrl?: string;
+  }[];
+};
+
+const promptQueues = new Map<string, QueuedPrompt[]>();
+
+function newQueueId(): string {
+  return `q_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getPromptQueue(cardId: string): QueuedPrompt[] {
+  let q = promptQueues.get(cardId);
+  if (!q) {
+    q = [];
+    promptQueues.set(cardId, q);
+  }
+  return q;
+}
+
+function clearPromptQueue(cardId: string): void {
+  const chat = promptChats.get(cardId);
+  for (const item of promptQueues.get(cardId) || []) {
+    chat?.removeQueuedUser(item.id);
+  }
+  promptQueues.delete(cardId);
+}
 type RunTurnState = {
   startedAssistant: boolean;
   turnTokens: number | null;
@@ -757,7 +805,11 @@ function clearRun(runId: string | null | undefined): void {
 const noopChat: ChatController = {
   clear: () => {},
   showEmpty: () => {},
-  addUser: () => {},
+  addUser: () => null,
+  setRunningUser: () => {},
+  clearRunningUser: () => {},
+  promoteQueuedUser: () => {},
+  removeQueuedUser: () => {},
   beginAssistant: () => {},
   appendAssistant: () => {},
   finishAssistant: () => {},
@@ -809,7 +861,13 @@ function scheduleBoardSave(): void {
 const chat: ChatController = {
   clear: () => activeChat()?.clear(),
   showEmpty: (suggestions) => activeChat()?.showEmpty(suggestions),
-  addUser: (text, refs) => activeChat()?.addUser(text, refs),
+  addUser: (text, refs, attachments, opts) =>
+    activeChat()?.addUser(text, refs, attachments, opts) ?? null,
+  setRunningUser: (onStop) => activeChat()?.setRunningUser(onStop),
+  clearRunningUser: () => activeChat()?.clearRunningUser(),
+  promoteQueuedUser: (queueId, onStop) =>
+    activeChat()?.promoteQueuedUser(queueId, onStop),
+  removeQueuedUser: (queueId) => activeChat()?.removeQueuedUser(queueId),
   beginAssistant: () => activeChat()?.beginAssistant(),
   appendAssistant: (chunk) => activeChat()?.appendAssistant(chunk),
   finishAssistant: (meta) => activeChat()?.finishAssistant(meta),
@@ -912,6 +970,7 @@ function applyUiLocale(): void {
     for (const id of generatingCards) {
       board.setPromptSendBusy(id, true);
     }
+    if (broadcastOn) syncBroadcastChrome();
   }
   hideMentionMenu();
   refreshChatEmptyIfNeeded();
@@ -949,8 +1008,14 @@ function setGenerating(on: boolean, cardId?: string | null): void {
     board.setPromptSendBusy(id, on);
     const input = board.getPromptEls(id)?.input;
     if (input) {
-      input.contentEditable = on ? "false" : "true";
-      input.classList.toggle("is-disabled", on);
+      input.contentEditable = "true";
+      input.classList.remove("is-disabled");
+    }
+    const chat = promptChats.get(id);
+    if (on) {
+      chat?.setRunningUser(() => stopPromptAgent(id));
+    } else {
+      chat?.clearRunningUser();
     }
   }
   state.generating = generatingCards.size > 0;
@@ -1255,12 +1320,134 @@ function syncComposerEmpty(cardId: string): void {
   }
 }
 
-function clearComposer(cardId: string): void {
+function getPromptAttachments(cardId: string): PromptAttachment[] {
+  return promptAttachments.get(cardId) ?? [];
+}
+
+function clearPromptAttachments(cardId: string): void {
+  const list = promptAttachments.get(cardId) || [];
+  for (const att of list) {
+    if (att.previewUrl?.startsWith("blob:")) {
+      try {
+        URL.revokeObjectURL(att.previewUrl);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  promptAttachments.delete(cardId);
+  renderPromptAttachments(cardId);
+}
+
+function renderPromptAttachments(cardId: string): void {
+  const pe = promptEls(cardId);
+  if (!pe?.attachments) return;
+  const list = getPromptAttachments(cardId);
+  pe.attachments.classList.toggle("hidden", list.length === 0);
+  pe.attachments.innerHTML = list
+    .map((att) => {
+      const thumb =
+        att.kind === "image" && att.previewUrl
+          ? `<img class="composer-att-thumb" src="${escapeHtml(att.previewUrl)}" alt="" />`
+          : `<span class="composer-att-file" aria-hidden="true">${icons.file(14)}</span>`;
+      return `<div class="composer-att" data-att-id="${escapeHtml(att.id)}">
+        ${thumb}
+        <div class="composer-att-meta">
+          <span class="composer-att-name" title="${escapeHtml(att.name)}">${escapeHtml(att.name)}</span>
+          <span class="composer-att-size">${escapeHtml(formatAttachmentSize(att.size))}</span>
+        </div>
+        <button type="button" class="composer-att-remove" data-att-remove="${escapeHtml(att.id)}" title="${escapeHtml(t("chat.attach.remove"))}" aria-label="${escapeHtml(t("chat.attach.remove"))}">${icons.close(10)}</button>
+      </div>`;
+    })
+    .join("");
+}
+
+async function addPromptAttachmentFiles(
+  cardId: string,
+  files: File[]
+): Promise<void> {
+  if (!files.length) return;
+  const next = [...getPromptAttachments(cardId)];
+  for (const file of files) {
+    const result = await fileToPromptAttachment(file, next.length);
+    if (!result.ok) {
+      if (result.reason === "too_many") {
+        showToast(t("chat.attach.tooMany"), "info");
+        break;
+      }
+      if (result.reason === "too_large") {
+        showToast(t("chat.attach.tooLarge", { name: result.name }), "info");
+        continue;
+      }
+      showToast(t("chat.attach.readFail", { name: result.name }), "error");
+      continue;
+    }
+    next.push(result.attachment);
+  }
+  promptAttachments.set(cardId, next.slice(0, MAX_PROMPT_ATTACHMENTS));
+  renderPromptAttachments(cardId);
+}
+
+function removePromptAttachment(cardId: string, attId: string): void {
+  const list = getPromptAttachments(cardId);
+  const next: PromptAttachment[] = [];
+  for (const att of list) {
+    if (att.id === attId) {
+      if (att.previewUrl?.startsWith("blob:")) {
+        try {
+          URL.revokeObjectURL(att.previewUrl);
+        } catch {
+          /* ignore */
+        }
+      }
+      continue;
+    }
+    next.push(att);
+  }
+  if (next.length) promptAttachments.set(cardId, next);
+  else promptAttachments.delete(cardId);
+  renderPromptAttachments(cardId);
+}
+
+/** Blocks accidental re-send / IME leftovers right after Enter submit. */
+const composerSendGuardUntil = new Map<string, number>();
+
+function armComposerSendGuard(cardId: string): void {
+  composerSendGuardUntil.set(cardId, Date.now() + 400);
+  const pe = promptEls(cardId);
+  if (!pe) return;
+  const sweep = () => {
+    if (Date.now() > (composerSendGuardUntil.get(cardId) ?? 0)) return;
+    // Hangul IME often re-inserts the last jamo into the emptied editor.
+    if ((pe.input.textContent || "").replace(/\u200b/g, "").trim()) {
+      pe.input.innerHTML = "";
+      syncComposerEmpty(cardId);
+      autoGrowInput(pe.input);
+    }
+  };
+  requestAnimationFrame(sweep);
+  window.setTimeout(sweep, 0);
+  window.setTimeout(sweep, 40);
+  window.setTimeout(sweep, 120);
+}
+
+function isComposerSendGuarded(cardId: string): boolean {
+  return Date.now() < (composerSendGuardUntil.get(cardId) ?? 0);
+}
+
+function isImeComposingKey(e: KeyboardEvent): boolean {
+  // keyCode 229 = IME processing (Chromium/Windows); isComposing covers macOS Hangul.
+  return e.isComposing || e.keyCode === 229;
+}
+
+function clearComposer(cardId: string, opts?: { guardIme?: boolean }): void {
   const pe = promptEls(cardId);
   if (!pe) return;
   pe.input.innerHTML = "";
+  clearPromptAttachments(cardId);
   syncComposerEmpty(cardId);
   autoGrowInput(pe.input);
+  if (opts?.guardIme) armComposerSendGuard(cardId);
 }
 
 function readComposerChips(input: HTMLDivElement): AttachedRef[] {
@@ -1943,7 +2130,7 @@ function deleteChipBeforeCaret(input: HTMLDivElement, cardId: string): boolean {
 function wirePromptComposer(cardId: string): void {
   const pe = promptEls(cardId);
   if (!pe) return;
-  const { input, thread } = pe;
+  const { input, thread, composer, attachments, attachBtn, fileInput } = pe;
   const cardEl = input.closest(".board-card-prompt");
   const modeBtn = cardEl?.querySelector(
     "[data-prompt-mode]"
@@ -1961,6 +2148,81 @@ function wirePromptComposer(cardId: string): void {
   });
   renderModeChip();
   syncModelChipLabels();
+  renderPromptAttachments(cardId);
+
+  attachBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    fileInput.click();
+  });
+  fileInput.addEventListener("change", () => {
+    const files = [...(fileInput.files || [])];
+    fileInput.value = "";
+    void addPromptAttachmentFiles(cardId, files);
+  });
+  attachments.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest(
+      "[data-att-remove]"
+    ) as HTMLElement | null;
+    const id = btn?.dataset.attRemove;
+    if (!id) return;
+    e.preventDefault();
+    removePromptAttachment(cardId, id);
+  });
+
+  let dragDepth = 0;
+  const onDragEnter = (e: DragEvent) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    dragDepth += 1;
+    composer.classList.add("is-dragover");
+  };
+  const onDragOver = (e: DragEvent) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  };
+  const onDragLeave = (e: DragEvent) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) composer.classList.remove("is-dragover");
+  };
+  const onDrop = (e: DragEvent) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepth = 0;
+    composer.classList.remove("is-dragover");
+    void addPromptAttachmentFiles(cardId, filesFromDataTransfer(e.dataTransfer));
+  };
+  composer.addEventListener("dragenter", onDragEnter);
+  composer.addEventListener("dragover", onDragOver);
+  composer.addEventListener("dragleave", onDragLeave);
+  composer.addEventListener("drop", onDrop);
+
+  input.addEventListener("paste", (e) => {
+    const files = filesFromDataTransfer(e.clipboardData);
+    if (!files.length) return;
+    // Prefer attaching clipboard files/images; keep plain-text paste otherwise.
+    e.preventDefault();
+    void addPromptAttachmentFiles(cardId, files);
+    const text = e.clipboardData?.getData("text/plain")?.trim();
+    if (text) {
+      document.execCommand("insertText", false, text);
+      syncComposerEmpty(cardId);
+      autoGrowInput(input);
+    }
+  });
+  input.addEventListener("compositionend", () => {
+    if (!isComposerSendGuarded(cardId)) return;
+    // Drop IME commit that landed after we already cleared+sent.
+    if ((input.textContent || "").replace(/\u200b/g, "").trim()) {
+      input.innerHTML = "";
+      syncComposerEmpty(cardId);
+      autoGrowInput(input);
+    }
+  });
+
   thread.addEventListener("click", (e) => {
     const btn = (e.target as HTMLElement).closest(
       "[data-suggest]"
@@ -2069,6 +2331,7 @@ board = createBoardPane(els.boardStage, {
     if (!card || card.kind !== "terminal") return;
     const minimized = !card.minimized;
     board.setMinimized(cardId, minimized);
+    if (minimized) removeBroadcastMember(card.tabId);
     if (!minimized) activateTab(card.tabId);
   },
   onCloseTerminal(tabId) {
@@ -2082,6 +2345,8 @@ board = createBoardPane(els.boardStage, {
     for (const id of [cardId, ...childIds]) {
       if (isCardGenerating(id)) stopPromptAgent(id);
       promptChats.delete(id);
+      clearPromptAttachments(id);
+      clearPromptQueue(id);
       for (const [runId, cid] of [...runToPrompt]) {
         if (cid === id) clearRun(runId);
       }
@@ -2093,22 +2358,36 @@ board = createBoardPane(els.boardStage, {
   onAddSub(parentCardId) {
     void addManualSubPrompt(parentCardId);
   },
+  onToggleBroadcast() {
+    toggleBroadcastInput();
+  },
+  onToggleBroadcastMember(tabId) {
+    toggleBroadcastMember(tabId);
+  },
   onPromptSend(cardId) {
-    if (isCardGenerating(cardId)) {
-      stopPromptAgent(cardId);
-      return;
-    }
     void sendPrompt(cardId);
   },
   onPromptInputKeydown(cardId, e) {
-    if (isCardGenerating(cardId)) {
-      e.preventDefault();
-      if (e.key === "Enter" && !e.shiftKey) stopPromptAgent(cardId);
-      return;
-    }
     const pe = promptEls(cardId);
     const input = pe?.input;
     if (!input) return;
+    if (
+      isCardGenerating(cardId) &&
+      (e.ctrlKey || e.metaKey) &&
+      e.key.toLowerCase() === "c"
+    ) {
+      const sel = window.getSelection();
+      const copying =
+        sel &&
+        !sel.isCollapsed &&
+        sel.anchorNode &&
+        input.contains(sel.anchorNode);
+      if (!copying) {
+        e.preventDefault();
+        stopPromptAgent(cardId);
+        return;
+      }
+    }
     const mentionOpen = !els.mentionMenu.classList.contains("hidden");
     if (mentionOpen && mentionCardId === cardId) {
       if (e.key === "ArrowDown") {
@@ -2146,11 +2425,13 @@ board = createBoardPane(els.boardStage, {
       return;
     }
     if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (isCardGenerating(cardId)) {
-        stopPromptAgent(cardId);
+      // Don't submit while Hangul/IME is composing — Enter commits the jamo first.
+      // A second Enter from the same keypress would otherwise queue the leftover.
+      if (isImeComposingKey(e) || isComposerSendGuarded(cardId)) {
+        e.preventDefault();
         return;
       }
+      e.preventDefault();
       void sendPrompt(cardId);
     }
   },
@@ -2164,7 +2445,8 @@ board.root.addEventListener("board:add-prompt", ((e: CustomEvent<{ tabId: string
 }) as EventListener);
 
 board.root.addEventListener("board:refit-terminals", () => {
-  requestAnimationFrame(() => refitTerminals());
+  // Card width/height animate ~280ms; fit once early and again after settle.
+  scheduleBoardTerminalRefit();
 });
 
 /** Keep xterm + PTY sizes locked together — never resize one without the other. */
@@ -2177,6 +2459,7 @@ function syncTerminalSize(tab: TabView, opts?: { force?: boolean }): void {
   ) {
     return;
   }
+  // Measure after layout; FitAddon can under-report mid CSS transition.
   tab.fit.fit();
   const cols = tab.term.cols;
   const rows = tab.term.rows;
@@ -2197,6 +2480,17 @@ function scheduleTerminalFit(tab: TabView, immediate = false): void {
     return;
   }
   tab.fitTimer = window.setTimeout(run, 80);
+}
+
+/** Refit every open terminal after board layout (tile / arrange / unlock). */
+function scheduleBoardTerminalRefit(): void {
+  const run = () => refitTerminals({ force: true });
+  requestAnimationFrame(() => {
+    run();
+    requestAnimationFrame(run);
+  });
+  window.setTimeout(run, 60);
+  window.setTimeout(run, 320);
 }
 
 function activateTab(tabId: string): void {
@@ -2244,9 +2538,9 @@ function clearActiveTerminal(): void {
   tab?.term.clear();
 }
 
-function refitTerminals(): void {
+function refitTerminals(opts?: { force?: boolean }): void {
   for (const tab of state.tabs.values()) {
-    syncTerminalSize(tab);
+    syncTerminalSize(tab, { force: opts?.force });
   }
 }
 
@@ -2533,8 +2827,64 @@ function handleShortcut(payload: {
     case "fit-terminals":
       board.fitOpenTerminals();
       break;
+    case "broadcast-input":
+      toggleBroadcastInput();
+      break;
     default:
       break;
+  }
+}
+
+let broadcastOn = false;
+const broadcastMembers = new Set<string>();
+
+function syncBroadcastChrome(): void {
+  board.syncBroadcastUi(broadcastOn, broadcastMembers);
+}
+
+function setBroadcastInput(on: boolean): void {
+  if (on === broadcastOn) {
+    syncBroadcastChrome();
+    return;
+  }
+  broadcastOn = on;
+  if (on) {
+    broadcastMembers.clear();
+    for (const card of board.getCards()) {
+      if (card.kind === "terminal" && !card.minimized) {
+        broadcastMembers.add(card.tabId);
+      }
+    }
+    showToast(t("board.broadcastOnToast"), "info");
+  } else {
+    broadcastMembers.clear();
+  }
+  syncBroadcastChrome();
+}
+
+function toggleBroadcastInput(): void {
+  setBroadcastInput(!broadcastOn);
+}
+
+function toggleBroadcastMember(tabId: string): void {
+  if (!broadcastOn) return;
+  if (broadcastMembers.has(tabId)) broadcastMembers.delete(tabId);
+  else broadcastMembers.add(tabId);
+  syncBroadcastChrome();
+}
+
+function removeBroadcastMember(tabId: string): void {
+  if (!broadcastMembers.has(tabId)) return;
+  broadcastMembers.delete(tabId);
+  if (broadcastOn) syncBroadcastChrome();
+}
+
+function fanoutBroadcastInput(sourceTabId: string, data: string): void {
+  if (!broadcastOn || !broadcastMembers.has(sourceTabId)) return;
+  for (const tabId of broadcastMembers) {
+    if (tabId === sourceTabId) continue;
+    if (!state.tabs.has(tabId)) continue;
+    void api.writeTerminal(tabId, data);
   }
 }
 
@@ -2750,10 +3100,30 @@ function mountTabView(
 
   term.onData((data) => {
     void api.writeTerminal(tabId, data);
+    fanoutBroadcastInput(tabId, data);
   });
 
   term.attachCustomKeyEventHandler((ev) => {
     if (ev.type !== "keydown") return true;
+    if (
+      broadcastOn &&
+      ev.key === "Escape" &&
+      !ev.metaKey &&
+      !ev.ctrlKey &&
+      !ev.altKey
+    ) {
+      setBroadcastInput(false);
+      return false;
+    }
+    if (
+      ev.altKey &&
+      (ev.metaKey || ev.ctrlKey) &&
+      !ev.shiftKey &&
+      ev.key.toLowerCase() === "b"
+    ) {
+      toggleBroadcastInput();
+      return false;
+    }
     const mod = ev.metaKey || ev.ctrlKey;
     if (!mod || ev.altKey) return true;
     const key = ev.key.toLowerCase();
@@ -2778,6 +3148,11 @@ function mountTabView(
     lastCols: 0,
     lastRows: 0,
   };
+  // Board card resize / tile / arrange change the host box — keep PTY cols in sync.
+  view.hostRo = new ResizeObserver(() => {
+    scheduleTerminalFit(view);
+  });
+  view.hostRo.observe(host);
   state.tabs.set(tabId, view);
   activateTab(tabId);
   return view;
@@ -3003,6 +3378,7 @@ async function closeTab(tabId: string): Promise<void> {
   const tab = state.tabs.get(tabId);
   if (!tab) return;
   if (tab.fitTimer != null) window.clearTimeout(tab.fitTimer);
+  tab.hostRo?.disconnect();
   tab.term.dispose();
   tab.el.remove();
   state.tabs.delete(tabId);
@@ -3014,12 +3390,15 @@ async function closeTab(tabId: string): Promise<void> {
   for (const cardId of promptIds) {
     if (isCardGenerating(cardId)) stopPromptAgent(cardId);
     promptChats.delete(cardId);
+    clearPromptAttachments(cardId);
+    clearPromptQueue(cardId);
     for (const [runId, cid] of [...runToPrompt]) {
       if (cid === cardId) clearRun(runId);
     }
     generatingCards.delete(cardId);
     if (activePromptCardId === cardId) activePromptCardId = null;
   }
+  removeBroadcastMember(tabId);
   board.removeTab(tabId);
   await api.closeTab(tabId);
   if (filesFollowTabId === tabId) filesFollowTabId = null;
@@ -4078,8 +4457,66 @@ document.getElementById("btn-toggle-nav")!.onclick = () => {
   toggleNavPanel();
 };
 
-async function sendPrompt(cardId: string): Promise<void> {
-  if (isCardGenerating(cardId)) return;
+function cancelQueuedPrompt(cardId: string, queueId: string): void {
+  const q = promptQueues.get(cardId);
+  if (!q) return;
+  const idx = q.findIndex((item) => item.id === queueId);
+  if (idx < 0) return;
+  q.splice(idx, 1);
+  promptChats.get(cardId)?.removeQueuedUser(queueId);
+  if (!q.length) promptQueues.delete(cardId);
+}
+
+function enqueuePromptFromComposer(cardId: string): boolean {
+  const pe = promptEls(cardId);
+  if (!pe) return false;
+  const { text: message, refs } = readComposerFrom(pe.input);
+  const staged = [...getPromptAttachments(cardId)];
+  if (!message && !refs.length && !staged.length) return false;
+  hideMentionMenu();
+  const withRefs = enrichPromptWithRefs(message, refs);
+  const attachSuffix = buildAttachmentPromptSuffix(staged);
+  const payload = [withRefs, attachSuffix].filter(Boolean).join("\n\n");
+  const images = attachmentsToSdkImages(staged);
+  const refsForBubble = refs.map((r) => ({
+    name: r.name.replace(/\/$/, ""),
+    kind: r.kind,
+  }));
+  const attsForBubble = staged.map((a) => ({
+    name: a.name,
+    kind: a.kind,
+    previewUrl: a.previewUrl,
+  }));
+  const item: QueuedPrompt = {
+    id: newQueueId(),
+    message,
+    payload,
+    images: images.length ? images : undefined,
+    refsForBubble,
+    attsForBubble,
+  };
+  getPromptQueue(cardId).push(item);
+  clearComposer(cardId, { guardIme: true });
+  const runChat = promptChats.get(cardId) ?? noopChat;
+  runChat.addUser(message, refsForBubble, attsForBubble, {
+    queued: true,
+    queueId: item.id,
+    onCancelQueue: (qid) => cancelQueuedPrompt(cardId, qid),
+  });
+  return true;
+}
+
+async function dispatchPrompt(
+  cardId: string,
+  opts: {
+    message: string;
+    payload: string;
+    images?: Array<{ data: string; mimeType: string }>;
+    refsForBubble: QueuedPrompt["refsForBubble"];
+    attsForBubble: QueuedPrompt["attsForBubble"];
+    queueId?: string;
+  }
+): Promise<void> {
   activePromptCardId = cardId;
   let tabId = getPromptTabId(cardId);
   if (!tabId || activeNav === "meetings") {
@@ -4092,23 +4529,22 @@ async function sendPrompt(cardId: string): Promise<void> {
       return;
     }
   }
-  const pe = promptEls(cardId);
-  if (!pe) return;
-  const { text: message, refs } = readComposerFrom(pe.input);
-  if (!message && !refs.length) return;
-  hideMentionMenu();
-  const payload = enrichPromptWithRefs(message, refs);
-  const refsForBubble = refs.map((r) => ({
-    name: r.name.replace(/\/$/, ""),
-    kind: r.kind,
-  }));
-  clearComposer(cardId);
   const runChat = promptChats.get(cardId) ?? noopChat;
-  runChat.addUser(message, refsForBubble);
+  if (opts.queueId) {
+    runChat.promoteQueuedUser(opts.queueId, () => stopPromptAgent(cardId));
+  } else {
+    runChat.addUser(opts.message, opts.refsForBubble, opts.attsForBubble, {
+      onStop: () => stopPromptAgent(cardId),
+    });
+  }
   setGenerating(true, cardId);
   board.setPromptRunStatus(cardId, "running");
   runChat.setThinking(true, t("thinking"));
-  const res = await api.sendAgent({ tabId, message: payload });
+  const res = await api.sendAgent({
+    tabId,
+    message: opts.payload,
+    images: opts.images,
+  });
   if ("error" in res) {
     runChat.setThinking(false);
     if (isApiKeyError(res.error)) {
@@ -4124,6 +4560,7 @@ async function sendPrompt(cardId: string): Promise<void> {
     }
     setGenerating(false, cardId);
     board.setPromptRunStatus(cardId, "error");
+    void drainPromptQueue(cardId);
     return;
   }
   state.activeRunId = res.runId;
@@ -4133,6 +4570,56 @@ async function sendPrompt(cardId: string): Promise<void> {
     turnTokens: null,
     turnModel: state.modelId,
     turnCost: null,
+  });
+}
+
+async function drainPromptQueue(cardId: string): Promise<void> {
+  if (isCardGenerating(cardId)) return;
+  const q = promptQueues.get(cardId);
+  if (!q?.length) return;
+  const next = q.shift()!;
+  if (!q.length) promptQueues.delete(cardId);
+  await dispatchPrompt(cardId, {
+    message: next.message,
+    payload: next.payload,
+    images: next.images,
+    refsForBubble: next.refsForBubble,
+    attsForBubble: next.attsForBubble,
+    queueId: next.id,
+  });
+}
+
+async function sendPrompt(cardId: string): Promise<void> {
+  if (isCardGenerating(cardId)) {
+    enqueuePromptFromComposer(cardId);
+    return;
+  }
+  const pe = promptEls(cardId);
+  if (!pe) return;
+  const { text: message, refs } = readComposerFrom(pe.input);
+  const staged = [...getPromptAttachments(cardId)];
+  if (!message && !refs.length && !staged.length) return;
+  hideMentionMenu();
+  const withRefs = enrichPromptWithRefs(message, refs);
+  const attachSuffix = buildAttachmentPromptSuffix(staged);
+  const payload = [withRefs, attachSuffix].filter(Boolean).join("\n\n");
+  const images = attachmentsToSdkImages(staged);
+  const refsForBubble = refs.map((r) => ({
+    name: r.name.replace(/\/$/, ""),
+    kind: r.kind,
+  }));
+  const attsForBubble = staged.map((a) => ({
+    name: a.name,
+    kind: a.kind,
+    previewUrl: a.previewUrl,
+  }));
+  clearComposer(cardId, { guardIme: true });
+  await dispatchPrompt(cardId, {
+    message,
+    payload,
+    images: images.length ? images : undefined,
+    refsForBubble,
+    attsForBubble,
   });
 }
 
@@ -4248,6 +4735,7 @@ api.onAgentEvent(({ runId, event }) => {
         notifyParentOfSub(cardId, "failed");
       }
       clearRun(runId);
+      if (cardId) void drainPromptQueue(cardId);
     }
     if (event.status === "cancelled") {
       if (pendingApprovalsByRun.has(runId)) {
@@ -4266,6 +4754,7 @@ api.onAgentEvent(({ runId, event }) => {
         notifyParentOfSub(cardId, "failed");
       }
       clearRun(runId);
+      if (cardId) void drainPromptQueue(cardId);
     }
     if (event.status === "done") {
       agentChat.setThinking(false);
@@ -4284,6 +4773,7 @@ api.onAgentEvent(({ runId, event }) => {
       }
       clearRun(runId);
       void refreshAccountUsage();
+      if (cardId) void drainPromptQueue(cardId);
     }
     if (event.status === "running") {
       agentChat.setThinking(true, t("thinking"));

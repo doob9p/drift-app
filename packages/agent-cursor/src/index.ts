@@ -11,6 +11,12 @@ import {
   type UsageCostSnapshot,
 } from "@drift/core";
 
+export type AgentSendImage = {
+  /** Raw base64 payload (no data: prefix). */
+  data: string;
+  mimeType: string;
+};
+
 export interface AgentSendInput {
   message: string;
   target: TargetRef;
@@ -19,6 +25,8 @@ export interface AgentSendInput {
   chatMode?: ChatMode;
   locale?: AppLocale;
   context?: { terminalTail?: string; notes?: string };
+  /** Vision images for Cursor SDK `agent.send({ text, images })`. */
+  images?: AgentSendImage[];
   /** When aborted, cancel the in-flight Cursor run (if any) and stop yielding. */
   signal?: AbortSignal;
 }
@@ -184,6 +192,13 @@ async function* runWithCursorSdk(
   const modelId = input.modelId?.trim() || DEFAULT_MODEL;
   const chatMode = input.chatMode ?? "agent";
   const prompt = buildPrompt(input);
+  const images = (input.images || [])
+    .filter((img) => img.data?.trim() && img.mimeType?.trim())
+    .slice(0, 5)
+    .map((img) => ({
+      data: img.data,
+      mimeType: img.mimeType,
+    }));
 
   if (isAborted(input.signal)) {
     yield { type: "status", status: "cancelled", detail: "Stopped" };
@@ -210,7 +225,11 @@ async function* runWithCursorSdk(
       yield { type: "status", status: "cancelled", detail: "Stopped" };
       return;
     }
-    run = await agent.send(prompt);
+    run = await agent.send(
+      images.length
+        ? { text: prompt, images }
+        : prompt
+    );
     input.signal?.addEventListener("abort", cancelRun, { once: true });
     if (isAborted(input.signal)) {
       cancelRun();

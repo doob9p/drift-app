@@ -141,6 +141,7 @@ export type DesktopApi = {
   sendAgent: (input: {
     tabId: string;
     message: string;
+    images?: Array<{ data: string; mimeType: string }>;
   }) => Promise<{ runId: string } | { error: string }>;
   stopAgent: (input?: {
     runId?: string;

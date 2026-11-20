@@ -6,13 +6,37 @@ import { showToast } from "./toast.js";
 
 export type ChatSuggestion = { label: string; prompt: string };
 
+export type ChatUserAttachment = {
+  name: string;
+  kind: "image" | "text" | "binary";
+  previewUrl?: string;
+};
+
+export type ChatUserRef = { name: string; kind: "file" | "dir" };
+
+export type ChatUserOptions = {
+  /** Queued follow-up waiting for the current run to finish. */
+  queued?: boolean;
+  queueId?: string;
+  onStop?: () => void;
+  onCancelQueue?: (queueId: string) => void;
+};
+
 export type ChatController = {
   clear: () => void;
   showEmpty: (suggestions?: ChatSuggestion[]) => void;
   addUser: (
     text: string,
-    refs?: { name: string; kind: "file" | "dir" }[]
-  ) => void;
+    refs?: ChatUserRef[],
+    attachments?: ChatUserAttachment[],
+    opts?: ChatUserOptions
+  ) => HTMLElement | null;
+  /** Mark the active in-flight user prompt; stop appears on hover. */
+  setRunningUser: (onStop: () => void) => void;
+  clearRunningUser: () => void;
+  /** Turn a queued bubble into the active running prompt. */
+  promoteQueuedUser: (queueId: string, onStop: () => void) => void;
+  removeQueuedUser: (queueId: string) => void;
   beginAssistant: () => void;
   appendAssistant: (chunk: string) => void;
   finishAssistant: (meta?: { tokens?: number; modelId?: string; cost?: string }) => void;
@@ -135,14 +159,72 @@ export function createChatController(root: HTMLElement): ChatController {
     showEmpty(lastSuggestions);
   }
 
+  function wireStopButton(el: HTMLElement, onStop: () => void): void {
+    const btn = el.querySelector("[data-msg-stop]") as HTMLButtonElement | null;
+    if (!btn) return;
+    btn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onStop();
+    };
+  }
+
+  function clearRunningUser(): void {
+    root.querySelectorAll(".msg-user.is-running").forEach((node) => {
+      node.classList.remove("is-running");
+      const btn = node.querySelector("[data-msg-stop]") as HTMLButtonElement | null;
+      if (btn) btn.onclick = null;
+    });
+  }
+
+  function setRunningUser(onStop: () => void): void {
+    clearRunningUser();
+    const candidates = [
+      ...root.querySelectorAll<HTMLElement>(".msg-user:not(.is-queued)"),
+    ];
+    const el = candidates[candidates.length - 1];
+    if (!el) return;
+    el.classList.add("is-running");
+    wireStopButton(el, onStop);
+  }
+
+  function promoteQueuedUser(queueId: string, onStop: () => void): void {
+    const el = root.querySelector<HTMLElement>(
+      `.msg-user.is-queued[data-queue-id="${CSS.escape(queueId)}"]`
+    );
+    if (!el) {
+      setRunningUser(onStop);
+      return;
+    }
+    clearRunningUser();
+    el.classList.remove("is-queued");
+    el.classList.add("is-running");
+    el.removeAttribute("data-queue-id");
+    el.querySelector(".msg-queue-badge")?.remove();
+    el.querySelector("[data-queue-cancel]")?.remove();
+    wireStopButton(el, onStop);
+  }
+
+  function removeQueuedUser(queueId: string): void {
+    root
+      .querySelector(`.msg-user.is-queued[data-queue-id="${CSS.escape(queueId)}"]`)
+      ?.remove();
+  }
+
   function addUser(
     text: string,
-    refs?: { name: string; kind: "file" | "dir" }[]
-  ): void {
+    refs?: ChatUserRef[],
+    attachments?: ChatUserAttachment[],
+    opts?: ChatUserOptions
+  ): HTMLElement | null {
     ensureThread();
-    removeThinking();
+    if (!opts?.queued) removeThinking();
     const el = document.createElement("div");
     el.className = "msg msg-user";
+    if (opts?.queued) {
+      el.classList.add("is-queued");
+      if (opts.queueId) el.dataset.queueId = opts.queueId;
+    }
     const chips =
       refs && refs.length
         ? `<div class="msg-refs">${refs
@@ -152,14 +234,47 @@ export function createChatController(root: HTMLElement): ChatController {
             )
             .join("")}</div>`
         : "";
+    const atts =
+      attachments && attachments.length
+        ? `<div class="msg-attachments">${attachments
+            .map((a) =>
+              a.kind === "image" && a.previewUrl
+                ? `<img class="msg-att-thumb" src="${escapeHtml(a.previewUrl)}" alt="${escapeHtml(a.name)}" title="${escapeHtml(a.name)}" />`
+                : `<span class="msg-att-file" title="${escapeHtml(a.name)}">${icons.file(12)}<span>${escapeHtml(a.name)}</span></span>`
+            )
+            .join("")}</div>`
+        : "";
     const body = text.trim()
       ? `<div class="msg-bubble-text">${escapeHtml(text).replace(/\n/g, "<br>")}</div>`
       : "";
+    const queueBadge = opts?.queued
+      ? `<div class="msg-queue-badge">
+          <span>${escapeHtml(t("chat.queued"))}</span>
+          <button type="button" class="msg-queue-cancel" data-queue-cancel title="${escapeHtml(t("chat.queueCancel"))}" aria-label="${escapeHtml(t("chat.queueCancel"))}">${icons.close(10)}</button>
+        </div>`
+      : "";
     el.innerHTML = `
-      <div class="msg-bubble">${chips}${body}</div>
+      <div class="msg-user-main">
+        <div class="msg-bubble">${atts}${chips}${body}${queueBadge}</div>
+        <button type="button" class="msg-stop-btn" data-msg-stop data-i18n-title="strip.stopShortcut" title="${escapeHtml(t("strip.stopShortcut"))}" aria-label="${escapeHtml(t("strip.stop"))}">${icons.stop(14)}</button>
+      </div>
     `;
+    if (opts?.queued && opts.queueId && opts.onCancelQueue) {
+      const qid = opts.queueId;
+      const cancel = opts.onCancelQueue;
+      el.querySelector("[data-queue-cancel]")?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        cancel(qid);
+      });
+    }
+    if (opts?.onStop && !opts.queued) {
+      el.classList.add("is-running");
+      wireStopButton(el, opts.onStop);
+    }
     root.append(el);
     scrollToBottom();
+    return el;
   }
 
   function beginAssistant(): void {
@@ -438,6 +553,10 @@ export function createChatController(root: HTMLElement): ChatController {
     clear,
     showEmpty,
     addUser,
+    setRunningUser,
+    clearRunningUser,
+    promoteQueuedUser,
+    removeQueuedUser,
     beginAssistant,
     appendAssistant,
     finishAssistant,

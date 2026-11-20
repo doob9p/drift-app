@@ -44,6 +44,8 @@ export type BoardPaneHandlers = {
   onPromptSend: (cardId: string) => void;
   onPromptInputKeydown: (cardId: string, e: KeyboardEvent) => void;
   onAddSub: (parentCardId: string) => void;
+  onToggleBroadcast: () => void;
+  onToggleBroadcastMember: (tabId: string) => void;
 };
 
 export type BoardPane = {
@@ -71,6 +73,10 @@ export type BoardPane = {
     input: HTMLDivElement;
     send: HTMLButtonElement;
     context: HTMLElement;
+    composer: HTMLElement;
+    attachments: HTMLElement;
+    attachBtn: HTMLButtonElement;
+    fileInput: HTMLInputElement;
   } | null;
   updatePromptContext: (
     cardId: string,
@@ -105,6 +111,8 @@ export type BoardPane = {
   arrangeCards: () => void;
   tileOpenTerminals: () => void;
   fitOpenTerminals: () => void;
+  /** Sync broadcast mode + member tab ids onto card chrome. */
+  syncBroadcastUi: (active: boolean, memberTabIds: Iterable<string>) => void;
 };
 
 function uid(prefix: string): string {
@@ -216,11 +224,12 @@ export function createBoardPane(
         <svg class="board-links" id="board-links" aria-hidden="true"></svg>
       </div>
       <div class="board-chrome" id="board-chrome">
-        <div class="board-chrome-hud board-tools-hud" role="group" aria-label="Board tools">
+        <div class="board-tools-hud" id="board-tools-hud" role="group" aria-label="Board tools">
           <button type="button" class="icon ghost" id="btn-board-arrange" data-i18n-title="board.arrange" title="${t("board.arrange")}" aria-label="${t("board.arrange")}">${icons.arrange(14)}</button>
           <button type="button" class="icon ghost" id="btn-board-tile-fill" data-i18n-title="board.tileFill" title="${t("board.tileFill")}" aria-label="${t("board.tileFill")}">${icons.tileFill(14)}</button>
           <button type="button" class="icon ghost" id="btn-board-tile-fit" data-i18n-title="board.tileFit" title="${t("board.tileFit")}" aria-label="${t("board.tileFit")}">${icons.tileFit(14)}</button>
           <button type="button" class="icon ghost" id="btn-board-lock" data-i18n-title="board.lockView" title="${t("board.lockView")}" aria-label="${t("board.lockView")}" aria-pressed="false">${icons.lockView(14)}</button>
+          <button type="button" class="icon ghost" id="btn-board-broadcast" data-i18n-title="board.broadcast" title="${t("board.broadcast")}" aria-label="${t("board.broadcast")}" aria-pressed="false">${icons.broadcast(14)}</button>
         </div>
         <aside class="board-minimap" id="board-minimap" aria-label="${t("board.minimap")}">
           <header class="board-minimap-head">
@@ -251,6 +260,11 @@ export function createBoardPane(
     "#btn-board-zoom-reset"
   ) as HTMLButtonElement;
   const lockBtn = root.querySelector("#btn-board-lock") as HTMLButtonElement;
+  const broadcastBtn = root.querySelector(
+    "#btn-board-broadcast"
+  ) as HTMLButtonElement;
+  let broadcastActive = false;
+  const broadcastMembers = new Set<string>();
   const zoomInBtn = root.querySelector(
     "#btn-board-zoom-in"
   ) as HTMLButtonElement;
@@ -946,6 +960,9 @@ export function createBoardPane(
     markMinimapDirty();
     fitAll();
     schedulePersist();
+    root.dispatchEvent(
+      new CustomEvent("board:refit-terminals", { bubbles: true })
+    );
   }
 
   function resetZoom(): void {
@@ -980,6 +997,7 @@ export function createBoardPane(
     for (const [id, el] of cardEls) {
       el.classList.toggle("is-focused", Boolean(next && next.cardId === id));
     }
+    if (broadcastActive) syncBroadcastUi(true, broadcastMembers);
     syncAddPromptEnabled();
     updateLinks();
     updateMinimap();
@@ -1198,6 +1216,11 @@ export function createBoardPane(
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       schedulePersist();
+      if (cards.find((c) => c.id === cardId)?.kind === "terminal") {
+        root.dispatchEvent(
+          new CustomEvent("board:refit-terminals", { bubbles: true })
+        );
+      }
     };
 
     handle.addEventListener("pointerdown", (e) => {
@@ -1227,6 +1250,7 @@ export function createBoardPane(
     el.dataset.tabId = card.tabId;
     el.innerHTML = `
       <header class="board-card-head">
+        <button type="button" class="board-card-broadcast-chip" data-broadcast-member data-i18n-title="board.broadcastMember" title="${t("board.broadcastMember")}" aria-label="${t("board.broadcastMember")}" aria-pressed="false">${icons.broadcastMember(12)}</button>
         <span class="board-card-ico" aria-hidden="true">${icons.terminal(13)}</span>
         <span class="board-card-title"></span>
         <div class="board-card-actions">
@@ -1249,6 +1273,11 @@ export function createBoardPane(
       setFocus({ kind: "terminal", cardId: card.id, tabId: card.tabId });
       // Minimized chips stay collapsed — expand only via the chevron button.
     });
+    el.querySelector("[data-broadcast-member]")!.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      handlers.onToggleBroadcastMember(card.tabId);
+    });
     el.querySelector(".board-card-add-prompt")!.addEventListener("click", (e) => {
       e.stopPropagation();
       requestAddPrompt(card.tabId);
@@ -1264,6 +1293,51 @@ export function createBoardPane(
     wireDrag(el, card.id);
     wireResize(el, card.id);
     return el;
+  }
+
+  function syncBroadcastUi(
+    active: boolean,
+    memberTabIds: Iterable<string>
+  ): void {
+    broadcastActive = active;
+    broadcastMembers.clear();
+    for (const id of memberTabIds) broadcastMembers.add(id);
+    viewport.classList.toggle("is-broadcast", active);
+    broadcastBtn.classList.toggle("is-active", active);
+    broadcastBtn.setAttribute("aria-pressed", active ? "true" : "false");
+    const label = active ? t("board.broadcastOff") : t("board.broadcast");
+    broadcastBtn.title = label;
+    broadcastBtn.setAttribute("aria-label", label);
+    broadcastBtn.setAttribute(
+      "data-i18n-title",
+      active ? "board.broadcastOff" : "board.broadcast"
+    );
+    const sourceTabId =
+      focus?.kind === "terminal" ? focus.tabId : null;
+    for (const card of cards) {
+      if (card.kind !== "terminal") continue;
+      const el = cardEls.get(card.id);
+      if (!el) continue;
+      const member = active && broadcastMembers.has(card.tabId);
+      const source = member && sourceTabId === card.tabId;
+      el.classList.toggle("is-broadcast", member);
+      el.classList.toggle("is-broadcast-source", Boolean(source));
+      const chip = el.querySelector(
+        "[data-broadcast-member]"
+      ) as HTMLButtonElement | null;
+      if (!chip) continue;
+      chip.classList.toggle("is-member", member);
+      chip.setAttribute("aria-pressed", member ? "true" : "false");
+      const chipLabel = member
+        ? t("board.broadcastMemberOff")
+        : t("board.broadcastMember");
+      chip.title = chipLabel;
+      chip.setAttribute("aria-label", chipLabel);
+      chip.setAttribute(
+        "data-i18n-title",
+        member ? "board.broadcastMemberOff" : "board.broadcastMember"
+      );
+    }
   }
 
   function syncPromptStatusBadge(card: PromptCard): void {
@@ -1322,10 +1396,12 @@ export function createBoardPane(
               <span class="composer-context-sep" aria-hidden="true">·</span>
               <span class="composer-context-path" data-prompt-path></span>
             </button>
+            <div class="composer-attachments hidden" data-prompt-attachments aria-live="polite"></div>
             <div class="composer-input-wrap is-empty" data-prompt-wrap>
               <div class="composer-placeholder" data-i18n="chat.placeholder" aria-hidden="true">${t("chat.placeholder")}</div>
               <div class="composer-editor" contenteditable="true" role="textbox" aria-multiline="true" data-prompt-input></div>
             </div>
+            <div class="composer-drop-hint" data-prompt-drop-hint data-i18n="chat.attach.dropHint" aria-hidden="true">${t("chat.attach.dropHint")}</div>
             <div class="composer-foot">
               <div class="composer-left">
                 <div class="mode-wrap">
@@ -1343,6 +1419,8 @@ export function createBoardPane(
                 </div>
               </div>
               <div class="composer-right">
+                <input type="file" class="composer-file-input" data-prompt-file-input multiple hidden />
+                <button type="button" class="icon ghost composer-attach-btn" data-prompt-attach data-i18n-title="chat.attach" title="${t("chat.attach")}" aria-label="${t("chat.attach")}">${icons.attach(15)}</button>
                 <button class="send-btn" data-prompt-send data-i18n-title="chat.send" title="${t("chat.send")}" aria-label="${t("chat.send")}">${icons.send(16)}</button>
               </div>
             </div>
@@ -1539,6 +1617,24 @@ export function createBoardPane(
         }
         return;
       }
+      if (e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        handlers.onToggleBroadcast();
+        return;
+      }
+    }
+
+    if (
+      broadcastActive &&
+      e.key === "Escape" &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !isTypingTarget(e.target)
+    ) {
+      e.preventDefault();
+      handlers.onToggleBroadcast();
+      return;
     }
 
     if (isTypingTarget(e.target)) return;
@@ -1630,6 +1726,9 @@ export function createBoardPane(
   });
   lockBtn.addEventListener("click", () => {
     setViewLocked(!viewLocked);
+  });
+  broadcastBtn.addEventListener("click", () => {
+    handlers.onToggleBroadcast();
   });
   root.querySelector("#btn-board-zoom-in")!.addEventListener("click", () => {
     zoomByFactor(ZOOM_BTN_STEP);
@@ -1839,6 +1938,16 @@ export function createBoardPane(
         input: el.querySelector("[data-prompt-input]") as HTMLDivElement,
         send: el.querySelector("[data-prompt-send]") as HTMLButtonElement,
         context: el.querySelector("[data-prompt-context]") as HTMLElement,
+        composer: el.querySelector("[data-prompt-composer]") as HTMLElement,
+        attachments: el.querySelector(
+          "[data-prompt-attachments]"
+        ) as HTMLElement,
+        attachBtn: el.querySelector(
+          "[data-prompt-attach]"
+        ) as HTMLButtonElement,
+        fileInput: el.querySelector(
+          "[data-prompt-file-input]"
+        ) as HTMLInputElement,
       };
     },
     updatePromptContext(cardId, info) {
@@ -1861,12 +1970,21 @@ export function createBoardPane(
     setPromptSendBusy(cardId, busy) {
       const els = api.getPromptEls(cardId);
       if (!els) return;
-      els.send.innerHTML = busy ? icons.stop(16) : icons.send(16);
-      els.send.title = busy ? t("strip.stop") : t("chat.send");
-      els.send.setAttribute(
-        "aria-label",
-        busy ? t("strip.stop") : t("chat.send")
-      );
+      const ph = els.composer.querySelector(
+        ".composer-placeholder"
+      ) as HTMLElement | null;
+      const phKey = busy ? "chat.followUp" : "chat.placeholder";
+      const sendKey = busy ? "chat.queue" : "chat.send";
+      if (ph) {
+        ph.setAttribute("data-i18n", phKey);
+        ph.textContent = t(phKey);
+      }
+      els.input.setAttribute("aria-label", t(phKey));
+      els.send.innerHTML = icons.send(16);
+      els.send.classList.remove("is-stop");
+      els.send.title = t(sendKey);
+      els.send.setAttribute("aria-label", t(sendKey));
+      els.composer.classList.toggle("is-follow-up", busy);
     },
     applyPersisted(state, liveTabIds) {
       // Keep live terminal cards (openLocal may already have mounted them).
@@ -2044,6 +2162,7 @@ export function createBoardPane(
     fitOpenTerminals() {
       fitOpenTerminals();
     },
+    syncBroadcastUi,
     removeCard(cardId) {
       const removeIds = [
         cardId,
