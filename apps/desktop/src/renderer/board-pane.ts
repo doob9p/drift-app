@@ -212,6 +212,11 @@ export function createBoardPane(
   let panning = false;
   /** When true, pan/zoom (trackpad, Space-drag, minimap, shortcuts) are frozen. */
   let viewLocked = false;
+  /** Active fill/fit packing — relayout when the viewport size changes. */
+  let tileLayoutMode: "fill" | "fit" | null = null;
+  let tileRelayoutRaf = 0;
+  let tileSettleTimer: number | undefined;
+  let lastTileViewport = { w: 0, h: 0 };
   let mapFrame: MapFrame = { worldX: 0, worldY: 0, scale: 1, ox: 0, oy: 0 };
   let mapCollapsed = false;
   let minimapDirty = true;
@@ -296,7 +301,22 @@ export function createBoardPane(
     }
   }
 
+  function clearTileRelayoutSchedulers(): void {
+    if (tileRelayoutRaf) {
+      cancelAnimationFrame(tileRelayoutRaf);
+      tileRelayoutRaf = 0;
+    }
+    if (tileSettleTimer != null) {
+      window.clearTimeout(tileSettleTimer);
+      tileSettleTimer = undefined;
+    }
+  }
+
   function setViewLocked(locked: boolean): void {
+    if (!locked) {
+      tileLayoutMode = null;
+      clearTileRelayoutSchedulers();
+    }
     if (viewLocked === locked) {
       syncViewLockUi();
       return;
@@ -744,14 +764,25 @@ export function createBoardPane(
    * - fill: edge-to-edge, no gaps (flush chrome)
    * - fit: small outer margin + gaps so every terminal is visible at once
    */
-  function layoutOpenTerminals(mode: "fill" | "fit"): void {
+  function layoutOpenTerminals(
+    mode: "fill" | "fit",
+    opts?: { animate?: boolean; refit?: boolean; persist?: boolean }
+  ): void {
     const terms = cards.filter(
       (c): c is TerminalCard => c.kind === "terminal" && !c.minimized
     );
-    if (terms.length === 0) return;
+    if (terms.length === 0) {
+      tileLayoutMode = null;
+      return;
+    }
 
+    const animate = opts?.animate !== false;
+    const shouldRefit = opts?.refit !== false;
+    const shouldPersist = opts?.persist !== false;
     const vw = Math.max(1, viewport.clientWidth);
     const vh = Math.max(1, viewport.clientHeight);
+    lastTileViewport = { w: vw, h: vh };
+    tileLayoutMode = mode;
     const n = terms.length;
     const cols = Math.ceil(Math.sqrt(n));
     const rows = Math.ceil(n / cols);
@@ -789,33 +820,71 @@ export function createBoardPane(
       term.y = originY + pad + row * (cellH + gap);
       term.w = cellW;
       term.h = cellH;
-      term.z = nextZ();
+      if (animate || shouldPersist) term.z = nextZ();
       clampCardInWorld(term);
     }
 
     for (const term of terms) {
       const el = cardEls.get(term.id);
-      el?.classList.add("is-arranging");
+      if (animate) el?.classList.add("is-arranging");
       if (mode === "fill") el?.classList.add("is-tiled");
     }
-    void surface.offsetWidth;
+    if (animate) void surface.offsetWidth;
     applyCamera(true);
     for (const term of terms) {
       layoutCard(term);
     }
-    window.setTimeout(() => {
-      for (const term of terms) {
-        cardEls.get(term.id)?.classList.remove("is-arranging");
-      }
-    }, 320);
+    if (animate) {
+      window.setTimeout(() => {
+        for (const term of terms) {
+          cardEls.get(term.id)?.classList.remove("is-arranging");
+        }
+      }, 320);
+    }
 
     updateLinks();
     markMinimapDirty();
-    schedulePersist();
+    if (shouldPersist) schedulePersist();
     setViewLocked(true);
-    root.dispatchEvent(
-      new CustomEvent("board:refit-terminals", { bubbles: true })
-    );
+    if (shouldRefit) {
+      root.dispatchEvent(
+        new CustomEvent("board:refit-terminals", { bubbles: true })
+      );
+    }
+  }
+
+  /** Follow the viewport every frame; refit PTY/xterm once resizing settles. */
+  function scheduleTileRelayout(): void {
+    if (!tileLayoutMode) return;
+    if (tileRelayoutRaf) return;
+    tileRelayoutRaf = requestAnimationFrame(() => {
+      tileRelayoutRaf = 0;
+      const mode = tileLayoutMode;
+      if (!mode) return;
+      const vw = Math.max(1, viewport.clientWidth);
+      const vh = Math.max(1, viewport.clientHeight);
+      if (
+        Math.abs(vw - lastTileViewport.w) < 0.5 &&
+        Math.abs(vh - lastTileViewport.h) < 0.5
+      ) {
+        return;
+      }
+      // Geometry only — xterm/PTY resize is expensive and causes the stutter.
+      layoutOpenTerminals(mode, {
+        animate: false,
+        refit: false,
+        persist: false,
+      });
+      if (tileSettleTimer != null) window.clearTimeout(tileSettleTimer);
+      tileSettleTimer = window.setTimeout(() => {
+        tileSettleTimer = undefined;
+        if (!tileLayoutMode) return;
+        schedulePersist();
+        root.dispatchEvent(
+          new CustomEvent("board:refit-terminals", { bubbles: true })
+        );
+      }, 140);
+    });
   }
 
   function tileOpenTerminals(): void {
@@ -1766,9 +1835,17 @@ export function createBoardPane(
     }
   });
 
-  const resizeObserver = new ResizeObserver(() => {
+  const resizeObserver = new ResizeObserver((entries) => {
     minimapDirty = true;
-    applyCamera();
+    let viewportChanged = false;
+    for (const entry of entries) {
+      if (entry.target === viewport) viewportChanged = true;
+    }
+    if (viewportChanged && tileLayoutMode) {
+      scheduleTileRelayout();
+    } else {
+      applyCamera();
+    }
   });
   resizeObserver.observe(viewport);
   resizeObserver.observe(minimapBody);

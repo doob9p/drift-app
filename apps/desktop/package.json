@@ -1,7 +1,7 @@
 {
   "name": "@drift/desktop",
   "productName": "Drift",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "private": true,
   "description": "Drift — terminal + SSH sessions with Cursor agent",
   "author": "doob9p",

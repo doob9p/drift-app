@@ -4549,6 +4549,7 @@ const editorPane = createEditorPane({
     startWidth: number;
   } | null;
   let colDrag: ColDrag = null;
+  let sidebarRefitTimer: number | undefined;
 
   function currentVarPx(name: "--sidebar", fallback: number): number {
     if (!layoutEl) return fallback;
@@ -4565,6 +4566,14 @@ const editorPane = createEditorPane({
     document.body.classList.add("is-resizing-col");
   }
 
+  function scheduleSidebarRefit(delayMs = 120): void {
+    if (sidebarRefitTimer != null) window.clearTimeout(sidebarRefitTimer);
+    sidebarRefitTimer = window.setTimeout(() => {
+      sidebarRefitTimer = undefined;
+      refitTerminals();
+    }, delayMs);
+  }
+
   splitSidebar?.addEventListener("mousedown", (e) => {
     if (layoutEl?.classList.contains("nav-collapsed")) return;
     beginColDrag(splitSidebar, e);
@@ -4578,7 +4587,8 @@ const editorPane = createEditorPane({
       SIDEBAR_MAX
     );
     layoutEl.style.setProperty("--sidebar", `${next}px`);
-    refitTerminals();
+    // Card chrome can track live; PTY/xterm refit waits until the drag settles.
+    scheduleSidebarRefit();
   });
 
   window.addEventListener("mouseup", () => {
@@ -4590,6 +4600,7 @@ const editorPane = createEditorPane({
       SIDEBAR_KEY,
       String(currentVarPx("--sidebar", 288))
     );
+    scheduleSidebarRefit(0);
   });
 }
 
