@@ -398,6 +398,13 @@ function createPane(
   const titleEl = root.querySelector(".files-pane-title") as HTMLElement;
   const hostEl = root.querySelector(".files-pane-host") as HTMLElement;
   const pathEl = root.querySelector(".files-path") as HTMLElement;
+  const pathInput = document.createElement("input");
+  pathInput.className = "files-path-input hidden";
+  pathInput.type = "text";
+  pathInput.spellcheck = false;
+  pathInput.autocomplete = "off";
+  pathInput.setAttribute("aria-label", t("files.pathEdit"));
+  pathEl.insertAdjacentElement("afterend", pathInput);
   const backBtn = root.querySelector(
     "[data-path-back]"
   ) as HTMLButtonElement | null;
@@ -585,9 +592,97 @@ function createPane(
     goToDir(parent);
   }
 
+  let pathEditing = false;
+  let pathEditCommitting = false;
+
+  function pathForEditDisplay(abs: string): string {
+    const h = home ? normalizePath(home).replace(/\/+$/, "") : "";
+    const c = normalizePath(abs).replace(/\/+$/, "") || "/";
+    if (h && (c === h || c.startsWith(`${h}/`))) {
+      return c === h ? "~" : `~${c.slice(h.length)}`;
+    }
+    return abs;
+  }
+
+  function resolveTypedPath(raw: string): string | null {
+    let p = raw.trim();
+    if (!p) return null;
+    p = normalizePath(p);
+    const h = home ? normalizePath(home).replace(/\/+$/, "") : "";
+    if (p === "~") {
+      if (!h) return null;
+      return h;
+    }
+    if (p.startsWith("~/")) {
+      if (!h) return null;
+      return pathJoin(h, p.slice(2));
+    }
+    // Relative → under the current folder.
+    if (!p.startsWith("/") && !/^[A-Za-z]:(\/|$)/.test(p)) {
+      if (!rootPath) return null;
+      return pathJoin(rootPath, p);
+    }
+    return p.replace(/\/+$/, "") || "/";
+  }
+
+  function endPathEdit(restoreCrumbs: boolean): void {
+    if (!pathEditing) return;
+    pathEditing = false;
+    pathInput.classList.add("hidden");
+    pathEl.classList.remove("hidden");
+    if (restoreCrumbs) renderPathBar();
+  }
+
+  function beginPathEdit(): void {
+    if (!enabled || !rootPath || pathEditing) return;
+    pathEditing = true;
+    pathEl.classList.add("hidden");
+    pathInput.classList.remove("hidden");
+    pathInput.value = pathForEditDisplay(rootPath);
+    pathInput.placeholder = t("files.pathEditPlaceholder");
+    pathInput.setAttribute("aria-label", t("files.pathEdit"));
+    requestAnimationFrame(() => {
+      pathInput.focus();
+      pathInput.select();
+    });
+  }
+
+  async function commitPathEdit(): Promise<void> {
+    if (!pathEditing || pathEditCommitting) return;
+    pathEditCommitting = true;
+    try {
+      const next = resolveTypedPath(pathInput.value);
+      if (!next) {
+        endPathEdit(true);
+        return;
+      }
+      if (rootPath && samePath(next, rootPath)) {
+        endPathEdit(true);
+        return;
+      }
+      const res = await opts.listDir(next);
+      if (res.error) {
+        showToast(t("files.pathEditFail"), "error", {
+          detail: res.error,
+        });
+        pathInput.focus();
+        pathInput.select();
+        return;
+      }
+      const canonical = res.path || next;
+      endPathEdit(false);
+      goToDir(canonical);
+    } finally {
+      pathEditCommitting = false;
+    }
+  }
+
   function renderPathBar(): void {
+    if (pathEditing) return;
     pathEl.setAttribute("aria-label", t("files.breadcrumb"));
-    pathEl.title = rootPath || "";
+    pathEl.title = rootPath
+      ? `${rootPath}\n${t("files.pathEditHint")}`
+      : "";
     if (!rootPath) {
       pathEl.innerHTML = "";
       syncUpBtn();
@@ -623,6 +718,7 @@ function createPane(
     emptyEl.textContent = msg;
     emptyEl.classList.remove("hidden");
     treeEl.classList.add("hidden");
+    endPathEdit(false);
     pathEl.innerHTML = "";
     syncUpBtn();
     if (openFolderBtn) openFolderBtn.disabled = true;
@@ -1027,7 +1123,7 @@ function createPane(
   });
 
   pathEl.addEventListener("click", (e) => {
-    if (!rootPath || !enabled) return;
+    if (!rootPath || !enabled || pathEditing) return;
     const crumb = (e.target as HTMLElement).closest(
       "[data-crumb-path]"
     ) as HTMLElement | null;
@@ -1036,7 +1132,39 @@ function createPane(
     goToDir(next);
   });
 
+  pathEl.addEventListener("dblclick", (e) => {
+    if (!rootPath || !enabled) return;
+    e.preventDefault();
+    e.stopPropagation();
+    beginPathEdit();
+  });
+
+  pathInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      void commitPathEdit();
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      endPathEdit(true);
+    }
+  });
+
+  pathInput.addEventListener("blur", () => {
+    if (!pathEditing || pathEditCommitting) return;
+    // Delay so a click on a crumb/button after cancel isn't racing.
+    window.setTimeout(() => {
+      if (!pathEditing || pathEditCommitting) return;
+      if (document.activeElement === pathInput) return;
+      void commitPathEdit();
+    }, 0);
+  });
+
   backBtn?.addEventListener("click", () => {
+    if (pathEditing) endPathEdit(true);
     goUp();
   });
 
@@ -1154,6 +1282,7 @@ function createPane(
       treeEl.innerHTML = "";
       root.classList.add("disabled");
       clearPaneDrop();
+      endPathEdit(false);
       showEmpty("");
     },
     setMeta(label) {

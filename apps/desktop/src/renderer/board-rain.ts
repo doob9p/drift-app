@@ -1,5 +1,6 @@
 /**
  * Rain board overlay — slanted streaks, roof beads, cursor sweep.
+ * ⌥ / Alt held → umbrella follows the cursor and sheds falling rain.
  */
 
 export type RainRoof = {
@@ -45,6 +46,12 @@ const MAX_FALL = 280;
 const MAX_BEADS = 360;
 const SWEEP_R = 32;
 const SLANT = 0.22; // dx per dy — slight wind slant
+/** Canopy hit ellipse in world px (aligned to the cartoon dome). */
+const UMBRELLA_RX = 56;
+const UMBRELLA_RY = 24;
+/** Canopy center above the grip (cursor / handle). */
+const UMBRELLA_LIFT = 70;
+const UMBRELLA_PANELS = 8;
 
 type Drop = {
   x: number;
@@ -58,6 +65,11 @@ type Drop = {
   roofId: string | null;
   seatY: number;
   r: number;
+};
+
+type Umbrella = {
+  x: number;
+  y: number;
 };
 
 export function createBoardRain(opts: {
@@ -84,7 +96,29 @@ export function createBoardRain(opts: {
   const drops: Drop[] = [];
   let dpr = 1;
   let lastMouse: { x: number; y: number } | null = null;
+  let altHeld = false;
+  let umbrella: Umbrella | null = null;
   let rainOpts: BoardRainOptions = { amount: 0.55, speed: 0.5 };
+
+  function umbrellaOpen(): boolean {
+    return altHeld && umbrella != null;
+  }
+
+  function syncUmbrellaClass(): void {
+    opts.viewport.classList.toggle("is-rain-umbrella", enabled && umbrellaOpen());
+  }
+
+  function canopyCenter(u: Umbrella): { x: number; y: number } {
+    return { x: u.x, y: u.y - UMBRELLA_LIFT };
+  }
+
+  /** Top surface y of the canopy ellipse at world x, or null if outside. */
+  function canopyTopY(u: Umbrella, wx: number): number | null {
+    const c = canopyCenter(u);
+    const nx = (wx - c.x) / UMBRELLA_RX;
+    if (Math.abs(nx) > 0.98) return null;
+    return c.y - UMBRELLA_RY * Math.sqrt(Math.max(0, 1 - nx * nx));
+  }
 
   function clamp01(n: number): number {
     return Math.min(1, Math.max(0, n));
@@ -251,9 +285,44 @@ export function createBoardRain(opts: {
     }
   }
 
+  /** Knock a falling streak off the canopy toward the nearer rim. */
+  function shedFromUmbrella(drop: Drop, u: Umbrella): void {
+    const c = canopyCenter(u);
+    const side = drop.x >= c.x ? 1 : -1;
+    drop.x = c.x + side * (UMBRELLA_RX + 2 + Math.random() * 4);
+    drop.y = c.y + 2 + Math.random() * 6;
+    drop.len = 7 + Math.random() * 10;
+    drop.thick = 0.75 + Math.random() * 0.5;
+    drop.vx = side * (70 + Math.random() * 55);
+    drop.vy = 90 + Math.random() * 110;
+    drop.alpha = Math.min(0.7, drop.alpha + 0.08);
+    drop.kind = "fall";
+    drop.roofId = null;
+  }
+
+  function hitUmbrella(drop: Drop, u: Umbrella, prevY: number): boolean {
+    const top = canopyTopY(u, drop.x);
+    if (top == null) return false;
+    // Crossing or resting on the dome from above.
+    if (prevY > top + 6) return false;
+    if (drop.y < top - 2) return false;
+    if (drop.y > top + 10) return false;
+    return true;
+  }
+
   function onPointerMove(e: PointerEvent): void {
     if (!enabled) return;
     const w = clientToWorld(e.clientX, e.clientY);
+    const gathering = e.altKey || altHeld;
+    if (gathering) {
+      umbrella = { x: w.x, y: w.y };
+      altHeld = true;
+      syncUmbrellaClass();
+      lastMouse = w;
+      return;
+    }
+    umbrella = null;
+    syncUmbrellaClass();
     if (lastMouse) {
       sweepAt(w.x, w.y, w.x - lastMouse.x, w.y - lastMouse.y);
     }
@@ -262,6 +331,27 @@ export function createBoardRain(opts: {
 
   function onPointerLeave(): void {
     lastMouse = null;
+    // Keep umbrella if Alt is still held — pointer may re-enter.
+    if (!altHeld) {
+      umbrella = null;
+      syncUmbrellaClass();
+    }
+  }
+
+  function onKeyDown(e: KeyboardEvent): void {
+    if (e.key !== "Alt") return;
+    altHeld = true;
+    if (enabled && lastMouse) {
+      umbrella = { x: lastMouse.x, y: lastMouse.y };
+    }
+    syncUmbrellaClass();
+  }
+
+  function onKeyUp(e: KeyboardEvent): void {
+    if (e.key !== "Alt") return;
+    altHeld = false;
+    umbrella = null;
+    syncUmbrellaClass();
   }
 
   function worldToScreen(wx: number, wy: number): { x: number; y: number } {
@@ -308,6 +398,163 @@ export function createBoardRain(opts: {
     ctx.fill();
   }
 
+  function drawUmbrella(
+    ctx: CanvasRenderingContext2D,
+    u: Umbrella,
+    camZoom: number
+  ): void {
+    const z = camZoom * dpr;
+    const c = canopyCenter(u);
+    const tip = worldToScreen(c.x, c.y - UMBRELLA_RY);
+    const mid = worldToScreen(c.x, c.y);
+    const grip = worldToScreen(u.x, u.y);
+    const rx = UMBRELLA_RX * z;
+    const ry = UMBRELLA_RY * z;
+    const scallop = 7 * z;
+    const shaftTopY = mid.y + scallop * 0.15;
+    const shaftX = mid.x;
+
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+
+    // Soft ground shadow under the grip.
+    ctx.fillStyle = "rgba(0, 0, 0, 0.12)";
+    ctx.beginPath();
+    ctx.ellipse(grip.x + 2 * z, grip.y + 3 * z, 14 * z, 4 * z, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Shaft + J-handle (drawn under canopy).
+    const handleR = 11 * z;
+    ctx.strokeStyle = "#6b4a32";
+    ctx.lineWidth = Math.max(2.2, 3.4 * z);
+    ctx.beginPath();
+    ctx.moveTo(shaftX, shaftTopY);
+    ctx.lineTo(shaftX, grip.y - handleR * 0.15);
+    ctx.quadraticCurveTo(
+      shaftX,
+      grip.y + handleR * 0.95,
+      shaftX - handleR,
+      grip.y + handleR * 0.55
+    );
+    ctx.quadraticCurveTo(
+      shaftX - handleR * 1.35,
+      grip.y + handleR * 0.15,
+      shaftX - handleR * 0.75,
+      grip.y - handleR * 0.05
+    );
+    ctx.stroke();
+    // Warm wood highlight on the shaft.
+    ctx.strokeStyle = "rgba(210, 168, 120, 0.45)";
+    ctx.lineWidth = Math.max(1, 1.35 * z);
+    ctx.beginPath();
+    ctx.moveTo(shaftX - 1.1 * z, shaftTopY + 4 * z);
+    ctx.lineTo(shaftX - 1.1 * z, grip.y - handleR * 0.4);
+    ctx.stroke();
+
+    // Scalloped cartoon canopy path.
+    const rimY = mid.y;
+    ctx.beginPath();
+    ctx.moveTo(mid.x - rx, rimY);
+    for (let i = 0; i < UMBRELLA_PANELS; i++) {
+      const x0 = mid.x - rx + (rx * 2 * i) / UMBRELLA_PANELS;
+      const x1 = mid.x - rx + (rx * 2 * (i + 1)) / UMBRELLA_PANELS;
+      const xm = (x0 + x1) / 2;
+      ctx.quadraticCurveTo(xm, rimY + scallop, x1, rimY);
+    }
+    // Soft dome up to the tip.
+    ctx.quadraticCurveTo(mid.x + rx * 0.55, tip.y + ry * 0.15, tip.x, tip.y);
+    ctx.quadraticCurveTo(mid.x - rx * 0.55, tip.y + ry * 0.15, mid.x - rx, rimY);
+    ctx.closePath();
+
+    const canopyFill = ctx.createLinearGradient(
+      mid.x - rx * 0.2,
+      tip.y,
+      mid.x + rx * 0.35,
+      rimY + scallop
+    );
+    canopyFill.addColorStop(0, "#ff8a9a");
+    canopyFill.addColorStop(0.45, "#e85d6f");
+    canopyFill.addColorStop(1, "#c43b52");
+    ctx.fillStyle = canopyFill;
+    ctx.fill();
+
+    // Panel seams (gentle Disney ribs).
+    ctx.strokeStyle = "rgba(120, 28, 48, 0.28)";
+    ctx.lineWidth = Math.max(1, 1.15 * z);
+    for (let i = 1; i < UMBRELLA_PANELS; i++) {
+      const t = i / UMBRELLA_PANELS;
+      const bx = mid.x - rx + rx * 2 * t;
+      ctx.beginPath();
+      ctx.moveTo(tip.x, tip.y + 3 * z);
+      ctx.quadraticCurveTo(
+        mid.x + (bx - mid.x) * 0.35,
+        tip.y + ry * 0.7,
+        bx,
+        rimY + scallop * 0.35
+      );
+      ctx.stroke();
+    }
+
+    // Outer outline.
+    ctx.strokeStyle = "rgba(90, 24, 40, 0.55)";
+    ctx.lineWidth = Math.max(1.4, 1.8 * z);
+    ctx.beginPath();
+    ctx.moveTo(mid.x - rx, rimY);
+    for (let i = 0; i < UMBRELLA_PANELS; i++) {
+      const x0 = mid.x - rx + (rx * 2 * i) / UMBRELLA_PANELS;
+      const x1 = mid.x - rx + (rx * 2 * (i + 1)) / UMBRELLA_PANELS;
+      const xm = (x0 + x1) / 2;
+      ctx.quadraticCurveTo(xm, rimY + scallop, x1, rimY);
+    }
+    ctx.quadraticCurveTo(mid.x + rx * 0.55, tip.y + ry * 0.15, tip.x, tip.y);
+    ctx.quadraticCurveTo(mid.x - rx * 0.55, tip.y + ry * 0.15, mid.x - rx, rimY);
+    ctx.stroke();
+
+    // Specular sheen on the left panels.
+    ctx.beginPath();
+    ctx.moveTo(mid.x - rx * 0.78, rimY + scallop * 0.1);
+    ctx.quadraticCurveTo(
+      mid.x - rx * 0.45,
+      tip.y + ry * 0.55,
+      tip.x - 4 * z,
+      tip.y + 8 * z
+    );
+    ctx.quadraticCurveTo(
+      mid.x - rx * 0.55,
+      tip.y + ry * 0.85,
+      mid.x - rx * 0.25,
+      rimY + scallop * 0.2
+    );
+    ctx.closePath();
+    ctx.fillStyle = "rgba(255, 230, 236, 0.28)";
+    ctx.fill();
+
+    // Cute tip finial.
+    const tipR = 3.2 * z;
+    const tipGrad = ctx.createRadialGradient(
+      tip.x - tipR * 0.25,
+      tip.y - tipR * 0.2,
+      tipR * 0.1,
+      tip.x,
+      tip.y,
+      tipR * 1.4
+    );
+    tipGrad.addColorStop(0, "#ffe7a8");
+    tipGrad.addColorStop(0.55, "#f0c45a");
+    tipGrad.addColorStop(1, "#c9922e");
+    ctx.fillStyle = tipGrad;
+    ctx.beginPath();
+    ctx.arc(tip.x, tip.y - tipR * 0.15, tipR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(120, 80, 20, 0.45)";
+    ctx.lineWidth = Math.max(0.8, 1 * z);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
   function paint(): void {
     if (!backCtx || !frontCtx) return;
     backCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -318,10 +565,21 @@ export function createBoardRain(opts: {
     const cam = opts.getCamera();
     const roofs = opts.getRoofs();
     const roofById = new Map(roofs.map((r) => [r.id, r]));
+    const u = umbrellaOpen() ? umbrella : null;
+    const canopy = u ? canopyCenter(u) : null;
 
     for (const drop of drops) {
       if (drop.kind === "fall") {
         if (isHidden(drop.x, drop.y, -50)) continue;
+        // Hide streaks still behind / under the open canopy.
+        if (
+          canopy &&
+          Math.abs(drop.x - canopy.x) < UMBRELLA_RX * 0.92 &&
+          drop.y > canopy.y - UMBRELLA_RY - 4 &&
+          drop.y < canopy.y + 8
+        ) {
+          continue;
+        }
         drawFall(backCtx, drop, cam.zoom);
         continue;
       }
@@ -336,6 +594,8 @@ export function createBoardRain(opts: {
       const ctx = roof.id === GROUND_ID ? backCtx : frontCtx;
       drawBead(ctx, drop, cam.zoom);
     }
+
+    if (u) drawUmbrella(frontCtx, u, cam.zoom);
   }
 
   function tick(now: number): void {
@@ -366,6 +626,7 @@ export function createBoardRain(opts: {
         continue;
       }
 
+      const prevY = drop.y;
       drop.x += drop.vx * dt * sm * 0.35 + drop.vy * dt * SLANT;
       drop.y += drop.vy * dt;
       drop.vy += 40 * dt * sm;
@@ -376,6 +637,12 @@ export function createBoardRain(opts: {
         drop.x > opts.world.x + opts.world.w + 100
       ) {
         drops.splice(i, 1);
+        continue;
+      }
+
+      const u = umbrellaOpen() ? umbrella : null;
+      if (u && hitUmbrella(drop, u, prevY)) {
+        shedFromUmbrella(drop, u);
         continue;
       }
 
@@ -438,6 +705,9 @@ export function createBoardRain(opts: {
     } else {
       stopLoop();
       clearAll();
+      altHeld = false;
+      umbrella = null;
+      syncUmbrellaClass();
       if (backCtx) backCtx.clearRect(0, 0, back.width, back.height);
       if (frontCtx) frontCtx.clearRect(0, 0, front.width, front.height);
     }
@@ -449,8 +719,18 @@ export function createBoardRain(opts: {
     paint();
   };
 
+  // Blur can leave Alt stuck "down" without a matching keyup.
+  function onWindowBlur(): void {
+    altHeld = false;
+    umbrella = null;
+    syncUmbrellaClass();
+  }
+
   opts.viewport.addEventListener("pointermove", onPointerMove);
   opts.viewport.addEventListener("pointerleave", onPointerLeave);
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
+  window.addEventListener("blur", onWindowBlur);
   window.addEventListener("resize", onResize);
 
   return {
@@ -467,6 +747,9 @@ export function createBoardRain(opts: {
       setEnabled(false);
       opts.viewport.removeEventListener("pointermove", onPointerMove);
       opts.viewport.removeEventListener("pointerleave", onPointerLeave);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onWindowBlur);
       window.removeEventListener("resize", onResize);
       back.remove();
       front.remove();

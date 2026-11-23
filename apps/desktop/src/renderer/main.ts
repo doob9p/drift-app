@@ -1,6 +1,7 @@
 import "./styles.css";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
@@ -68,7 +69,10 @@ type TabView = {
   kind: "local" | "ssh";
   term: Terminal;
   fit: FitAddon;
+  search: SearchAddon;
   el: HTMLDivElement;
+  findBar: HTMLDivElement;
+  findInput: HTMLInputElement;
   lastCols: number;
   lastRows: number;
   fitTimer?: number;
@@ -76,6 +80,17 @@ type TabView = {
   hostRo?: ResizeObserver;
   /** Ignore fit/resize until this time so the first prompt keeps a stable COLUMNS. */
   sizeFreezeUntil?: number;
+};
+
+const TERM_SEARCH_OPTS: ISearchOptions = {
+  caseSensitive: false,
+  incremental: true,
+  decorations: {
+    matchBackground: "rgba(212, 163, 90, 0.35)",
+    matchOverviewRuler: "rgba(212, 163, 90, 0.7)",
+    activeMatchBackground: "rgba(79, 143, 202, 0.55)",
+    activeMatchColorOverviewRuler: "rgba(79, 143, 202, 0.9)",
+  },
 };
 
 type MeetingMetaView = {
@@ -185,6 +200,8 @@ const state = {
   firefliesTheme: false,
   firefliesAmount: 0.55,
   firefliesSpeed: 0.5,
+  appVersion: "" as string,
+  appPackaged: false,
   models: [] as ModelOption[],
   lastUsage: null as TokenUsageSnapshot | null,
   lastCostCents: null as number | null,
@@ -380,117 +397,158 @@ app.innerHTML = `
 
         <section class="nav-view hidden" data-view="settings">
           <div class="settings-panel">
-            <p class="settings-lead" data-i18n="settings.lead">API key is encrypted in the OS keychain. Sessions never store secrets.</p>
-            <div class="form-grid settings-form">
-              <label>
-                <span data-i18n="settings.apiKey">Cursor API key</span>
-                <div class="settings-key-help" id="api-key-help">
-                  <ol class="settings-key-steps">
-                    <li data-i18n="settings.keyStep1">Open API Keys in the Cursor dashboard</li>
-                    <li data-i18n="settings.keyStep2">Create a key and copy it once</li>
-                    <li data-i18n="settings.keyStep3">Paste it below and save</li>
-                  </ol>
-                  <button type="button" class="settings-key-open" id="btn-open-api-keys" data-i18n="settings.openKeyPage">Open key page</button>
-                </div>
-                <div class="settings-key-row" id="api-key-unset">
-                  <input id="api-key-input" type="password" autocomplete="off" placeholder="cursor_…" />
-                  <button type="button" class="primary settings-key-save" id="btn-save-key" data-i18n="settings.save">Save</button>
-                </div>
-                <div class="settings-key-row hidden" id="api-key-set">
-                  <button type="button" class="settings-key-clear" id="btn-clear-key" data-i18n-title="settings.clearKey" title="Delete">
-                    <span class="settings-key-clear-idle" data-i18n="settings.keyConfigured">Configured</span>
-                    <span class="settings-key-clear-hover" data-i18n="settings.clearKey">Delete</span>
-                  </button>
-                </div>
-              </label>
-              <label>
-                <span data-i18n="settings.language">Language</span>
-                <select id="settings-locale">
-                  <option value="ko">한국어</option>
-                  <option value="en">English</option>
-                </select>
-              </label>
-              <label class="settings-shell hidden" id="settings-shell-row" hidden>
-                <span data-i18n="settings.localShell">Local terminal</span>
-                <select id="settings-local-shell">
-                  <option value="powershell" data-i18n="settings.shell.powershell">PowerShell</option>
-                  <option value="cmd" data-i18n="settings.shell.cmd">Command Prompt</option>
-                  <option value="gitbash" data-i18n="settings.shell.gitbash">Git Bash</option>
-                </select>
-                <span class="settings-hint" data-i18n="settings.localShellHint"
-                  >Applies to newly opened local terminals.</span
-                >
-              </label>
-              <label class="settings-board-theme" id="settings-board-theme-row">
-                <span data-i18n="settings.boardTheme">Board theme</span>
-                <select id="settings-board-theme">
-                  <option value="off" data-i18n="settings.boardThemeOff">Off</option>
-                  <option value="christmas" data-i18n="settings.boardThemeChristmas">Christmas snow</option>
-                  <option value="autumn" data-i18n="settings.boardThemeAutumn">Autumn leaves</option>
-                  <option value="sakura" data-i18n="settings.boardThemeSakura">Cherry blossoms</option>
-                  <option value="rain" data-i18n="settings.boardThemeRain">Rain</option>
-                  <option value="fireflies" data-i18n="settings.boardThemeFireflies">Fireflies</option>
-                </select>
-                <span class="settings-hint" id="settings-board-theme-hint" data-i18n="settings.boardThemeHintOff"
-                  >Seasonal overlays for the board. Pick one theme at a time.</span
-                >
-              </label>
-              <div class="settings-snow-controls" id="settings-board-theme-controls" hidden>
-                <label class="settings-snow-slider" for="settings-theme-amount">
-                  <span class="settings-snow-slider-label" data-i18n="settings.themeAmount">Amount</span>
-                  <div class="settings-snow-slider-track">
-                    <span class="settings-snow-end low" aria-hidden="true">···</span>
-                    <input
-                      type="range"
-                      id="settings-theme-amount"
-                      min="0"
-                      max="100"
-                      step="1"
-                      value="55"
-                    />
-                    <span class="settings-snow-end high" aria-hidden="true">••••</span>
+            <section class="settings-section">
+              <div class="form-grid settings-form">
+                <div class="settings-api-key">
+                  <span data-i18n="settings.apiKey">Cursor API key</span>
+                  <div class="settings-key-help" id="api-key-help">
+                    <ol class="settings-key-steps">
+                      <li data-i18n="settings.keyStep1">Open API Keys in the Cursor dashboard</li>
+                      <li data-i18n="settings.keyStep2">Create a key and copy it once</li>
+                      <li data-i18n="settings.keyStep3">Paste it below and save</li>
+                    </ol>
+                    <button type="button" class="settings-key-open" id="btn-open-api-keys" data-i18n="settings.openKeyPage">Open key page</button>
                   </div>
-                </label>
-                <label class="settings-snow-slider" for="settings-theme-speed">
-                  <span class="settings-snow-slider-label" data-i18n="settings.themeSpeed">Speed</span>
-                  <div class="settings-snow-slider-track">
-                    <span class="settings-snow-end low" aria-hidden="true">›</span>
-                    <input
-                      type="range"
-                      id="settings-theme-speed"
-                      min="0"
-                      max="100"
-                      step="1"
-                      value="50"
-                    />
-                    <span class="settings-snow-end high" aria-hidden="true">»</span>
+                  <div class="settings-key-row" id="api-key-unset">
+                    <input id="api-key-input" type="password" autocomplete="off" placeholder="cursor_…" />
+                    <button type="button" class="primary settings-key-save" id="btn-save-key" data-i18n="settings.save">Save</button>
                   </div>
+                  <div class="settings-key-row hidden" id="api-key-set">
+                    <button type="button" class="settings-key-clear" id="btn-clear-key" data-i18n-title="settings.clearKey" title="Delete">
+                      <span class="settings-key-clear-idle" data-i18n="settings.keyConfigured">Configured</span>
+                      <span class="settings-key-clear-hover" data-i18n="settings.clearKey">Delete</span>
+                    </button>
+                  </div>
+                  <span class="settings-hint" data-i18n="settings.lead"
+                    >API key is encrypted in the OS keychain. Sessions never store secrets.</span
+                  >
+                </div>
+              </div>
+            </section>
+            <section class="settings-section">
+              <div class="form-grid settings-form">
+                <label>
+                  <span data-i18n="settings.language">Language</span>
+                  <select id="settings-locale">
+                    <option value="ko">한국어</option>
+                    <option value="en">English</option>
+                  </select>
                 </label>
-                <label
-                  class="settings-toggle-row settings-snow-smooth"
-                  for="settings-snow-smooth"
-                  id="settings-snow-smooth-row"
-                  hidden
+                <label class="settings-shell hidden" id="settings-shell-row" hidden>
+                  <span data-i18n="settings.localShell">Local terminal</span>
+                  <select id="settings-local-shell">
+                    <option value="powershell" data-i18n="settings.shell.powershell">PowerShell</option>
+                    <option value="cmd" data-i18n="settings.shell.cmd">Command Prompt</option>
+                    <option value="gitbash" data-i18n="settings.shell.gitbash">Git Bash</option>
+                  </select>
+                  <span class="settings-hint" data-i18n="settings.localShellHint"
+                    >Applies to newly opened local terminals.</span
+                  >
+                </label>
+                <div class="settings-theme-block">
+                  <label class="settings-board-theme" id="settings-board-theme-row">
+                    <span data-i18n="settings.boardTheme">Board theme</span>
+                    <select id="settings-board-theme">
+                      <option value="off" data-i18n="settings.boardThemeOff">Off</option>
+                      <option value="christmas" data-i18n="settings.boardThemeChristmas">Christmas snow</option>
+                      <option value="autumn" data-i18n="settings.boardThemeAutumn">Autumn leaves</option>
+                      <option value="sakura" data-i18n="settings.boardThemeSakura">Cherry blossoms</option>
+                      <option value="rain" data-i18n="settings.boardThemeRain">Rain</option>
+                      <option value="fireflies" data-i18n="settings.boardThemeFireflies">Fireflies</option>
+                    </select>
+                    <span class="settings-hint" id="settings-board-theme-hint" data-i18n="settings.boardThemeHintOff"
+                      >Seasonal overlays for the board. Pick one theme at a time.</span
+                    >
+                  </label>
+                  <div class="settings-snow-controls" id="settings-board-theme-controls" hidden>
+                    <label class="settings-snow-slider" for="settings-theme-amount">
+                      <span class="settings-snow-slider-label" data-i18n="settings.themeAmount">Amount</span>
+                      <div class="settings-snow-slider-track">
+                        <span class="settings-snow-end low" aria-hidden="true">···</span>
+                        <input
+                          type="range"
+                          id="settings-theme-amount"
+                          min="0"
+                          max="100"
+                          step="1"
+                          value="55"
+                        />
+                        <span class="settings-snow-end high" aria-hidden="true">••••</span>
+                      </div>
+                    </label>
+                    <label class="settings-snow-slider" for="settings-theme-speed">
+                      <span class="settings-snow-slider-label" data-i18n="settings.themeSpeed">Speed</span>
+                      <div class="settings-snow-slider-track">
+                        <span class="settings-snow-end low" aria-hidden="true">›</span>
+                        <input
+                          type="range"
+                          id="settings-theme-speed"
+                          min="0"
+                          max="100"
+                          step="1"
+                          value="50"
+                        />
+                        <span class="settings-snow-end high" aria-hidden="true">»</span>
+                      </div>
+                    </label>
+                    <label
+                      class="settings-toggle-row settings-snow-smooth"
+                      for="settings-snow-smooth"
+                      id="settings-snow-smooth-row"
+                      hidden
+                    >
+                      <span class="settings-toggle-copy">
+                        <span data-i18n="settings.christmasSnowSmooth">Smoother (uses more CPU)</span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        id="settings-snow-smooth"
+                        class="settings-toggle"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      class="settings-snow-clear"
+                      id="btn-clear-theme"
+                      data-i18n="settings.themeClear"
+                    >
+                      Clear overlay
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+            <section class="settings-section settings-about" id="settings-about" hidden>
+              <div class="settings-about-head">
+                <span class="settings-about-label" data-i18n="settings.about"
+                  >Version</span
                 >
-                  <span class="settings-toggle-copy">
-                    <span data-i18n="settings.christmasSnowSmooth">Smoother (uses more CPU)</span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    id="settings-snow-smooth"
-                    class="settings-toggle"
-                  />
-                </label>
+                <p class="settings-version" id="settings-version"></p>
+              </div>
+              <p
+                class="settings-update-status"
+                id="settings-update-status"
+                aria-live="polite"
+              ></p>
+              <div class="settings-about-actions">
                 <button
                   type="button"
-                  class="settings-snow-clear"
-                  id="btn-clear-theme"
-                  data-i18n="settings.themeClear"
+                  class="settings-update-check"
+                  id="btn-check-update"
+                  data-i18n="settings.checkUpdate"
                 >
-                  Clear overlay
+                  Check for updates
+                </button>
+                <button
+                  type="button"
+                  class="primary settings-update-go hidden"
+                  id="btn-go-update"
+                  data-i18n="update.download"
+                >
+                  Update
                 </button>
               </div>
-            </div>
+            </section>
           </div>
         </section>
       </aside>
@@ -725,6 +783,15 @@ const els = {
   btnClearTheme: document.getElementById(
     "btn-clear-theme"
   ) as HTMLButtonElement,
+  settingsAbout: document.getElementById("settings-about") as HTMLElement,
+  settingsVersion: document.getElementById("settings-version") as HTMLElement,
+  settingsUpdateStatus: document.getElementById(
+    "settings-update-status"
+  ) as HTMLElement,
+  btnCheckUpdate: document.getElementById(
+    "btn-check-update"
+  ) as HTMLButtonElement,
+  btnGoUpdate: document.getElementById("btn-go-update") as HTMLButtonElement,
   modePopover: document.getElementById("mode-popover")!,
   modeTip: document.getElementById("mode-tip")!,
   composerPopovers: document.getElementById("composer-popovers")!,
@@ -968,6 +1035,136 @@ async function syncLocalShellSettingsVisibility(): Promise<void> {
   }
 }
 
+type SettingsUpdateUi = {
+  status: "idle" | "checking" | "latest" | "available" | "dev" | "error";
+  latestVersion: string;
+  error: string;
+  update: {
+    version: string;
+    currentVersion: string;
+    releaseName?: string | null;
+    releaseNotes?: string | null;
+  } | null;
+};
+
+let settingsUpdateUi: SettingsUpdateUi = {
+  status: "idle",
+  latestVersion: "",
+  error: "",
+  update: null,
+};
+
+function renderSettingsVersion(): void {
+  const about = els.settingsAbout;
+  const el = els.settingsVersion;
+  if (!state.appVersion) {
+    about.hidden = true;
+    el.textContent = "";
+    els.settingsUpdateStatus.textContent = "";
+    els.btnGoUpdate.classList.add("hidden");
+    return;
+  }
+  about.hidden = false;
+  el.textContent = state.appPackaged
+    ? t("settings.version", { version: state.appVersion })
+    : t("settings.versionDev", { version: state.appVersion });
+  renderSettingsUpdateUi();
+}
+
+function renderSettingsUpdateUi(): void {
+  const status = els.settingsUpdateStatus;
+  const checkBtn = els.btnCheckUpdate;
+  const goBtn = els.btnGoUpdate;
+  const checking = settingsUpdateUi.status === "checking";
+  checkBtn.disabled = checking || !state.appPackaged;
+  checkBtn.textContent = checking
+    ? t("settings.checkingUpdate")
+    : t("settings.checkUpdate");
+
+  switch (settingsUpdateUi.status) {
+    case "idle":
+    case "dev":
+      status.textContent = "";
+      goBtn.classList.add("hidden");
+      break;
+    case "checking":
+      status.textContent = t("settings.checkingUpdate");
+      goBtn.classList.add("hidden");
+      break;
+    case "latest":
+      status.textContent = t("settings.upToDate");
+      goBtn.classList.add("hidden");
+      break;
+    case "available":
+      status.textContent = t("settings.updateAvailable", {
+        version: settingsUpdateUi.latestVersion,
+      });
+      goBtn.classList.remove("hidden");
+      goBtn.textContent = t("update.download");
+      break;
+    case "error":
+      status.textContent = t("update.error", {
+        error: settingsUpdateUi.error || "unknown",
+      });
+      goBtn.classList.add("hidden");
+      break;
+  }
+}
+
+async function checkSettingsUpdate(): Promise<void> {
+  settingsUpdateUi = {
+    ...settingsUpdateUi,
+    status: "checking",
+    error: "",
+  };
+  renderSettingsUpdateUi();
+  try {
+    const result = await api.checkForUpdate();
+    if (!result.ok) {
+      settingsUpdateUi = {
+        status: result.reason === "dev" ? "dev" : "error",
+        latestVersion: "",
+        error: result.message ?? result.reason,
+        update: null,
+      };
+      renderSettingsUpdateUi();
+      return;
+    }
+    const latest = result.versionInfo ?? "";
+    const newer = !!latest && latest !== state.appVersion;
+    if (newer) {
+      const update =
+        result.update ??
+        ({
+          version: latest,
+          currentVersion: state.appVersion,
+          releaseNotes: null,
+        } as const);
+      settingsUpdateUi = {
+        status: "available",
+        latestVersion: update.version,
+        error: "",
+        update,
+      };
+    } else {
+      settingsUpdateUi = {
+        status: "latest",
+        latestVersion: latest || state.appVersion,
+        error: "",
+        update: null,
+      };
+    }
+  } catch (err) {
+    settingsUpdateUi = {
+      status: "error",
+      latestVersion: "",
+      error: err instanceof Error ? err.message : String(err),
+      update: null,
+    };
+  }
+  renderSettingsUpdateUi();
+}
+
 function applyUiLocale(): void {
   applyDomI18n(document);
   renderModeChip();
@@ -978,6 +1175,7 @@ function applyUiLocale(): void {
     els.settingsLocalShell.value = state.localShell;
   }
   syncBoardThemeUi();
+  renderSettingsVersion();
   if (board) {
     applyDomI18n(board.root);
     for (const card of board.getCards()) {
@@ -3276,6 +3474,13 @@ els.btnSplashUpdateAction.onclick = () => {
 };
 
 api.onUpdateAvailable((payload) => {
+  settingsUpdateUi = {
+    status: "available",
+    latestVersion: payload.version,
+    error: "",
+    update: payload,
+  };
+  renderSettingsUpdateUi();
   showUpdateSplash(payload);
 });
 
@@ -3337,7 +3542,13 @@ function handleShortcut(payload: {
       if (editorPane.isOpen()) void editorPane.saveActive();
       break;
     case "find":
-      if (editorPane.isOpen()) editorPane.find();
+      if (editorPane.isFocused()) {
+        editorPane.find();
+      } else if (state.activeTabId && state.tabs.has(state.activeTabId)) {
+        openTerminalFind(state.activeTabId);
+      } else if (editorPane.isOpen()) {
+        editorPane.find();
+      }
       break;
     case "toggle-comment":
       if (editorPane.isOpen()) editorPane.toggleComment();
@@ -3622,6 +3833,118 @@ function createTermTheme(): ConstructorParameters<typeof Terminal>[0] {
   };
 }
 
+function createTerminalFindBar(tabId: string): {
+  bar: HTMLDivElement;
+  input: HTMLInputElement;
+} {
+  const bar = document.createElement("div");
+  bar.className = "term-find cm-simple-find hidden";
+  bar.innerHTML = `
+    <span class="cm-simple-find-ico" aria-hidden="true">${icons.search(14)}</span>
+    <input class="cm-simple-find-input" type="text" data-i18n-placeholder="term.find" placeholder="${t("term.find")}" autocomplete="off" spellcheck="false" />
+    <div class="cm-simple-find-actions">
+      <button type="button" class="cm-simple-find-btn" data-find="prev" data-i18n-title="term.findPrev" title="${t("term.findPrev")}" aria-label="${t("term.findPrev")}">${icons.chevronUp(14)}</button>
+      <button type="button" class="cm-simple-find-btn" data-find="next" data-i18n-title="term.findNext" title="${t("term.findNext")}" aria-label="${t("term.findNext")}">${icons.chevronDown(14)}</button>
+      <button type="button" class="cm-simple-find-btn" data-find="close" data-i18n-title="term.findClose" title="${t("term.findClose")}" aria-label="${t("term.findClose")}">${icons.close(14)}</button>
+    </div>
+  `;
+  const input = bar.querySelector(".cm-simple-find-input") as HTMLInputElement;
+
+  const runSearch = (dir: "next" | "prev") => {
+    const tab = state.tabs.get(tabId);
+    if (!tab) return;
+    const q = input.value;
+    if (!q) {
+      tab.search.clearDecorations();
+      return;
+    }
+    if (dir === "prev") tab.search.findPrevious(q, TERM_SEARCH_OPTS);
+    else tab.search.findNext(q, TERM_SEARCH_OPTS);
+  };
+
+  input.addEventListener("input", () => {
+    const tab = state.tabs.get(tabId);
+    if (!tab) return;
+    const q = input.value;
+    if (!q) {
+      tab.search.clearDecorations();
+      return;
+    }
+    tab.search.findNext(q, TERM_SEARCH_OPTS);
+  });
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closeTerminalFind(tabId);
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      runSearch(e.shiftKey ? "prev" : "next");
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "g") {
+      e.preventDefault();
+      e.stopPropagation();
+      runSearch(e.shiftKey ? "prev" : "next");
+    }
+  });
+
+  bar.addEventListener("mousedown", (e) => {
+    if (e.target !== input) e.preventDefault();
+  });
+
+  bar.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest(
+      "[data-find]"
+    ) as HTMLElement | null;
+    const action = btn?.dataset.find;
+    if (!action) return;
+    e.preventDefault();
+    if (action === "prev") runSearch("prev");
+    else if (action === "next") runSearch("next");
+    else if (action === "close") closeTerminalFind(tabId);
+    if (action !== "close") input.focus();
+  });
+
+  return { bar, input };
+}
+
+function openTerminalFind(tabId: string): void {
+  const tab = state.tabs.get(tabId);
+  if (!tab) return;
+  // Only one terminal find bar at a time.
+  for (const other of state.tabs.values()) {
+    if (other.id !== tabId) closeTerminalFind(other.id, false);
+  }
+  tab.findBar.classList.remove("hidden");
+  applyDomI18n(tab.findBar);
+  requestAnimationFrame(() => {
+    tab.findInput.focus();
+    tab.findInput.select();
+    if (tab.findInput.value) {
+      tab.search.findNext(tab.findInput.value, TERM_SEARCH_OPTS);
+    }
+  });
+}
+
+function closeTerminalFind(tabId: string, focusTerm = true): void {
+  const tab = state.tabs.get(tabId);
+  if (!tab) return;
+  tab.findBar.classList.add("hidden");
+  tab.search.clearDecorations();
+  if (focusTerm) {
+    try {
+      tab.term.focus();
+    } catch {
+      /* disposed */
+    }
+  }
+}
+
 function mountTabView(
   tabId: string,
   title: string,
@@ -3633,11 +3956,15 @@ function mountTabView(
   const el = document.createElement("div");
   el.style.height = "100%";
   host.append(el);
+  const { bar: findBar, input: findInput } = createTerminalFindBar(tabId);
+  host.append(findBar);
 
   const term = new Terminal(createTermTheme());
   const fit = new FitAddon();
+  const search = new SearchAddon();
   const unicode11 = new Unicode11Addon();
   term.loadAddon(fit);
+  term.loadAddon(search);
   term.loadAddon(unicode11);
   term.loadAddon(new WebLinksAddon());
   term.open(el);
@@ -3658,14 +3985,20 @@ function mountTabView(
   term.attachCustomKeyEventHandler((ev) => {
     if (ev.type !== "keydown") return true;
     if (
-      broadcastOn &&
       ev.key === "Escape" &&
       !ev.metaKey &&
       !ev.ctrlKey &&
       !ev.altKey
     ) {
-      setBroadcastInput(false);
-      return false;
+      const openFind = state.tabs.get(tabId);
+      if (openFind && !openFind.findBar.classList.contains("hidden")) {
+        closeTerminalFind(tabId);
+        return false;
+      }
+      if (broadcastOn) {
+        setBroadcastInput(false);
+        return false;
+      }
     }
     if (
       ev.altKey &&
@@ -3680,6 +4013,19 @@ function mountTabView(
     const mod = ev.metaKey || ev.ctrlKey;
     if (!mod || ev.altKey) return true;
     const key = ev.key.toLowerCase();
+    if (key === "f" && !ev.shiftKey) {
+      // Menu accelerator also sends find; swallow so the PTY never sees ⌘F.
+      openTerminalFind(tabId);
+      return false;
+    }
+    if (key === "g") {
+      const tab = state.tabs.get(tabId);
+      if (tab && !tab.findBar.classList.contains("hidden") && tab.findInput.value) {
+        if (ev.shiftKey) tab.search.findPrevious(tab.findInput.value, TERM_SEARCH_OPTS);
+        else tab.search.findNext(tab.findInput.value, TERM_SEARCH_OPTS);
+        return false;
+      }
+    }
     if (key === "k" && !ev.shiftKey) {
       term.clear();
       // Local UI clear — also wipe linked broadcast terminals' scrollback.
@@ -3704,7 +4050,10 @@ function mountTabView(
     kind,
     term,
     fit,
+    search,
     el,
+    findBar,
+    findInput,
     lastCols: 0,
     lastRows: 0,
   };
@@ -3939,6 +4288,8 @@ async function closeTab(tabId: string): Promise<void> {
   if (!tab) return;
   if (tab.fitTimer != null) window.clearTimeout(tab.fitTimer);
   tab.hostRo?.disconnect();
+  tab.search.clearDecorations();
+  tab.findBar.remove();
   tab.term.dispose();
   tab.el.remove();
   state.tabs.delete(tabId);
@@ -4937,6 +5288,14 @@ els.btnClearTheme.onclick = () => {
     chat.addSystem(t("settings.christmasSnowCleared"));
   }
 };
+els.btnCheckUpdate.onclick = () => {
+  void checkSettingsUpdate();
+};
+els.btnGoUpdate.onclick = () => {
+  const update = settingsUpdateUi.update;
+  if (!update) return;
+  showUpdateSplash(update);
+};
 els.settingsLocalShell.onchange = async () => {
   const next = els.settingsLocalShell.value as LocalShellId;
   if (next !== "powershell" && next !== "cmd" && next !== "gitbash") return;
@@ -5432,6 +5791,13 @@ void (async () => {
     const status = await api.getApiKeyStatus();
     state.hasKey = status.hasKey;
     state.sessionUsage = await api.getSessionUsage();
+    try {
+      const ver = await api.getAppVersion();
+      state.appVersion = ver.version;
+      state.appPackaged = ver.packaged;
+    } catch {
+      /* ignore */
+    }
     await syncLocalShellSettingsVisibility();
     applyUiLocale();
     renderUsage();
@@ -5485,6 +5851,13 @@ void (async () => {
       updateCheck.available &&
       updateCheck.update
     ) {
+      settingsUpdateUi = {
+        status: "available",
+        latestVersion: updateCheck.update.version,
+        error: "",
+        update: updateCheck.update,
+      };
+      renderSettingsUpdateUi();
       showUpdateSplash(updateCheck.update);
     }
     if (!splashHeldForUpdate) {
