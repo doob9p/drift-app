@@ -144,6 +144,9 @@ export type DesktopApi = {
     tabId: string;
     message: string;
     images?: Array<{ data: string; mimeType: string }>;
+    /** Resume Cursor SDK agent for multi-turn history on this prompt card. */
+    agentId?: string;
+    agentStoreCwd?: string;
   }) => Promise<{ runId: string } | { error: string }>;
   stopAgent: (input?: {
     runId?: string;

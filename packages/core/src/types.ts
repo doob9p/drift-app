@@ -99,6 +99,13 @@ export type AgentEvent =
       task: string;
     }
   | {
+      /** Cursor SDK agent id for multi-turn follow-ups on the same card. */
+      type: "session";
+      agentId: string;
+      /** local.cwd used for Agent.create / Agent.resume store lookup. */
+      storeCwd: string;
+    }
+  | {
       type: "usage";
       usage: TokenUsageSnapshot;
       cost?: UsageCostSnapshot;

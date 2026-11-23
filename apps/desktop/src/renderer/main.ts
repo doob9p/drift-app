@@ -856,6 +856,26 @@ const promptAttachments = new Map<string, PromptAttachment[]>();
 let activePromptCardId: string | null = null;
 const runToPrompt = new Map<string, string>();
 const generatingCards = new Set<string>();
+/** Cursor SDK agent id per prompt card — follow-ups resume the same conversation. */
+const promptAgentSessions = new Map<
+  string,
+  { agentId: string; storeCwd: string }
+>();
+/** Session events may arrive before runToPrompt is wired; hold by runId briefly. */
+const pendingRunSessions = new Map<
+  string,
+  { agentId: string; storeCwd: string }
+>();
+
+function bindRunToPrompt(runId: string, cardId: string): void {
+  runToPrompt.set(runId, cardId);
+  const pending = pendingRunSessions.get(runId);
+  if (pending) {
+    promptAgentSessions.set(cardId, pending);
+    pendingRunSessions.delete(runId);
+    scheduleBoardSave();
+  }
+}
 
 type QueuedPrompt = {
   id: string;
@@ -938,6 +958,7 @@ function clearRun(runId: string | null | undefined): void {
   runToPrompt.delete(runId);
   runTurns.delete(runId);
   pendingApprovalsByRun.delete(runId);
+  pendingRunSessions.delete(runId);
   if (state.activeRunId === runId) state.activeRunId = null;
 }
 
@@ -963,6 +984,8 @@ const noopChat: ChatController = {
   addApproval: () => {},
   resolveApprovalCard: () => {},
   scrollToBottom: () => {},
+  getMessages: () => [],
+  restoreMessages: () => {},
 };
 
 function getPromptTabId(cardId: string): string {
@@ -989,10 +1012,27 @@ function chatForRun(runId?: string | null): ChatController {
   return activeChat() ?? noopChat;
 }
 
+function flushPromptPersistIntoBoard(): void {
+  for (const card of board.getCards()) {
+    if (card.kind !== "prompt") continue;
+    const ctrl = promptChats.get(card.id);
+    if (ctrl) card.messages = ctrl.getMessages();
+    const session = promptAgentSessions.get(card.id);
+    if (session?.agentId && session.storeCwd) {
+      card.agentId = session.agentId;
+      card.agentStoreCwd = session.storeCwd;
+    } else {
+      delete card.agentId;
+      delete card.agentStoreCwd;
+    }
+  }
+}
+
 function scheduleBoardSave(): void {
   if (boardSaveTimer != null) window.clearTimeout(boardSaveTimer);
   boardSaveTimer = window.setTimeout(() => {
     boardSaveTimer = undefined;
+    flushPromptPersistIntoBoard();
     void api.saveBoard(board.toPersisted());
   }, 400);
 }
@@ -1027,6 +1067,8 @@ const chat: ChatController = {
   resolveApprovalCard: (decision) =>
     activeChat()?.resolveApprovalCard(decision),
   scrollToBottom: () => activeChat()?.scrollToBottom(),
+  getMessages: () => activeChat()?.getMessages() ?? [],
+  restoreMessages: (messages) => activeChat()?.restoreMessages(messages),
 };
 
 const MODE_ICONS: Record<ChatMode, string> = {
@@ -3073,8 +3115,18 @@ function attachPromptCard(card: PromptCard): void {
   const pe = board.getPromptEls(card.id);
   if (!pe) return;
   const ctrl = createChatController(pe.thread);
-  ctrl.showEmpty(buildChatSuggestions(card.tabId));
   promptChats.set(card.id, ctrl);
+  if (card.agentId?.trim() && card.agentStoreCwd?.trim()) {
+    promptAgentSessions.set(card.id, {
+      agentId: card.agentId.trim(),
+      storeCwd: card.agentStoreCwd.trim(),
+    });
+  }
+  if (card.messages?.length) {
+    ctrl.restoreMessages(card.messages);
+  } else {
+    ctrl.showEmpty(buildChatSuggestions(card.tabId));
+  }
   wirePromptComposer(card.id);
   syncPromptContextForCard(card.id);
 }
@@ -3144,6 +3196,7 @@ board = createBoardPane(els.boardStage, {
       promptChats.delete(id);
       clearPromptAttachments(id);
       clearPromptQueue(id);
+      promptAgentSessions.delete(id);
       for (const [runId, cid] of [...runToPrompt]) {
         if (cid === id) clearRun(runId);
       }
@@ -4499,6 +4552,7 @@ async function closeTab(tabId: string): Promise<void> {
     promptChats.delete(cardId);
     clearPromptAttachments(cardId);
     clearPromptQueue(cardId);
+    promptAgentSessions.delete(cardId);
     for (const [runId, cid] of [...runToPrompt]) {
       if (cid === cardId) clearRun(runId);
     }
@@ -4634,7 +4688,13 @@ async function spawnSubFromAgent(
   setGenerating(true, card.id);
   board.setPromptRunStatus(card.id, "running");
   runChat.setThinking(true, t("thinking"));
-  const res = await api.sendAgent({ tabId: parent.tabId, message });
+  const session = promptAgentSessions.get(card.id);
+  const res = await api.sendAgent({
+    tabId: parent.tabId,
+    message,
+    agentId: session?.agentId,
+    agentStoreCwd: session?.storeCwd,
+  });
   if ("error" in res) {
     runChat.setThinking(false);
     runChat.addError(res.error);
@@ -4644,7 +4704,7 @@ async function spawnSubFromAgent(
     return;
   }
   state.activeRunId = res.runId;
-  runToPrompt.set(res.runId, card.id);
+  bindRunToPrompt(res.runId, card.id);
   runTurns.set(res.runId, {
     startedAssistant: false,
     turnTokens: null,
@@ -5700,13 +5760,17 @@ async function dispatchPrompt(
       onStop: () => stopPromptAgent(cardId),
     });
   }
+  scheduleBoardSave();
   setGenerating(true, cardId);
   board.setPromptRunStatus(cardId, "running");
   runChat.setThinking(true, t("thinking"));
+  const session = promptAgentSessions.get(cardId);
   const res = await api.sendAgent({
     tabId,
     message: opts.payload,
     images: opts.images,
+    agentId: session?.agentId,
+    agentStoreCwd: session?.storeCwd,
   });
   if ("error" in res) {
     runChat.setThinking(false);
@@ -5727,7 +5791,7 @@ async function dispatchPrompt(
     return;
   }
   state.activeRunId = res.runId;
-  runToPrompt.set(res.runId, cardId);
+  bindRunToPrompt(res.runId, cardId);
   runTurns.set(res.runId, {
     startedAssistant: false,
     turnTokens: null,
@@ -5831,6 +5895,16 @@ api.onAgentEvent(({ runId, event }) => {
   const agentChat = chatForRun(runId);
   const cardId = runToPrompt.get(runId) ?? null;
   const turn = ensureRunTurn(runId);
+  if (event.type === "session") {
+    const session = {
+      agentId: event.agentId,
+      storeCwd: event.storeCwd,
+    };
+    if (cardId) {
+      promptAgentSessions.set(cardId, session);
+      scheduleBoardSave();
+    } else pendingRunSessions.set(runId, session);
+  }
   if (event.type === "progress") {
     agentChat.setActivity({
       title: localizeProgressTitle(event.title),
@@ -5898,7 +5972,10 @@ api.onAgentEvent(({ runId, event }) => {
         notifyParentOfSub(cardId, "failed");
       }
       clearRun(runId);
-      if (cardId) void drainPromptQueue(cardId);
+      if (cardId) {
+        scheduleBoardSave();
+        void drainPromptQueue(cardId);
+      }
     }
     if (event.status === "cancelled") {
       if (pendingApprovalsByRun.has(runId)) {
@@ -5917,7 +5994,10 @@ api.onAgentEvent(({ runId, event }) => {
         notifyParentOfSub(cardId, "failed");
       }
       clearRun(runId);
-      if (cardId) void drainPromptQueue(cardId);
+      if (cardId) {
+        scheduleBoardSave();
+        void drainPromptQueue(cardId);
+      }
     }
     if (event.status === "done") {
       agentChat.setThinking(false);
@@ -5936,7 +6016,10 @@ api.onAgentEvent(({ runId, event }) => {
       }
       clearRun(runId);
       void refreshAccountUsage();
-      if (cardId) void drainPromptQueue(cardId);
+      if (cardId) {
+        scheduleBoardSave();
+        void drainPromptQueue(cardId);
+      }
     }
     if (event.status === "running") {
       agentChat.setThinking(true, t("thinking"));

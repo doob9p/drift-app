@@ -2495,6 +2495,8 @@ function registerIpc(): void {
         tabId: string;
         message: string;
         images?: Array<{ data: string; mimeType: string }>;
+        agentId?: string;
+        agentStoreCwd?: string;
       }
     ) => {
       const tab = tabs.get(input.tabId);
@@ -2551,6 +2553,8 @@ function registerIpc(): void {
             locale: appSettings.locale,
             signal: abort.signal,
             images: images.length ? images : undefined,
+            agentId: input.agentId?.trim() || undefined,
+            agentStoreCwd: input.agentStoreCwd?.trim() || undefined,
             context: {
               notes,
               ...(terminalTail ? { terminalTail } : {}),

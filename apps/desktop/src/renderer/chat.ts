@@ -1,9 +1,12 @@
 import type { ProposedAction } from "@drift/core";
+import type { PersistedChatMessage } from "./board-types.js";
 import { renderMarkdown } from "./markdown.js";
 import { t } from "./i18n.js";
 import { icons } from "./icons.js";
 import { showToast } from "./toast.js";
 import { copyText } from "./clipboard.js";
+
+const MAX_PERSISTED_MESSAGES = 200;
 
 export type ChatSuggestion = { label: string; prompt: string };
 
@@ -61,6 +64,10 @@ export type ChatController = {
   resolveApprovalCard: (decision: "allow-once" | "allow-session" | "deny") => void;
   /** When force is true, always jump (e.g. user sent a message). */
   scrollToBottom: (force?: boolean) => void;
+  /** Snapshot for board persistence (card lifetime). */
+  getMessages: () => PersistedChatMessage[];
+  /** Rebuild the thread after app restart. */
+  restoreMessages: (messages: PersistedChatMessage[]) => void;
 };
 
 const STICK_BOTTOM_PX = 72;
@@ -75,6 +82,16 @@ export function createChatController(root: HTMLElement): ChatController {
   /** Follow new output only while the user is (near) the bottom. */
   let stickToBottom = true;
   let jumpBtn: HTMLButtonElement | null = null;
+  let persisted: PersistedChatMessage[] = [];
+  let restoring = false;
+
+  function record(msg: PersistedChatMessage): void {
+    if (restoring) return;
+    persisted.push(msg);
+    if (persisted.length > MAX_PERSISTED_MESSAGES) {
+      persisted = persisted.slice(-MAX_PERSISTED_MESSAGES);
+    }
+  }
 
   function refreshRelativeTimes(): void {
     root.querySelectorAll<HTMLElement>(".msg-time[data-ts]").forEach((el) => {
@@ -220,6 +237,7 @@ export function createChatController(root: HTMLElement): ChatController {
     approvalEl = null;
     jumpBtn = null;
     stickToBottom = true;
+    persisted = [];
     showEmpty(lastSuggestions);
   }
 
@@ -339,6 +357,14 @@ export function createChatController(root: HTMLElement): ChatController {
     root.append(el);
     placeJumpLast();
     scrollToBottom(true);
+    record({
+      role: "user",
+      text,
+      refs: refs?.length ? refs.map((r) => ({ name: r.name, kind: r.kind })) : undefined,
+      attachments: attachments?.length
+        ? attachments.map((a) => ({ name: a.name, kind: a.kind }))
+        : undefined,
+    });
     return el;
   }
 
@@ -390,6 +416,7 @@ export function createChatController(root: HTMLElement): ChatController {
     tokens?: number;
     modelId?: string;
     cost?: string;
+    ts?: number;
   }): void {
     if (renderTimer != null) {
       clearTimeout(renderTimer);
@@ -406,7 +433,7 @@ export function createChatController(root: HTMLElement): ChatController {
         "[data-copy]"
       ) as HTMLButtonElement | null;
       if (footer && timeEl && copyBtn) {
-        const now = Date.now();
+        const now = meta?.ts && meta.ts > 0 ? meta.ts : Date.now();
         timeEl.dataset.ts = String(now);
         timeEl.textContent = formatRelativeTime(now);
         timeEl.title = new Date(now).toLocaleString();
@@ -433,6 +460,14 @@ export function createChatController(root: HTMLElement): ChatController {
         footer.classList.remove("hidden");
         ensureTimeTicker();
       }
+      record({
+        role: "assistant",
+        text: raw,
+        tokens: meta?.tokens,
+        modelId: meta?.modelId,
+        cost: meta?.cost,
+        ts: meta?.ts && meta.ts > 0 ? meta.ts : Date.now(),
+      });
     }
     assistantBody = null;
     removeThinking();
@@ -510,6 +545,7 @@ export function createChatController(root: HTMLElement): ChatController {
     root.append(el);
     placeJumpLast();
     scrollToBottom();
+    record({ role: "system", text });
   }
 
   function addError(
@@ -533,6 +569,7 @@ export function createChatController(root: HTMLElement): ChatController {
     root.append(el);
     placeJumpLast();
     scrollToBottom(true);
+    record({ role: "error", text });
   }
 
   function addPlan(steps: string[]): void {
@@ -548,6 +585,60 @@ export function createChatController(root: HTMLElement): ChatController {
     root.append(el);
     placeJumpLast();
     scrollToBottom();
+    record({ role: "plan", steps: [...steps] });
+  }
+
+  function getMessages(): PersistedChatMessage[] {
+    return persisted.map((m) => ({ ...m }));
+  }
+
+  function restoreMessages(messages: PersistedChatMessage[]): void {
+    persisted = [];
+    assistantBody = null;
+    assistantRaw = "";
+    thinkingEl = null;
+    approvalEl = null;
+    jumpBtn = null;
+    root.innerHTML = "";
+    stickToBottom = true;
+    if (!messages.length) {
+      showEmpty(lastSuggestions);
+      return;
+    }
+    restoring = true;
+    for (const msg of messages) {
+      if (msg.role === "user") {
+        addUser(msg.text, msg.refs, msg.attachments);
+      } else if (msg.role === "assistant") {
+        beginAssistant();
+        appendAssistant(msg.text);
+        finishAssistant({
+          tokens: msg.tokens,
+          modelId: msg.modelId,
+          cost: msg.cost,
+          ts: msg.ts,
+        });
+      } else if (msg.role === "system") {
+        addSystem(msg.text);
+      } else if (msg.role === "error") {
+        addError(msg.text);
+      } else if (msg.role === "plan") {
+        addPlan(msg.steps);
+      }
+    }
+    restoring = false;
+    persisted = messages
+      .filter(
+        (m): m is PersistedChatMessage =>
+          m.role === "user" ||
+          m.role === "assistant" ||
+          m.role === "system" ||
+          m.role === "error" ||
+          m.role === "plan"
+      )
+      .slice(-MAX_PERSISTED_MESSAGES)
+      .map((m) => ({ ...m }));
+    scrollToBottom(true);
   }
 
   function addApproval(
@@ -635,6 +726,8 @@ export function createChatController(root: HTMLElement): ChatController {
     addApproval,
     resolveApprovalCard,
     scrollToBottom,
+    getMessages,
+    restoreMessages,
   };
 }
 

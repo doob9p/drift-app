@@ -29,6 +29,14 @@ export interface AgentSendInput {
   images?: AgentSendImage[];
   /** When aborted, cancel the in-flight Cursor run (if any) and stop yielding. */
   signal?: AbortSignal;
+  /**
+   * Resume an existing Cursor SDK agent so follow-ups keep conversation
+   * history (same prompt card). Pair with `agentStoreCwd` from a prior
+   * `session` event.
+   */
+  agentId?: string;
+  /** `local.cwd` used when the agent was created (required for resume). */
+  agentStoreCwd?: string;
 }
 
 function isAborted(signal?: AbortSignal): boolean {
@@ -164,6 +172,29 @@ function buildPrompt(input: AgentSendInput): string {
     .join("\n");
 }
 
+/** Follow-up turn: SDK already has history; only refresh live context + new user text. */
+function buildFollowUpPrompt(input: AgentSendInput): string {
+  return [
+    `Active target: ${JSON.stringify(input.target)}`,
+    input.context?.notes ? `Context notes: ${input.context.notes}` : "",
+    input.context?.terminalTail
+      ? `Recent terminal output (scrollback tail):\n\`\`\`\n${input.context.terminalTail}\n\`\`\``
+      : "",
+    "",
+    input.message,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function resolveAgentStoreCwd(input: AgentSendInput): string {
+  if (input.agentStoreCwd?.trim()) return input.agentStoreCwd.trim();
+  if (input.target.kind === "local" && input.target.cwd.startsWith("/")) {
+    return input.target.cwd;
+  }
+  return process.cwd();
+}
+
 function extractPlanSteps(text: string): string[] | null {
   const fenced = text.match(/```plan\s*([\s\S]*?)```/i);
   const body = fenced?.[1] ?? text;
@@ -183,15 +214,11 @@ async function* runWithCursorSdk(
   sdk: typeof import("@cursor/sdk"),
   input: AgentSendInput
 ): AsyncGenerator<AgentEvent> {
-  // Cursor SDK local.cwd is a workspace root on this machine. For SSH tabs the
-  // remote cwd lives in the prompt/target; keep a harmless local fallback.
-  const cwd =
-    input.target.kind === "local" && input.target.cwd.startsWith("/")
-      ? input.target.cwd
-      : process.cwd();
+  // Cursor SDK local.cwd is where agent transcripts/state live. Keep the same
+  // path across follow-ups so Agent.resume can find the conversation.
+  const storeCwd = resolveAgentStoreCwd(input);
   const modelId = input.modelId?.trim() || DEFAULT_MODEL;
   const chatMode = input.chatMode ?? "agent";
-  const prompt = buildPrompt(input);
   const images = (input.images || [])
     .filter((img) => img.data?.trim() && img.mimeType?.trim())
     .slice(0, 5)
@@ -205,12 +232,34 @@ async function* runWithCursorSdk(
     return;
   }
 
-  const agent = await sdk.Agent.create({
+  const agentOpts = {
     apiKey: input.apiKey,
     model: { id: modelId },
-    mode: chatMode === "plan" ? "plan" : "agent",
-    local: { cwd },
-  });
+    mode: (chatMode === "plan" ? "plan" : "agent") as "plan" | "agent",
+    local: { cwd: storeCwd },
+  };
+
+  let agent: Awaited<ReturnType<typeof sdk.Agent.create>>;
+  let followUp = false;
+  const resumeId = input.agentId?.trim();
+  if (resumeId) {
+    try {
+      agent = await sdk.Agent.resume(resumeId, agentOpts);
+      followUp = true;
+    } catch {
+      agent = await sdk.Agent.create(agentOpts);
+    }
+  } else {
+    agent = await sdk.Agent.create(agentOpts);
+  }
+
+  yield {
+    type: "session",
+    agentId: agent.agentId,
+    storeCwd,
+  };
+
+  const prompt = followUp ? buildFollowUpPrompt(input) : buildPrompt(input);
 
   let run: Awaited<ReturnType<typeof agent.send>> | null = null;
   const cancelRun = () => {

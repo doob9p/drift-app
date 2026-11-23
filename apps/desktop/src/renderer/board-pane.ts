@@ -2104,11 +2104,16 @@ export function createBoardPane(
       for (const raw of state.cards) {
         if (raw.kind !== "prompt") continue;
         if (!liveTabIds.has(raw.tabId)) continue;
+        const savedStatus = raw.runStatus || "idle";
         const card: PromptCard = {
           ...raw,
           kind: "prompt",
           parentId: raw.parentId,
-          runStatus: raw.runStatus || "idle",
+          // Mid-run status cannot resume after restart — settle to idle/done/error.
+          runStatus:
+            savedStatus === "running" || savedStatus === "waiting"
+              ? "idle"
+              : savedStatus,
           z: nextZ(),
         };
         cards.push(card);

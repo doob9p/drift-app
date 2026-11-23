@@ -21,6 +21,26 @@ export type PromptRunStatus =
   | "done"
   | "error";
 
+/** Chat turns stored with the prompt card so restart restores the thread. */
+export type PersistedChatMessage =
+  | {
+      role: "user";
+      text: string;
+      refs?: { name: string; kind: "file" | "dir" }[];
+      attachments?: { name: string; kind: "image" | "text" | "binary" }[];
+    }
+  | {
+      role: "assistant";
+      text: string;
+      tokens?: number;
+      modelId?: string;
+      cost?: string;
+      ts?: number;
+    }
+  | { role: "system"; text: string }
+  | { role: "error"; text: string }
+  | { role: "plan"; steps: string[] };
+
 export type PromptCard = BoardCardBase & {
   kind: "prompt";
   tabId: string;
@@ -28,6 +48,11 @@ export type PromptCard = BoardCardBase & {
   /** Parent prompt card id when this card is a subagent. */
   parentId?: string;
   runStatus?: PromptRunStatus;
+  /** Cursor SDK agent for multi-turn resume across app restarts. */
+  agentId?: string;
+  agentStoreCwd?: string;
+  /** Visible chat thread for this card. Cleared when the card is closed. */
+  messages?: PersistedChatMessage[];
 };
 
 export type BoardCard = TerminalCard | PromptCard;
