@@ -56,6 +56,8 @@ import {
   Megaphone,
   Paperclip,
   Radio,
+  Ellipsis,
+  AppWindow,
 } from "lucide";
 
 type IconOpts = {
@@ -152,4 +154,7 @@ export const icons = {
   broadcastMember: (size = 12) => lucideSvg(Radio, { size, strokeWidth: 2 }),
   addSub: (size = 14) => lucideSvg(GitBranch, { size }),
   attach: (size = 14) => lucideSvg(Paperclip, { size }),
+  more: (size = 14) => lucideSvg(Ellipsis, { size }),
+  /** Open folder in Cursor desktop editor. */
+  openCursor: (size = 14) => lucideSvg(AppWindow, { size }),
 };

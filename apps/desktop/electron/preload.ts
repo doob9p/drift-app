@@ -174,6 +174,10 @@ export type DesktopApi = {
   openPath: (
     targetPath: string
   ) => Promise<{ ok: true } | { ok: false; error?: string }>;
+  /** Open a local folder in the Cursor desktop editor. */
+  openInCursor: (
+    targetPath: string
+  ) => Promise<{ ok: true } | { ok: false; error?: string }>;
   onShortcut: (
     cb: (payload: { action: string; index?: number }) => void
   ) => () => void;
@@ -645,6 +649,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("agent:resolve-approval", input),
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
   openPath: (targetPath) => ipcRenderer.invoke("shell:open-path", targetPath),
+  openInCursor: (targetPath) =>
+    ipcRenderer.invoke("shell:open-in-cursor", targetPath),
   onShortcut: (cb) => {
     const listener = (
       _e: Electron.IpcRendererEvent,

@@ -36,6 +36,9 @@ import type {
   TerminalCard,
 } from "./board-types.js";
 
+/** Extensible overflow actions on each terminal card (⋯ menu). */
+export type TerminalOverflowAction = "open-cursor" | "add-prompt";
+
 export type BoardPaneHandlers = {
   onFocus: (focus: BoardFocus) => void;
   onLayoutChange: () => void;
@@ -47,7 +50,28 @@ export type BoardPaneHandlers = {
   onAddSub: (parentCardId: string) => void;
   onToggleBroadcast: () => void;
   onToggleBroadcastMember: (tabId: string) => void;
+  onTerminalOverflowAction: (
+    tabId: string,
+    action: TerminalOverflowAction
+  ) => void;
 };
+
+const TERMINAL_OVERFLOW_ITEMS: Array<{
+  id: TerminalOverflowAction;
+  labelKey: string;
+  icon: (size?: number) => string;
+}> = [
+  {
+    id: "open-cursor",
+    labelKey: "board.menu.openCursor",
+    icon: icons.openCursor,
+  },
+  {
+    id: "add-prompt",
+    labelKey: "board.menu.addPrompt",
+    icon: icons.addPrompt,
+  },
+];
 
 export type BoardPane = {
   root: HTMLElement;
@@ -222,6 +246,86 @@ export function createBoardPane(
   let mapCollapsed = false;
   let minimapDirty = true;
   let persistTimer: number | null = null;
+  let overflowMenuEl: HTMLDivElement | null = null;
+
+  function closeTerminalOverflowMenu(): void {
+    overflowMenuEl?.remove();
+    overflowMenuEl = null;
+    document.removeEventListener("pointerdown", onOverflowOutside, true);
+    document.removeEventListener("keydown", onOverflowKeydown, true);
+  }
+
+  function onOverflowOutside(e: PointerEvent): void {
+    const t = e.target as Node | null;
+    if (!t) return;
+    if (overflowMenuEl?.contains(t)) return;
+    if (
+      t instanceof Element &&
+      t.closest(".board-card-more")
+    ) {
+      return;
+    }
+    closeTerminalOverflowMenu();
+  }
+
+  function onOverflowKeydown(e: KeyboardEvent): void {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeTerminalOverflowMenu();
+    }
+  }
+
+  function openTerminalOverflowMenu(
+    anchor: HTMLElement,
+    tabId: string
+  ): void {
+    closeTerminalOverflowMenu();
+    const menu = document.createElement("div");
+    menu.className = "board-overflow-menu";
+    menu.setAttribute("role", "menu");
+    menu.innerHTML = TERMINAL_OVERFLOW_ITEMS.map(
+      (item) => `
+      <button type="button" class="board-overflow-item" role="menuitem" data-action="${item.id}">
+        <span class="board-overflow-ico" aria-hidden="true">${item.icon(14)}</span>
+        <span class="board-overflow-label">${t(item.labelKey)}</span>
+      </button>`
+    ).join("");
+    document.body.append(menu);
+    overflowMenuEl = menu;
+
+    const rect = anchor.getBoundingClientRect();
+    const mw = menu.offsetWidth;
+    const mh = menu.offsetHeight;
+    let left = rect.right - mw;
+    let top = rect.bottom + 4;
+    left = Math.max(8, Math.min(left, window.innerWidth - mw - 8));
+    if (top + mh > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - mh - 4);
+    }
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+
+    menu.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest(
+        "[data-action]"
+      ) as HTMLButtonElement | null;
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const action = btn.dataset.action as TerminalOverflowAction | undefined;
+      closeTerminalOverflowMenu();
+      if (action === "add-prompt") {
+        requestAddPrompt(tabId);
+        return;
+      }
+      if (action === "open-cursor") {
+        handlers.onTerminalOverflowAction(tabId, action);
+      }
+    });
+
+    document.addEventListener("pointerdown", onOverflowOutside, true);
+    document.addEventListener("keydown", onOverflowKeydown, true);
+  }
 
   root.innerHTML = `
     <div class="board-viewport" id="board-viewport" tabindex="-1">
@@ -507,19 +611,7 @@ export function createBoardPane(
   }
 
   function syncAddPromptEnabled(): void {
-    const targetTab = resolvePromptTabId();
-    for (const card of cards) {
-      if (card.kind !== "terminal") continue;
-      const el = cardEls.get(card.id);
-      const btn = el?.querySelector(
-        ".board-card-add-prompt"
-      ) as HTMLButtonElement | null;
-      if (!btn) continue;
-      // Show on the terminal that would receive the new prompt.
-      const show = !card.minimized && Boolean(targetTab) && card.tabId === targetTab;
-      btn.classList.toggle("is-hidden", !show);
-      btn.disabled = false;
-    }
+    // Prompt is opened from the terminal ⋯ menu; no per-card header button.
   }
 
   function schedulePersist(): void {
@@ -1325,7 +1417,7 @@ export function createBoardPane(
         <span class="board-card-title"></span>
         <span class="board-card-broadcast-badge is-hidden" data-broadcast-badge aria-hidden="true"></span>
         <div class="board-card-actions">
-          <button type="button" class="icon ghost board-card-add-prompt" data-i18n-title="board.addPrompt" title="${t("board.addPrompt")}" aria-label="${t("board.addPrompt")}">${icons.addPrompt(13)}</button>
+          <button type="button" class="icon ghost board-card-more" data-i18n-title="board.menu.more" title="${t("board.menu.more")}" aria-label="${t("board.menu.more")}" aria-haspopup="menu">${icons.more(13)}</button>
           <button type="button" class="icon ghost board-card-min" data-i18n-title="board.minimize" title="Minimize">${icons.chevronDown(12)}</button>
           <button type="button" class="icon ghost board-card-close" data-i18n-title="board.close" title="Close">×</button>
         </div>
@@ -1349,9 +1441,15 @@ export function createBoardPane(
       e.stopPropagation();
       handlers.onToggleBroadcastMember(card.tabId);
     });
-    el.querySelector(".board-card-add-prompt")!.addEventListener("click", (e) => {
+    el.querySelector(".board-card-more")!.addEventListener("click", (e) => {
+      e.preventDefault();
       e.stopPropagation();
-      requestAddPrompt(card.tabId);
+      const btn = e.currentTarget as HTMLElement;
+      if (overflowMenuEl) {
+        closeTerminalOverflowMenu();
+        return;
+      }
+      openTerminalOverflowMenu(btn, card.tabId);
     });
     el.querySelector(".board-card-min")!.addEventListener("click", (e) => {
       e.stopPropagation();

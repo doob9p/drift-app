@@ -47,6 +47,7 @@ import {
   createBoardPane,
   MAX_PROMPT_SUBS,
   type BoardPane,
+  type TerminalOverflowAction,
 } from "./board-pane.js";
 import type {
   BoardFocus,
@@ -1304,11 +1305,28 @@ async function applyLocale(next: AppLocale): Promise<void> {
 }
 
 async function applyChatMode(mode: ChatMode): Promise<void> {
+  const prev = state.chatMode;
   state.chatMode = mode;
   await api.setChatMode(mode);
   renderModeChip();
   closeModePopover();
+  // Cursor: each mode uses its own context — switching starts a fresh window.
+  if (prev !== mode) {
+    resetAgentSessionsForModeChange();
+  }
   chat.addSystem(t("mode.changed", { mode: t(`mode.${mode}`) }));
+}
+
+/** Drop Cursor agent ids so the next send is Agent.create (new context), not resume. */
+function resetAgentSessionsForModeChange(): void {
+  promptAgentSessions.clear();
+  pendingRunSessions.clear();
+  for (const card of board.getCards()) {
+    if (card.kind !== "prompt") continue;
+    delete card.agentId;
+    delete card.agentStoreCwd;
+  }
+  scheduleBoardSave();
 }
 
 const SSH_FOLDERS_KEY = "drift.sshFolders";
@@ -3208,6 +3226,9 @@ board = createBoardPane(els.boardStage, {
   onAddSub(parentCardId) {
     void addManualSubPrompt(parentCardId);
   },
+  onTerminalOverflowAction(tabId, action) {
+    void handleTerminalOverflowAction(tabId, action);
+  },
   onToggleBroadcast() {
     toggleBroadcastInput();
   },
@@ -4661,6 +4682,32 @@ async function addManualSubPrompt(parentCardId: string): Promise<void> {
   attachPromptCard(card);
   notifyParentOfSub(card.id, "spawned");
   scheduleBoardSave();
+}
+
+async function handleTerminalOverflowAction(
+  tabId: string,
+  action: TerminalOverflowAction
+): Promise<void> {
+  if (action === "open-cursor") {
+    const tab = state.tabs.get(tabId);
+    if (!tab) return;
+    if (tab.kind !== "local") {
+      showToast(t("board.menu.openCursor.ssh"), "info");
+      return;
+    }
+    const cwd = (await cwdForTab(tabId)) || tabCwds.get(tabId);
+    if (!cwd) {
+      showToast(t("board.menu.openCursor.noCwd"), "error");
+      return;
+    }
+    const res = await api.openInCursor(cwd);
+    if (!res.ok) {
+      showToast(t("board.menu.openCursor.fail"), "error");
+      return;
+    }
+    showToast(t("board.menu.openCursor.ok"), "ok");
+    return;
+  }
 }
 
 async function spawnSubFromAgent(

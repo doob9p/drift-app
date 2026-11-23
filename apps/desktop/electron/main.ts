@@ -13,6 +13,7 @@ import {
   type NativeImage,
 } from "electron";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import {
   mkdir,
@@ -209,6 +210,77 @@ function stopAgentRuns(runId?: string): { stopped: string[] } {
     if (!stopped.includes(id)) stopped.push(id);
   }
   return { stopped };
+}
+
+/**
+ * Open a local folder in the Cursor desktop app.
+ * Prefer the `cursor` CLI with `-n` so an already-running Cursor still opens
+ * this folder (plain `open -a Cursor` often only focuses the existing app).
+ */
+function openPathInCursorApp(
+  targetPath?: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const raw = typeof targetPath === "string" ? targetPath.trim() : "";
+  if (!raw) return Promise.resolve({ ok: false, error: "empty" });
+  const dir = path.resolve(raw);
+  if (!existsSync(dir)) return Promise.resolve({ ok: false, error: "not_found" });
+
+  type Candidate = { cmd: string; args: string[]; shell?: boolean };
+  const candidates: Candidate[] = [];
+  if (process.platform === "darwin") {
+    const appBin =
+      "/Applications/Cursor.app/Contents/Resources/app/bin/cursor";
+    // `-n` = new window with this folder (reliable when Cursor is already open).
+    if (existsSync(appBin)) candidates.push({ cmd: appBin, args: ["-n", dir] });
+    candidates.push({ cmd: "cursor", args: ["-n", dir] });
+    candidates.push({
+      cmd: "open",
+      args: ["-na", "Cursor", "--args", dir],
+    });
+  } else if (process.platform === "win32") {
+    candidates.push({ cmd: "cursor.cmd", args: ["-n", dir], shell: true });
+    candidates.push({ cmd: "cursor", args: ["-n", dir], shell: true });
+  } else {
+    const appBin = "/usr/share/cursor/bin/cursor";
+    if (existsSync(appBin)) candidates.push({ cmd: appBin, args: ["-n", dir] });
+    candidates.push({ cmd: "cursor", args: ["-n", dir] });
+  }
+
+  const tryOne = (c: Candidate): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const child = spawn(c.cmd, c.args, {
+        stdio: "ignore",
+        windowsHide: true,
+        shell: c.shell ?? false,
+        env: process.env,
+      });
+      let settled = false;
+      const done = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (err) reject(err);
+        else resolve();
+      };
+      child.once("error", (err) => done(err));
+      child.once("exit", (code) => {
+        // Cursor's launcher exits 0 after handing off; non-zero = real failure.
+        if (code === 0 || code === null) done();
+        else done(new Error(`exit ${code}`));
+      });
+    });
+
+  return (async () => {
+    let last = "cursor_not_found";
+    for (const c of candidates) {
+      try {
+        await tryOne(c);
+        return { ok: true as const };
+      } catch (err) {
+        last = err instanceof Error ? err.message : String(err);
+      }
+    }
+    return { ok: false as const, error: last };
+  })();
 }
 
 function applyChatModeToPolicy(mode: ChatMode): void {
@@ -1698,8 +1770,20 @@ function registerIpc(): void {
   ipcMain.handle("term:get-cwd", async (_e, tabId: string) => {
     const tab = tabs.get(tabId);
     if (!tab) return { cwd: null as string | null };
+    if (!tab.backend) return { cwd: tab.lastCwd ?? null };
+    // Always refresh when asked — callers (e.g. Open in Cursor) need the live path.
+    if (tab.backend.target.kind === "local") {
+      try {
+        const cwd = await tab.backend.getCwd();
+        if (cwd) {
+          emitTabCwd(tabId, cwd);
+          return { cwd };
+        }
+      } catch {
+        /* fall through to cache */
+      }
+    }
     if (tab.lastCwd) return { cwd: tab.lastCwd };
-    if (!tab.backend) return { cwd: null as string | null };
     try {
       const cwd = await tab.backend.getCwd();
       if (cwd) emitTabCwd(tabId, cwd);
@@ -2050,6 +2134,11 @@ function registerIpc(): void {
     if (err) return { ok: false as const, error: err };
     return { ok: true as const };
   });
+
+  ipcMain.handle(
+    "shell:open-in-cursor",
+    async (_e, targetPath?: string) => openPathInCursorApp(targetPath)
+  );
 
   ipcMain.handle("fs:home", async () => os.homedir());
 
