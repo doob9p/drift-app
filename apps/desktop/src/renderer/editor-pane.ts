@@ -267,8 +267,13 @@ export function createEditorPane(opts: {
   ) => Promise<WriteResult>;
   onVisibilityChange?: (open: boolean) => void;
 }): {
-  openLocal: (path: string) => Promise<void>;
-  openRemote: (tabId: string, path: string) => Promise<void>;
+  openLocal: (
+    path: string
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  openRemote: (
+    tabId: string,
+    path: string
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
   isOpen: () => boolean;
   isFocused: () => boolean;
   getActivePath: () => string | null;
@@ -521,7 +526,7 @@ export function createEditorPane(opts: {
     scope: EditorScope;
     tabId?: string;
     path: string;
-  }): Promise<void> {
+  }): Promise<{ ok: true } | { ok: false; error: string }> {
     if (activeId) persistActiveFromView();
     const existing = docs.find(
       (d) =>
@@ -531,15 +536,18 @@ export function createEditorPane(opts: {
     );
     if (existing) {
       await activate(existing.id);
-      return;
+      return { ok: true };
     }
     const result =
       input.scope === "local"
         ? await opts.readLocal(input.path)
         : await opts.readRemote(input.tabId!, input.path);
     if ("error" in result) {
-      showToast(mapError(result.error), "error");
-      return;
+      // Caller opens a pager for oversized files; skip the toast here.
+      if (result.error !== "too_large") {
+        showToast(mapError(result.error), "error");
+      }
+      return { ok: false, error: result.error };
     }
     const filePath = result.path || input.path;
     const isImage = "kind" in result && result.kind === "image";
@@ -571,6 +579,7 @@ export function createEditorPane(opts: {
         };
     docs.push(doc);
     await activate(doc.id);
+    return { ok: true };
   }
 
   const view = new EditorView({

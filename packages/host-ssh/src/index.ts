@@ -705,12 +705,120 @@ async function totalLocalBytes(paths: string[]): Promise<number> {
   return total;
 }
 
+/** No progress / child I/O for this long → kill. */
+const TRANSFER_IDLE_MS = 10 * 60 * 1000;
+/** Hard ceiling so a stuck child cannot live forever. */
+const TRANSFER_MAX_MS = 24 * 60 * 60 * 1000;
+
+type IdleWatch = {
+  touch: () => void;
+  clear: () => void;
+};
+
+function createIdleWatch(
+  onTimeout: (reason: "idle" | "max") => void,
+  opts?: { idleMs?: number; maxMs?: number }
+): IdleWatch {
+  const idleMs = opts?.idleMs ?? TRANSFER_IDLE_MS;
+  const maxMs = opts?.maxMs ?? TRANSFER_MAX_MS;
+  let lastActivity = Date.now();
+  const started = Date.now();
+  let fired = false;
+  const tick = setInterval(() => {
+    if (fired) return;
+    const now = Date.now();
+    if (now - started >= maxMs) {
+      fired = true;
+      onTimeout("max");
+      return;
+    }
+    if (now - lastActivity >= idleMs) {
+      fired = true;
+      onTimeout("idle");
+    }
+  }, 5_000);
+  return {
+    touch: () => {
+      lastActivity = Date.now();
+    },
+    clear: () => clearInterval(tick),
+  };
+}
+
+function resolveTransferIdleMs(optsTimeoutMs?: number): number {
+  // Legacy callers passed a short absolute timeout (e.g. 120s). Treat that as
+  // "use defaults"; only honor an explicit longer idle override.
+  if (optsTimeoutMs != null && optsTimeoutMs > TRANSFER_IDLE_MS) {
+    return optsTimeoutMs;
+  }
+  return TRANSFER_IDLE_MS;
+}
+
+/** Best-effort remote file size (bytes). Returns null on failure. */
+function probeRemoteFileSize(
+  session: SavedSession,
+  remotePath: string,
+  env: NodeJS.ProcessEnv,
+  passwordAuth: boolean
+): Promise<number | null> {
+  const cmd =
+    `stat -c%s -- ${shellQuote(remotePath)} 2>/dev/null || ` +
+    `wc -c < ${shellQuote(remotePath)} 2>/dev/null`;
+  const args = buildSshArgs(
+    { ...session, startDir: undefined },
+    { tty: false, batch: !passwordAuth }
+  );
+  if (passwordAuth) {
+    pushPasswordAuthOptions(args, {
+      allowPublicKey: Boolean(session.identityFile?.trim()),
+    });
+  }
+  args.push(cmd);
+  return new Promise((resolve) => {
+    const child = spawn(sshBinary(), args, {
+      env,
+      windowsHide: true,
+    });
+    let stdout = "";
+    let settled = false;
+    const done = (value: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      done(null);
+    }, 8_000);
+    child.stdout.on("data", (d: Buffer) => {
+      stdout += d.toString("utf8");
+    });
+    child.on("error", () => done(null));
+    child.on("close", (code) => {
+      if (code !== 0) {
+        done(null);
+        return;
+      }
+      const n = Number((stdout.trim().split(/\s+/).pop() || "").replace(/,/g, ""));
+      done(Number.isFinite(n) && n >= 0 ? n : null);
+    });
+  });
+}
+
+function joinRemoteDir(remoteDir: string, name: string): string {
+  const base = remoteDir.trim() || "~";
+  if (base === "~") return `~/${name}`;
+  return `${base.replace(/\/?$/, "/")}${name}`;
+}
+
 /** Copy local paths into a remote directory over the live ControlMaster. */
 export async function uploadFilesViaScp(
   session: SavedSession,
   localPaths: string[],
   remoteDir: string,
   opts?: {
+    /** Idle timeout override (ms). Short legacy values are ignored. */
     timeoutMs?: number;
     onProgress?: (p: UploadProgress) => void;
     /** Required on Windows for password-auth hosts (no ControlMaster). */
@@ -719,7 +827,7 @@ export async function uploadFilesViaScp(
 ): Promise<{ ok: true } | { error: string }> {
   const cleaned = localPaths.map((p) => p.trim()).filter(Boolean);
   if (!cleaned.length) return { error: "No files" };
-  const timeoutMs = opts?.timeoutMs ?? 120_000;
+  const idleMs = resolveTransferIdleMs(opts?.timeoutMs);
   const onProgress = opts?.onProgress;
   const askpass = createNonMuxAskpass(opts?.password);
   const passwordAuth = Boolean(askpass);
@@ -731,7 +839,7 @@ export async function uploadFilesViaScp(
   const total = await totalLocalBytes(cleaned);
   onProgress?.({
     transferred: 0,
-    total,
+    total: total || 1,
     percent: 0,
     currentName: path.basename(cleaned[0] || ""),
   });
@@ -762,13 +870,28 @@ export async function uploadFilesViaScp(
         currentFileStart: 0,
         currentName: path.basename(cleaned[0] || ""),
       };
-      const timer = setTimeout(() => {
+      const finish = (
+        result: { ok: true } | { error: string } | "missing" | "unsupported"
+      ) => {
         if (settled) return;
         settled = true;
-        child.kill("SIGKILL");
-        resolve({ error: "Upload timed out" });
-      }, timeoutMs);
+        watch.clear();
+        resolve(result);
+      };
+      const watch = createIdleWatch(
+        (reason) => {
+          child.kill("SIGKILL");
+          finish({
+            error:
+              reason === "max"
+                ? "Upload exceeded maximum duration"
+                : "Upload timed out (no progress)",
+          });
+        },
+        { idleMs }
+      );
       const onChunk = (d: Buffer) => {
+        watch.touch();
         const text = d.toString("utf8");
         stderr += text;
         if (!onProgress) return;
@@ -795,35 +918,28 @@ export async function uploadFilesViaScp(
       child.stdout.on("data", onChunk);
       child.stderr.on("data", onChunk);
       child.on("error", (err) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") resolve("missing");
-        else resolve({ error: err.message });
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") finish("missing");
+        else finish({ error: err.message });
       });
       child.on("close", (code) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
         if (code === 0) {
           onProgress?.({
             transferred: total,
             total: total || 1,
             percent: 100,
           });
-          resolve({ ok: true });
+          finish({ ok: true });
           return;
         }
         const errText = (stderr || `rsync exit ${code}`).trim();
-        // macOS ships openrsync (2.6.9-compatible) without --info=progress2.
         if (
           progressMode === "progress2" &&
           /unrecognized option|--info/i.test(errText)
         ) {
-          resolve("unsupported");
+          finish("unsupported");
           return;
         }
-        resolve({ error: errText.slice(0, 400) });
+        finish({ error: errText.slice(0, 400) });
       });
     });
 
@@ -837,7 +953,7 @@ export async function uploadFilesViaScp(
     return rsyncResult;
   }
 
-  // Fallback: one scp -r per top-level path, progress by completed size.
+  // Fallback: one scp -r per top-level path; poll remote size for progress.
   let doneBytes = 0;
   for (const src of cleaned) {
     let size = 0;
@@ -846,12 +962,14 @@ export async function uploadFilesViaScp(
     } catch {
       size = 0;
     }
+    const name = path.basename(src);
+    const remoteFile = joinRemoteDir(remote, name);
     onProgress?.({
       transferred: doneBytes,
       total: total || 1,
       percent:
         total > 0 ? Math.min(99, Math.round((doneBytes / total) * 100)) : 0,
-      currentName: path.basename(src),
+      currentName: name,
     });
     const args = [
       ...buildScpArgs(session, {
@@ -868,28 +986,64 @@ export async function uploadFilesViaScp(
       });
       let stderr = "";
       let settled = false;
-      const timer = setTimeout(() => {
+      let lastRemoteBytes = 0;
+      const finish = (result: { ok: true } | { error: string }) => {
         if (settled) return;
         settled = true;
-        child.kill("SIGKILL");
-        resolve({ error: "Upload timed out" });
-      }, timeoutMs);
+        clearInterval(poll);
+        watch.clear();
+        resolve(result);
+      };
+      const watch = createIdleWatch(
+        (reason) => {
+          child.kill("SIGKILL");
+          finish({
+            error:
+              reason === "max"
+                ? "Upload exceeded maximum duration"
+                : "Upload timed out (no progress)",
+          });
+        },
+        { idleMs }
+      );
+      const emitPartial = (fileBytes: number, heartbeat: boolean) => {
+        const transferred = Math.min(doneBytes + fileBytes, total || doneBytes + fileBytes);
+        onProgress?.({
+          transferred: Math.max(transferred, 0),
+          total: total || 1,
+          percent:
+            total > 0
+              ? Math.min(99, Math.round((transferred / total) * 100))
+              : 0,
+          currentName: name,
+        });
+        if (!heartbeat && fileBytes > lastRemoteBytes) {
+          lastRemoteBytes = fileBytes;
+          watch.touch();
+        }
+      };
+      const poll = setInterval(() => {
+        void probeRemoteFileSize(
+          session,
+          remoteFile,
+          transferEnv,
+          passwordAuth
+        ).then((n) => {
+          if (settled) return;
+          if (n != null) emitPartial(n, false);
+          else emitPartial(lastRemoteBytes, true);
+        });
+      }, 1_000);
       child.stderr.on("data", (d: Buffer) => {
+        watch.touch();
         stderr += d.toString("utf8");
       });
-      child.on("error", (err) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({ error: err.message });
-      });
+      child.stdout?.on("data", () => watch.touch());
+      child.on("error", (err) => finish({ error: err.message }));
       child.on("close", (code) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (code === 0) resolve({ ok: true });
+        if (code === 0) finish({ ok: true });
         else
-          resolve({
+          finish({
             error: (stderr || `scp exit ${code}`).trim().slice(0, 400),
           });
       });
@@ -903,7 +1057,7 @@ export async function uploadFilesViaScp(
         total > 0
           ? Math.min(100, Math.round((doneBytes / total) * 100))
           : 100,
-      currentName: path.basename(src),
+      currentName: name,
     });
   }
   return { ok: true };
@@ -918,6 +1072,7 @@ export async function downloadFilesViaScp(
   remotePaths: string[],
   localDir: string,
   opts?: {
+    /** Idle timeout override (ms). Short legacy values are ignored. */
     timeoutMs?: number;
     onProgress?: (p: UploadProgress) => void;
     /** Required on Windows for password-auth hosts (no ControlMaster). */
@@ -928,7 +1083,7 @@ export async function downloadFilesViaScp(
   if (!cleaned.length) return { error: "No files" };
   const destDir = localDir.trim();
   if (!destDir) return { error: "No destination" };
-  const timeoutMs = opts?.timeoutMs ?? 120_000;
+  const idleMs = resolveTransferIdleMs(opts?.timeoutMs);
   const onProgress = opts?.onProgress;
   const askpass = createNonMuxAskpass(opts?.password);
   const passwordAuth = Boolean(askpass);
@@ -939,9 +1094,23 @@ export async function downloadFilesViaScp(
     (p) => `${session.user}@${session.host}:${p}`
   );
   const dest = destDir.replace(/\/?$/, "/");
+
+  let totalBytes = 0;
+  const remoteSizes: number[] = [];
+  for (const p of cleaned) {
+    const n = await probeRemoteFileSize(
+      session,
+      p,
+      transferEnv,
+      passwordAuth
+    );
+    remoteSizes.push(n ?? 0);
+    totalBytes += n ?? 0;
+  }
+
   onProgress?.({
     transferred: 0,
-    total: cleaned.length,
+    total: totalBytes || 1,
     percent: 0,
     currentName: path.basename(cleaned[0] || ""),
   });
@@ -972,50 +1141,68 @@ export async function downloadFilesViaScp(
         currentFileStart: 0,
         currentName: path.basename(cleaned[0] || ""),
       };
-      const timer = setTimeout(() => {
+      const finish = (
+        result: { ok: true } | { error: string } | "missing" | "unsupported"
+      ) => {
         if (settled) return;
         settled = true;
-        child.kill("SIGKILL");
-        resolve({ error: "Download timed out" });
-      }, timeoutMs);
+        watch.clear();
+        resolve(result);
+      };
+      const watch = createIdleWatch(
+        (reason) => {
+          child.kill("SIGKILL");
+          finish({
+            error:
+              reason === "max"
+                ? "Download exceeded maximum duration"
+                : "Download timed out (no progress)",
+          });
+        },
+        { idleMs }
+      );
       const onChunk = (d: Buffer) => {
+        watch.touch();
         const text = d.toString("utf8");
         stderr += text;
         if (!onProgress) return;
         if (progressMode === "progress2") {
           const parsed = parseProgress2(text);
           if (!parsed) return;
+          const transferred = parsed.transferred;
+          const knownTotal = totalBytes > 0 ? totalBytes : Math.max(transferred, 1);
           onProgress({
-            transferred: parsed.transferred,
-            total: Math.max(parsed.transferred, 1),
-            percent: Math.min(99, parsed.percent),
+            transferred: Math.min(transferred, knownTotal),
+            total: knownTotal,
+            percent:
+              totalBytes > 0
+                ? Math.min(99, Math.round((transferred / totalBytes) * 100))
+                : Math.min(99, parsed.percent),
             currentName: classicState.currentName,
           });
           return;
         }
-        const latest = applyClassicProgress(classicState, text, 0);
+        const latest = applyClassicProgress(
+          classicState,
+          text,
+          totalBytes
+        );
         if (latest) onProgress(latest);
       };
       child.stdout.on("data", onChunk);
       child.stderr.on("data", onChunk);
       child.on("error", (err) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") resolve("missing");
-        else resolve({ error: err.message });
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") finish("missing");
+        else finish({ error: err.message });
       });
       child.on("close", (code) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
         if (code === 0) {
           onProgress?.({
-            transferred: cleaned.length,
-            total: cleaned.length,
+            transferred: totalBytes || 1,
+            total: totalBytes || 1,
             percent: 100,
           });
-          resolve({ ok: true });
+          finish({ ok: true });
           return;
         }
         const errText = (stderr || `rsync exit ${code}`).trim();
@@ -1023,10 +1210,10 @@ export async function downloadFilesViaScp(
           progressMode === "progress2" &&
           /unrecognized option|--info/i.test(errText)
         ) {
-          resolve("unsupported");
+          finish("unsupported");
           return;
         }
-        resolve({ error: errText.slice(0, 400) });
+        finish({ error: errText.slice(0, 400) });
       });
     });
 
@@ -1040,15 +1227,19 @@ export async function downloadFilesViaScp(
     return rsyncResult;
   }
 
-  let done = 0;
-  for (const remote of remotes) {
-    const name = path.basename(cleaned[done] || remote);
+  let doneBytes = 0;
+  for (let i = 0; i < remotes.length; i++) {
+    const remote = remotes[i]!;
+    const remotePath = cleaned[i]!;
+    const name = path.basename(remotePath);
+    const expected = remoteSizes[i] ?? 0;
+    const localPath = path.join(destDir, name);
     onProgress?.({
-      transferred: done,
-      total: cleaned.length,
+      transferred: doneBytes,
+      total: totalBytes || 1,
       percent:
-        cleaned.length > 0
-          ? Math.min(99, Math.round((done / cleaned.length) * 100))
+        totalBytes > 0
+          ? Math.min(99, Math.round((doneBytes / totalBytes) * 100))
           : 0,
       currentName: name,
     });
@@ -1067,40 +1258,83 @@ export async function downloadFilesViaScp(
       });
       let stderr = "";
       let settled = false;
-      const timer = setTimeout(() => {
+      let lastLocalBytes = 0;
+      const finish = (result: { ok: true } | { error: string }) => {
         if (settled) return;
         settled = true;
-        child.kill("SIGKILL");
-        resolve({ error: "Download timed out" });
-      }, timeoutMs);
+        clearInterval(poll);
+        watch.clear();
+        resolve(result);
+      };
+      const watch = createIdleWatch(
+        (reason) => {
+          child.kill("SIGKILL");
+          finish({
+            error:
+              reason === "max"
+                ? "Download exceeded maximum duration"
+                : "Download timed out (no progress)",
+          });
+        },
+        { idleMs }
+      );
+      const emitPartial = (fileBytes: number, heartbeat: boolean) => {
+        const transferred = doneBytes + fileBytes;
+        const knownTotal =
+          totalBytes > 0 ? totalBytes : Math.max(transferred, expected, 1);
+        onProgress?.({
+          transferred: Math.min(transferred, knownTotal),
+          total: knownTotal,
+          percent:
+            knownTotal > 0
+              ? Math.min(99, Math.round((transferred / knownTotal) * 100))
+              : 0,
+          currentName: name,
+        });
+        if (!heartbeat && fileBytes > lastLocalBytes) {
+          lastLocalBytes = fileBytes;
+          watch.touch();
+        }
+      };
+      const poll = setInterval(() => {
+        void stat(localPath)
+          .then((st) => {
+            if (settled) return;
+            if (st.isFile()) emitPartial(st.size, false);
+            else emitPartial(lastLocalBytes, true);
+          })
+          .catch(() => {
+            if (!settled) emitPartial(lastLocalBytes, true);
+          });
+      }, 500);
       child.stderr.on("data", (d: Buffer) => {
+        watch.touch();
         stderr += d.toString("utf8");
       });
-      child.on("error", (err) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({ error: err.message });
-      });
+      child.stdout?.on("data", () => watch.touch());
+      child.on("error", (err) => finish({ error: err.message }));
       child.on("close", (code) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (code === 0) resolve({ ok: true });
+        if (code === 0) finish({ ok: true });
         else
-          resolve({
+          finish({
             error: (stderr || `scp exit ${code}`).trim().slice(0, 400),
           });
       });
     });
     if ("error" in one) return one;
-    done += 1;
+    let finalSize = expected;
+    try {
+      finalSize = (await stat(localPath)).size;
+    } catch {
+      /* keep expected */
+    }
+    doneBytes += finalSize;
     onProgress?.({
-      transferred: done,
-      total: cleaned.length,
+      transferred: Math.min(doneBytes, totalBytes || doneBytes),
+      total: totalBytes || doneBytes || 1,
       percent:
-        cleaned.length > 0
-          ? Math.min(100, Math.round((done / cleaned.length) * 100))
+        totalBytes > 0
+          ? Math.min(100, Math.round((doneBytes / totalBytes) * 100))
           : 100,
       currentName: name,
     });

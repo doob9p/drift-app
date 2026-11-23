@@ -1173,7 +1173,7 @@ async function collectRemoteMetrics(
   }
 }
 
-const EDITOR_MAX_BYTES = 1_500_000;
+const EDITOR_MAX_BYTES = 16_000_000;
 const IMAGE_MAX_BYTES = 12_000_000;
 
 const IMAGE_MIME_BY_EXT: Record<string, string> = {

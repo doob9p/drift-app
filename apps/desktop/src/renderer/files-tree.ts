@@ -74,6 +74,20 @@ function hasFilePayload(dt: DataTransfer | null): boolean {
   );
 }
 
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "0 B";
+  if (n < 1024) return `${Math.round(n)} B`;
+  const units = ["KB", "MB", "GB", "TB"] as const;
+  let v = n;
+  let i = -1;
+  do {
+    v /= 1024;
+    i += 1;
+  } while (v >= 1024 && i < units.length - 1);
+  const digits = v >= 100 || i === 0 ? 0 : v >= 10 ? 1 : 2;
+  return `${v.toFixed(digits)} ${units[i]}`;
+}
+
 function escapeHtml(s: string): string {
   return s
     .replaceAll("&", "&amp;")
@@ -469,13 +483,41 @@ function createPane(
   function showTransferProgress(p: {
     percent: number;
     currentName?: string;
+    transferred?: number;
+    total?: number;
   }): void {
     const pct = Math.max(0, Math.min(100, Math.round(p.percent)));
     transferEl.classList.remove("hidden");
     transferFill.style.width = `${pct}%`;
-    const label = p.currentName
-      ? t("files.progressNamed", { percent: String(pct), name: p.currentName })
-      : t("files.progress", { percent: String(pct) });
+    const hasBytes =
+      typeof p.transferred === "number" &&
+      typeof p.total === "number" &&
+      p.total > 0 &&
+      // file-count totals from legacy paths are tiny; prefer byte labels
+      // when total looks like a byte count (or transferred already grew).
+      (p.total >= 1024 || p.transferred >= 1024 || pct > 0);
+    let label: string;
+    if (hasBytes && p.currentName) {
+      label = t("files.progressNamedBytes", {
+        percent: String(pct),
+        name: p.currentName,
+        done: formatBytes(p.transferred!),
+        total: formatBytes(p.total!),
+      });
+    } else if (hasBytes) {
+      label = t("files.progressBytes", {
+        percent: String(pct),
+        done: formatBytes(p.transferred!),
+        total: formatBytes(p.total!),
+      });
+    } else if (p.currentName) {
+      label = t("files.progressNamed", {
+        percent: String(pct),
+        name: p.currentName,
+      });
+    } else {
+      label = t("files.progress", { percent: String(pct) });
+    }
     transferLabel.textContent = label;
   }
 
@@ -1063,6 +1105,8 @@ function createPane(
               showTransferProgress({
                 percent: payload.percent,
                 currentName: payload.currentName,
+                transferred: payload.transferred,
+                total: payload.total,
               });
             });
             try {
@@ -1227,6 +1271,8 @@ function createPane(
         showTransferProgress({
           percent: payload.percent,
           currentName: payload.currentName,
+          transferred: payload.transferred,
+          total: payload.total,
         });
       });
       void opts

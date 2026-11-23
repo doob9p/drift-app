@@ -4432,7 +4432,7 @@ async function openSsh(sessionId: string): Promise<void> {
 
 /** Escape a path for the active local shell (zsh/bash or PowerShell). */
 function shellQuote(filePath: string): string {
-  const win = /Windows/i.test(navigator.userAgent);
+  const win = api.platform === "win32" || /Windows/i.test(navigator.userAgent);
   if (win) {
     // PowerShell: single-quoted string; double embedded quotes.
     if (/^[A-Za-z0-9_.:\\/@%+=,-]+$/.test(filePath)) return filePath;
@@ -4440,6 +4440,42 @@ function shellQuote(filePath: string): string {
   }
   if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(filePath)) return filePath;
   return `'${filePath.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Files over the editor limit open in a pager (`less`) instead of CodeMirror.
+ * Windows local shells may lack `less` — fall back to inserting the path.
+ */
+async function openLargeFileInPager(
+  scope: "local" | "remote",
+  filePath: string,
+  tabId?: string
+): Promise<void> {
+  const quoted = shellQuote(filePath);
+  if (scope === "remote") {
+    if (!tabId) return;
+    const tab = state.tabs.get(tabId);
+    if (!tab) return;
+    activateTab(tab.id);
+    await api.writeTerminal(tab.id, `less -n -- ${quoted}\n`);
+    tab.term.focus();
+    showToast(t("editor.openedInTerminal"), "info");
+    return;
+  }
+  const tab = await ensureActiveLocalTab();
+  activateTab(tab.id);
+  if (api.platform === "win32") {
+    // Git Bash / some installs have less; otherwise leave the path for the user.
+    await api.writeTerminal(
+      tab.id,
+      `if (Get-Command less -ErrorAction SilentlyContinue) { less -n -- ${quoted} } else { Write-Host ${quoted} }\n`
+    );
+    showToast(t("editor.openInTerminal"), "info");
+  } else {
+    await api.writeTerminal(tab.id, `less -n -- ${quoted}\n`);
+    showToast(t("editor.openedInTerminal"), "info");
+  }
+  tab.term.focus();
 }
 
 async function closeTab(tabId: string): Promise<void> {
@@ -4786,7 +4822,10 @@ const filesBrowser = createFilesBrowser({
     tab.term.focus();
   },
   onLocalOpenFile: async (filePath) => {
-    await editorPane.openLocal(filePath);
+    const result = await editorPane.openLocal(filePath);
+    if (!result.ok && result.error === "too_large") {
+      await openLargeFileInPager("local", filePath);
+    }
   },
   onOpenLocalFolder: async (dirPath) => {
     const res = await api.openPath(dirPath);
@@ -4815,7 +4854,10 @@ const filesBrowser = createFilesBrowser({
   },
   onServerOpenFile: async (filePath) => {
     if (!filesServerTabId) return;
-    await editorPane.openRemote(filesServerTabId, filePath);
+    const result = await editorPane.openRemote(filesServerTabId, filePath);
+    if (!result.ok && result.error === "too_large") {
+      await openLargeFileInPager("remote", filePath, filesServerTabId);
+    }
   },
   resolveDropPaths: (files) => {
     const out: string[] = [];
