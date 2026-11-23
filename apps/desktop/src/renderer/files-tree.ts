@@ -1,6 +1,7 @@
 import { icons } from "./icons.js";
 import { t } from "./i18n.js";
 import { showToast } from "./toast.js";
+import { copyText } from "./clipboard.js";
 
 export type FsEntry = {
   name: string;
@@ -1025,10 +1026,10 @@ function createPane(
           return;
         }
         if (action === "copy") {
-          void navigator.clipboard?.writeText(targetPath).then(
-            () => showToast(t("files.pathCopied"), "ok"),
-            () => showToast(t("files.pathCopyFail"), "error")
-          );
+          void copyText(targetPath).then((ok) => {
+            if (ok) showToast(t("files.pathCopied"), "ok");
+            else showToast(t("files.pathCopyFail"), "error");
+          });
           return;
         }
         if (action === "rename" && opts.onRenamePath) {

@@ -42,6 +42,7 @@ import {
   isMacPlatform,
   type ShortcutCategory,
 } from "./shortcuts.js";
+import { copyText } from "./clipboard.js";
 import {
   createBoardPane,
   MAX_PROMPT_SUBS,
@@ -4197,7 +4198,7 @@ function mountTabView(
       return false;
     }
     if (key === "c" && !ev.shiftKey && term.hasSelection()) {
-      void navigator.clipboard.writeText(term.getSelection());
+      void copyText(term.getSelection());
       return false;
     }
     return true;

@@ -50,6 +50,8 @@ const en: Dict = {
   "chat.ref.remove": "Remove",
   "chat.copy": "Copy reply",
   "chat.copyCode": "Copy block",
+  "chat.jumpBottom": "Jump to latest",
+
   "chat.copied": "Copied",
   "chat.copyFail": "Could not copy",
   "chat.time.justNow": "Just now",
@@ -512,6 +514,7 @@ const ko: Dict = {
   "chat.ref.remove": "제거",
   "chat.copy": "답변 복사",
   "chat.copyCode": "블록 복사",
+  "chat.jumpBottom": "최신으로 이동",
   "chat.copied": "복사됨",
   "chat.copyFail": "복사하지 못했습니다",
   "chat.time.justNow": "방금",

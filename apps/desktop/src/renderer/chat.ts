@@ -3,6 +3,7 @@ import { renderMarkdown } from "./markdown.js";
 import { t } from "./i18n.js";
 import { icons } from "./icons.js";
 import { showToast } from "./toast.js";
+import { copyText } from "./clipboard.js";
 
 export type ChatSuggestion = { label: string; prompt: string };
 
@@ -58,8 +59,11 @@ export type ChatController = {
     onDecision: (d: "allow-once" | "allow-session" | "deny") => void
   ) => void;
   resolveApprovalCard: (decision: "allow-once" | "allow-session" | "deny") => void;
-  scrollToBottom: () => void;
+  /** When force is true, always jump (e.g. user sent a message). */
+  scrollToBottom: (force?: boolean) => void;
 };
+
+const STICK_BOTTOM_PX = 72;
 
 export function createChatController(root: HTMLElement): ChatController {
   let assistantBody: HTMLElement | null = null;
@@ -68,6 +72,9 @@ export function createChatController(root: HTMLElement): ChatController {
   let approvalEl: HTMLElement | null = null;
   let renderTimer: number | null = null;
   let timeTimer: number | null = null;
+  /** Follow new output only while the user is (near) the bottom. */
+  let stickToBottom = true;
+  let jumpBtn: HTMLButtonElement | null = null;
 
   function refreshRelativeTimes(): void {
     root.querySelectorAll<HTMLElement>(".msg-time[data-ts]").forEach((el) => {
@@ -93,19 +100,72 @@ export function createChatController(root: HTMLElement): ChatController {
     const code = pre?.querySelector("code");
     const text = code?.textContent ?? "";
     if (!text) return;
-    void navigator.clipboard.writeText(text).then(
-      () => showToast(t("chat.copied"), "ok"),
-      () => showToast(t("chat.copyFail"), "error")
-    );
+    void copyText(text).then((ok) => {
+      showToast(ok ? t("chat.copied") : t("chat.copyFail"), ok ? "ok" : "error");
+    });
   });
 
   function ensureThread(): void {
     root.querySelector(".chat-empty")?.remove();
   }
 
-  function scrollToBottom(): void {
-    root.scrollTop = root.scrollHeight;
+  function isNearBottom(): boolean {
+    return (
+      root.scrollHeight - root.scrollTop - root.clientHeight <= STICK_BOTTOM_PX
+    );
   }
+
+  function syncJumpButton(): void {
+    ensureJumpButton();
+    if (!jumpBtn) return;
+    const show = !stickToBottom && root.scrollHeight > root.clientHeight + 8;
+    jumpBtn.classList.toggle("hidden", !show);
+    jumpBtn.setAttribute("aria-hidden", show ? "false" : "true");
+  }
+
+  function ensureJumpButton(): void {
+    if (jumpBtn && root.contains(jumpBtn)) return;
+    jumpBtn = document.createElement("button");
+    jumpBtn.type = "button";
+    jumpBtn.className = "chat-jump-bottom hidden";
+    jumpBtn.title = t("chat.jumpBottom");
+    jumpBtn.setAttribute("aria-label", t("chat.jumpBottom"));
+    jumpBtn.innerHTML = icons.chevronDown(16);
+    jumpBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      scrollToBottom(true);
+    });
+    root.append(jumpBtn);
+  }
+
+  function placeJumpLast(): void {
+    ensureJumpButton();
+    if (jumpBtn) root.append(jumpBtn);
+  }
+
+  function scrollToBottom(force = false): void {
+    if (!force && !stickToBottom) {
+      syncJumpButton();
+      return;
+    }
+    stickToBottom = true;
+    root.scrollTop = root.scrollHeight;
+    syncJumpButton();
+  }
+
+  root.addEventListener(
+    "scroll",
+    () => {
+      const near = isNearBottom();
+      if (near !== stickToBottom) {
+        stickToBottom = near;
+        syncJumpButton();
+      } else if (!stickToBottom) {
+        syncJumpButton();
+      }
+    },
+    { passive: true }
+  );
 
   let lastSuggestions: ChatSuggestion[] | undefined;
 
@@ -134,6 +194,7 @@ export function createChatController(root: HTMLElement): ChatController {
           ? lastSuggestions
           : defaultSuggestions();
     lastSuggestions = items;
+    jumpBtn = null;
     root.innerHTML = `
       <div class="chat-empty">
         <div class="chat-empty-title">${escapeHtml(t("chat.empty.title"))}</div>
@@ -148,6 +209,7 @@ export function createChatController(root: HTMLElement): ChatController {
         </div>
       </div>
     `;
+    stickToBottom = true;
   }
 
   function clear(): void {
@@ -156,6 +218,8 @@ export function createChatController(root: HTMLElement): ChatController {
     assistantRaw = "";
     thinkingEl = null;
     approvalEl = null;
+    jumpBtn = null;
+    stickToBottom = true;
     showEmpty(lastSuggestions);
   }
 
@@ -273,7 +337,8 @@ export function createChatController(root: HTMLElement): ChatController {
       wireStopButton(el, opts.onStop);
     }
     root.append(el);
-    scrollToBottom();
+    placeJumpLast();
+    scrollToBottom(true);
     return el;
   }
 
@@ -300,6 +365,7 @@ export function createChatController(root: HTMLElement): ChatController {
     if (thinkingEl) thinkingEl.after(el);
     else root.append(el);
     assistantBody = el.querySelector(".msg-body");
+    placeJumpLast();
     scrollToBottom();
   }
 
@@ -347,12 +413,8 @@ export function createChatController(root: HTMLElement): ChatController {
         copyBtn.title = t("chat.copy");
         copyBtn.setAttribute("aria-label", t("chat.copy"));
         copyBtn.onclick = async () => {
-          try {
-            await navigator.clipboard.writeText(raw);
-            showToast(t("chat.copied"), "ok");
-          } catch {
-            showToast(t("chat.copyFail"), "error");
-          }
+          const ok = await copyText(raw);
+          showToast(ok ? t("chat.copied") : t("chat.copyFail"), ok ? "ok" : "error");
         };
         if (usageEl) {
           const bits: string[] = [];
@@ -393,6 +455,7 @@ export function createChatController(root: HTMLElement): ChatController {
       </div>
     `;
     root.append(thinkingEl);
+    placeJumpLast();
     scrollToBottom();
     return thinkingEl;
   }
@@ -445,6 +508,7 @@ export function createChatController(root: HTMLElement): ChatController {
     el.className = "msg msg-system";
     el.innerHTML = `<div class="system-chip">${escapeHtml(text)}</div>`;
     root.append(el);
+    placeJumpLast();
     scrollToBottom();
   }
 
@@ -467,7 +531,8 @@ export function createChatController(root: HTMLElement): ChatController {
       actionBtn.onclick = () => opts.action?.onClick();
     }
     root.append(el);
-    scrollToBottom();
+    placeJumpLast();
+    scrollToBottom(true);
   }
 
   function addPlan(steps: string[]): void {
@@ -481,6 +546,7 @@ export function createChatController(root: HTMLElement): ChatController {
       </div>
     `;
     root.append(el);
+    placeJumpLast();
     scrollToBottom();
   }
 
@@ -525,7 +591,8 @@ export function createChatController(root: HTMLElement): ChatController {
     });
     root.append(el);
     approvalEl = el;
-    scrollToBottom();
+    placeJumpLast();
+    scrollToBottom(true);
   }
 
   function resolveApprovalCard(

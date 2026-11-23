@@ -3915,6 +3915,37 @@ body.is-resizing-editor {
   background: var(--panel);
 }
 
+.chat-jump-bottom {
+  position: sticky;
+  bottom: 0.65rem;
+  z-index: 4;
+  align-self: flex-end;
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2rem;
+  margin-top: -0.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 80%, transparent);
+  background: color-mix(in srgb, var(--elevated) 92%, transparent);
+  color: var(--text-2);
+  box-shadow: 0 4px 14px color-mix(in srgb, #000 22%, transparent);
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.chat-jump-bottom:hover {
+  color: var(--text);
+  background: var(--elevated);
+  border-color: var(--line-strong);
+}
+
+.chat-jump-bottom.hidden {
+  display: none;
+}
+
 .chat-empty {
   margin: auto 0;
   padding: 0.9rem 0.4rem 1.2rem;
