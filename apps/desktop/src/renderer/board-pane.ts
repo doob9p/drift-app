@@ -1,5 +1,6 @@
 import { icons } from "./icons.js";
 import { t } from "./i18n.js";
+import { isBoardChordEvent, labelWithChord } from "./shortcuts.js";
 import {
   createBoardSnow,
   type BoardSnow,
@@ -230,11 +231,11 @@ export function createBoardPane(
       </div>
       <div class="board-chrome" id="board-chrome">
         <div class="board-tools-hud" id="board-tools-hud" role="group" aria-label="Board tools">
-          <button type="button" class="icon ghost" id="btn-board-arrange" data-i18n-title="board.arrange" title="${t("board.arrange")}" aria-label="${t("board.arrange")}">${icons.arrange(14)}</button>
-          <button type="button" class="icon ghost" id="btn-board-tile-fill" data-i18n-title="board.tileFill" title="${t("board.tileFill")}" aria-label="${t("board.tileFill")}">${icons.tileFill(14)}</button>
-          <button type="button" class="icon ghost" id="btn-board-tile-fit" data-i18n-title="board.tileFit" title="${t("board.tileFit")}" aria-label="${t("board.tileFit")}">${icons.tileFit(14)}</button>
+          <button type="button" class="icon ghost" id="btn-board-arrange" data-i18n-title="board.arrange" data-shortcut="arrange-cards" title="${labelWithChord(t("board.arrange"), "arrange-cards")}" aria-label="${labelWithChord(t("board.arrange"), "arrange-cards")}">${icons.arrange(14)}</button>
+          <button type="button" class="icon ghost" id="btn-board-tile-fill" data-i18n-title="board.tileFill" data-shortcut="tile-fill" title="${labelWithChord(t("board.tileFill"), "tile-fill")}" aria-label="${labelWithChord(t("board.tileFill"), "tile-fill")}">${icons.tileFill(14)}</button>
+          <button type="button" class="icon ghost" id="btn-board-tile-fit" data-i18n-title="board.tileFit" data-shortcut="tile-fit" title="${labelWithChord(t("board.tileFit"), "tile-fit")}" aria-label="${labelWithChord(t("board.tileFit"), "tile-fit")}">${icons.tileFit(14)}</button>
           <button type="button" class="icon ghost" id="btn-board-lock" data-i18n-title="board.lockView" title="${t("board.lockView")}" aria-label="${t("board.lockView")}" aria-pressed="false">${icons.lockView(14)}</button>
-          <button type="button" class="icon ghost" id="btn-board-broadcast" data-i18n-title="board.broadcast" title="${t("board.broadcast")}" aria-label="${t("board.broadcast")}" aria-pressed="false">${icons.broadcast(14)}</button>
+          <button type="button" class="icon ghost" id="btn-board-broadcast" data-i18n-title="board.broadcast" data-shortcut="broadcast" title="${labelWithChord(t("board.broadcast"), "broadcast")}" aria-label="${labelWithChord(t("board.broadcast"), "broadcast")}" aria-pressed="false">${icons.broadcast(14)}</button>
         </div>
         <aside class="board-minimap" id="board-minimap" aria-label="${t("board.minimap")}">
           <header class="board-minimap-head">
@@ -1378,13 +1379,17 @@ export function createBoardPane(
     viewport.classList.toggle("is-broadcast", active);
     broadcastBtn.classList.toggle("is-active", active);
     broadcastBtn.setAttribute("aria-pressed", active ? "true" : "false");
-    const label = active ? t("board.broadcastOff") : t("board.broadcast");
+    const label = labelWithChord(
+      active ? t("board.broadcastOff") : t("board.broadcast"),
+      "broadcast"
+    );
     broadcastBtn.title = label;
     broadcastBtn.setAttribute("aria-label", label);
     broadcastBtn.setAttribute(
       "data-i18n-title",
       active ? "board.broadcastOff" : "board.broadcast"
     );
+    broadcastBtn.setAttribute("data-shortcut", "broadcast");
     const sourceTabId =
       focus?.kind === "terminal" ? focus.tabId : null;
     for (const card of cards) {
@@ -1686,10 +1691,10 @@ export function createBoardPane(
   window.addEventListener("keydown", (e) => {
     if (!root.isConnected || root.closest(".hidden")) return;
 
-    // ⌥⌘←↑→↓ (Ctrl+Alt on Windows): focus nearest card in that direction
-    // Layout shortcuts ⌥⌘A / ⌥⌘S are registered on the app View menu so they
-    // still work while a terminal has focus.
-    if (e.altKey && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+    // ⌥⌘←↑→↓ on mac / Ctrl+Shift+←↑→↓ on Windows: focus nearest card.
+    // Layout shortcuts are registered on the app View menu so they still
+    // work while a terminal has focus.
+    if (isBoardChordEvent(e)) {
       const dirs = {
         ArrowLeft: "left",
         ArrowRight: "right",
@@ -1704,8 +1709,8 @@ export function createBoardPane(
         }
         return;
       }
-      // ⌥⌘B broadcast is owned by the View menu (same as arrange/tile), so
-      // do not toggle here — that double-fires with the accelerator.
+      // Broadcast / arrange / tile are owned by the View menu — do not
+      // handle letters here (that would double-fire with the accelerator).
     }
 
     if (

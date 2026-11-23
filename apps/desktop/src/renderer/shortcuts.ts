@@ -117,35 +117,35 @@ export const SHORTCUTS: ShortcutDef[] = [
     category: "board",
     labelKey: "shortcuts.arrange",
     mac: "⌥⌘A",
-    win: "Ctrl+Alt+A",
+    win: "Ctrl+Shift+A",
   },
   {
     id: "tile-fill",
     category: "board",
     labelKey: "shortcuts.tileFill",
     mac: "⌥⌘S",
-    win: "Ctrl+Alt+S",
+    win: "Ctrl+Shift+E",
   },
   {
     id: "tile-fit",
     category: "board",
     labelKey: "shortcuts.tileFit",
     mac: "⌥⌘F",
-    win: "Ctrl+Alt+F",
+    win: "Ctrl+Shift+G",
   },
   {
     id: "broadcast",
     category: "board",
     labelKey: "shortcuts.broadcast",
     mac: "⌥⌘B",
-    win: "Ctrl+Alt+B",
+    win: "Ctrl+Shift+B",
   },
   {
     id: "focus-neighbor",
     category: "board",
     labelKey: "shortcuts.focusNeighbor",
     mac: "⌥⌘←↑→↓",
-    win: "Ctrl+Alt+←↑→↓",
+    win: "Ctrl+Shift+←↑→↓",
   },
 
   // View
@@ -202,11 +202,47 @@ export const SHORTCUTS: ShortcutDef[] = [
   },
 ];
 
+type PlatformSource = { platform?: string };
+
+function readAppPlatform(): string | null {
+  if (typeof window === "undefined") return null;
+  const api = (window as unknown as { cursorTerm?: PlatformSource }).cursorTerm;
+  return api?.platform ?? null;
+}
+
 export function isMacPlatform(): boolean {
+  const platform = readAppPlatform();
+  if (platform) return platform === "darwin";
   if (typeof navigator === "undefined") return false;
-  return /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
+  return /Mac|iPhone|iPad|iPod/i.test(
+    navigator.platform || navigator.userAgent
+  );
 }
 
 export function chordFor(def: ShortcutDef, mac = isMacPlatform()): string {
   return mac ? def.mac : def.win;
+}
+
+export function shortcutById(id: string): ShortcutDef | undefined {
+  return SHORTCUTS.find((s) => s.id === id);
+}
+
+/** Append the platform chord, e.g. "Arrange (⌘⌥A)" / "Arrange (Ctrl+Shift+A)". */
+export function labelWithChord(label: string, shortcutId: string): string {
+  const def = shortcutById(shortcutId);
+  if (!def) return label;
+  return `${label} (${chordFor(def)})`;
+}
+
+/** Board layout / neighbor modifier: ⌥⌘ on mac, Ctrl+Shift on Windows/Linux. */
+export function isBoardChordEvent(e: {
+  altKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+}): boolean {
+  if (isMacPlatform()) {
+    return e.altKey && (e.metaKey || e.ctrlKey) && !e.shiftKey;
+  }
+  return e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey;
 }

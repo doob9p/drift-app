@@ -1,3 +1,5 @@
+import { labelWithChord } from "./shortcuts.js";
+
 export type AppLocale = "ko" | "en";
 
 type Dict = Record<string, string>;
@@ -10,7 +12,7 @@ const en: Dict = {
   "chat.new": "Reset chat",
   "chat.hide": "Hide chat",
   "chat.show": "Show chat",
-  "chrome.toggleNav": "Toggle sidebar (⌘B)",
+  "chrome.toggleNav": "Toggle sidebar",
   "chrome.toggleAgent": "Toggle chat panel",
   "strip.cpu": "CPU",
   "strip.load": "Load",
@@ -153,14 +155,14 @@ const en: Dict = {
   "board.zoomOut": "Zoom out",
   "board.zoomFit": "Fit all",
   "board.zoomReset": "Reset zoom",
-  "board.arrange": "Arrange cards by session (⌥⌘A)",
-  "board.tileFill": "Fill terminals edge to edge (⌥⌘S)",
-  "board.tileFit": "Fit all terminals with gaps (⌥⌘F)",
+  "board.arrange": "Arrange cards by session",
+  "board.tileFill": "Fill terminals edge to edge",
+  "board.tileFit": "Fit all terminals with gaps",
 
   "board.lockView": "Lock pan & zoom",
   "board.unlockView": "Unlock pan & zoom",
-  "board.broadcast": "Broadcast input (⌥⌘B)",
-  "board.broadcastOff": "Stop broadcast (⌥⌘B)",
+  "board.broadcast": "Broadcast input",
+  "board.broadcastOff": "Stop broadcast",
   "board.broadcastMember": "Include in broadcast",
   "board.broadcastMemberOff": "Exclude from broadcast",
   "board.broadcastOnToast": "Broadcast on — typing goes to linked terminals. Esc to stop.",
@@ -468,7 +470,7 @@ const ko: Dict = {
   "chat.new": "대화 초기화",
   "chat.hide": "채팅 숨기기",
   "chat.show": "채팅 보이기",
-  "chrome.toggleNav": "사이드바 토글 (⌘B)",
+  "chrome.toggleNav": "사이드바 토글",
   "chrome.toggleAgent": "채팅 패널 토글",
   "strip.cpu": "CPU",
   "strip.load": "Load",
@@ -611,14 +613,14 @@ const ko: Dict = {
   "board.zoomOut": "축소",
   "board.zoomFit": "전체 맞춤",
   "board.zoomReset": "줌 초기화",
-  "board.arrange": "세션별 카드 정리 (⌥⌘A)",
-  "board.tileFill": "터미널 꽉 채우기 (⌥⌘S)",
-  "board.tileFit": "터미널 여백 맞춰 보기 (⌥⌘F)",
+  "board.arrange": "세션별 카드 정리",
+  "board.tileFill": "터미널 꽉 채우기",
+  "board.tileFit": "터미널 여백 맞춰 보기",
 
   "board.lockView": "화면 잠금 (팬·줌)",
   "board.unlockView": "화면 잠금 해제",
-  "board.broadcast": "동시 입력 (⌥⌘B)",
-  "board.broadcastOff": "동시 입력 끄기 (⌥⌘B)",
+  "board.broadcast": "동시 입력",
+  "board.broadcastOff": "동시 입력 끄기",
   "board.broadcastMember": "동시 입력에 포함",
   "board.broadcastMemberOff": "동시 입력에서 제외",
   "board.broadcastOnToast": "동시 입력 켜짐 — 연결된 터미널에 입력이 복제됩니다. Esc로 끄기",
@@ -972,7 +974,10 @@ export function applyDomI18n(root: ParentNode = document): void {
   root.querySelectorAll<HTMLElement>("[data-i18n-title]").forEach((el) => {
     const key = el.dataset.i18nTitle;
     if (!key) return;
-    const label = t(key);
+    const shortcutId = el.dataset.shortcut;
+    const label = shortcutId
+      ? labelWithChord(t(key), shortcutId)
+      : t(key);
     el.title = label;
     if (el.hasAttribute("aria-label")) el.setAttribute("aria-label", label);
   });

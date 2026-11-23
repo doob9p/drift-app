@@ -38,6 +38,8 @@ import {
   SHORTCUT_CATEGORIES,
   SHORTCUTS,
   chordFor,
+  isBoardChordEvent,
+  isMacPlatform,
   type ShortcutCategory,
 } from "./shortcuts.js";
 import {
@@ -232,7 +234,7 @@ app.innerHTML = `
   <div class="shell">
     <header class="titlebar" id="status-strip">
       <div class="strip-left">
-        <button type="button" class="chrome-btn" id="btn-toggle-nav" data-i18n-title="chrome.toggleNav" title="Toggle sidebar" aria-label="Toggle sidebar" aria-pressed="true">
+        <button type="button" class="chrome-btn" id="btn-toggle-nav" data-i18n-title="chrome.toggleNav" data-shortcut="toggle-nav" title="Toggle sidebar" aria-label="Toggle sidebar" aria-pressed="true">
           ${icons.panelLeft(16)}
         </button>
         <button type="button" class="strip-path" id="strip-path" title="">
@@ -4150,15 +4152,22 @@ function mountTabView(
         return false;
       }
     }
-    if (
-      ev.altKey &&
-      (ev.metaKey || ev.ctrlKey) &&
-      !ev.shiftKey &&
-      ev.key.toLowerCase() === "b"
-    ) {
-      // View menu accelerator toggles broadcast; swallow so the PTY
-      // never sees the chord (and so we don't double-toggle).
-      return false;
+    if (isBoardChordEvent(ev)) {
+      // View menu / board chords — swallow so the PTY never sees them
+      // (and so we don't double-toggle with the accelerator).
+      const k = ev.key.toLowerCase();
+      const boardKeys = isMacPlatform()
+        ? new Set(["a", "s", "f", "b"])
+        : new Set(["a", "e", "g", "b"]);
+      if (
+        boardKeys.has(k) ||
+        ev.key === "ArrowLeft" ||
+        ev.key === "ArrowRight" ||
+        ev.key === "ArrowUp" ||
+        ev.key === "ArrowDown"
+      ) {
+        return false;
+      }
     }
     const mod = ev.metaKey || ev.ctrlKey;
     if (!mod || ev.altKey) return true;

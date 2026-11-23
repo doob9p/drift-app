@@ -521,22 +521,25 @@ function buildApplicationMenu(): void {
       { type: "separator" },
       {
         label: "Arrange Cards by Session",
-        accelerator: "Alt+CmdOrCtrl+A",
+        // mac ⌥⌘A; Windows avoids Ctrl+Alt (AltGr) → Ctrl+Shift+A
+        accelerator: isMac ? "Alt+CmdOrCtrl+A" : "Ctrl+Shift+A",
         click: () => sendShortcut("arrange-cards"),
       },
       {
         label: "Fill Terminals Edge to Edge",
-        accelerator: "Alt+CmdOrCtrl+S",
+        // mac ⌥⌘S; Win Ctrl+Shift+E (avoid Save As on Ctrl+Shift+S)
+        accelerator: isMac ? "Alt+CmdOrCtrl+S" : "Ctrl+Shift+E",
         click: () => sendShortcut("tile-terminals"),
       },
       {
         label: "Fit Terminals with Gaps",
-        accelerator: "Alt+CmdOrCtrl+F",
+        // mac ⌥⌘F; Win Ctrl+Shift+G (avoid Find-in-files on Ctrl+Shift+F)
+        accelerator: isMac ? "Alt+CmdOrCtrl+F" : "Ctrl+Shift+G",
         click: () => sendShortcut("fit-terminals"),
       },
       {
         label: "Broadcast Input",
-        accelerator: "Alt+CmdOrCtrl+B",
+        accelerator: isMac ? "Alt+CmdOrCtrl+B" : "Ctrl+Shift+B",
         click: () => sendShortcut("broadcast-input"),
       },
       { type: "separator" },

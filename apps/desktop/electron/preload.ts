@@ -20,6 +20,8 @@ export type SessionUsageView = {
 };
 
 export type DesktopApi = {
+  /** Node process.platform from the preload (darwin | win32 | linux | …). */
+  platform: NodeJS.Platform;
   getSessions: () => Promise<SavedSession[]>;
   saveSession: (
     input: Omit<SavedSession, "id" | "createdAt" | "updatedAt"> & {
@@ -527,6 +529,7 @@ export type DesktopApi = {
 };
 
 const api: DesktopApi = {
+  platform: process.platform,
   getSessions: () => ipcRenderer.invoke("sessions:list"),
   saveSession: (input) => ipcRenderer.invoke("sessions:save", input),
   deleteSession: (id) => ipcRenderer.invoke("sessions:delete", id),
