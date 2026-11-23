@@ -111,10 +111,6 @@ function createAskpassHandle(password: string): AskpassHandle {
   };
 }
 
-function stripAnsi(s: string): string {
-  return s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
-}
-
 function systemOpenSshDir(): string | null {
   if (process.platform !== "win32") return null;
   const sysRoot = process.env.SystemRoot || "C:\\Windows";
@@ -356,22 +352,13 @@ export function createSshPty(
 
   let disposed = false;
   let cwdGuess = session.startDir || "~";
-  let passwordInjected = false;
   const listeners = new Set<(chunk: string) => void>();
   const exitListeners = new Set<(info: { exitCode: number; signal?: number }) => void>();
 
+  // SSH login password is supplied only via SSH_ASKPASS (REQUIRE=force).
+  // Do not mirror it into the PTY on any "password:" prompt — that also
+  // matches sudo/script prompts and injects a stray CR into the session.
   pty.onData((data) => {
-    if (ptyPassword && !passwordInjected) {
-      const plain = stripAnsi(data);
-      if (/password:\s*$/im.test(plain)) {
-        passwordInjected = true;
-        try {
-          pty.write(`${ptyPassword}\r`);
-        } catch {
-          /* ignore */
-        }
-      }
-    }
     for (const cb of listeners) cb(data);
   });
   pty.onExit(({ exitCode, signal }) => {
