@@ -599,6 +599,16 @@ function buildApplicationMenu(): void {
           : [{ role: "close" as const }]),
       ],
     },
+    {
+      label: "Help",
+      submenu: [
+        {
+          label: "Keyboard Shortcuts",
+          accelerator: "CmdOrCtrl+Shift+/",
+          click: () => sendShortcut("keyboard-shortcuts"),
+        },
+      ],
+    },
   ];
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));

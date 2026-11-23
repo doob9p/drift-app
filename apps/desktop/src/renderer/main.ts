@@ -35,6 +35,12 @@ import {
 } from "./cursor-api-key.js";
 import { showToast } from "./toast.js";
 import {
+  SHORTCUT_CATEGORIES,
+  SHORTCUTS,
+  chordFor,
+  type ShortcutCategory,
+} from "./shortcuts.js";
+import {
   createBoardPane,
   MAX_PROMPT_SUBS,
   type BoardPane,
@@ -581,6 +587,43 @@ app.innerHTML = `
 
   <div class="toast-host" id="toast-host" aria-live="polite"></div>
 
+  <div
+    class="modal-backdrop hidden"
+    id="modal-shortcuts"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="shortcuts-title"
+  >
+    <div class="modal modal-shortcuts">
+      <header class="shortcuts-head">
+        <div class="shortcuts-head-copy">
+          <h2 id="shortcuts-title" data-i18n="shortcuts.title">Keyboard shortcuts</h2>
+          <p class="lead" data-i18n="shortcuts.lead">
+            Shortcuts for Drift. Menu items stay in sync with this list.
+          </p>
+        </div>
+        <button
+          type="button"
+          class="ghost shortcuts-close"
+          id="btn-shortcuts-close"
+          data-i18n-title="shortcuts.close"
+          title="Close"
+          aria-label="Close"
+        >${icons.close(14)}</button>
+      </header>
+      <input
+        type="search"
+        id="shortcuts-filter"
+        class="shortcuts-filter"
+        data-i18n-placeholder="shortcuts.filter"
+        placeholder="Filter shortcuts"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <div class="shortcuts-list" id="shortcuts-list"></div>
+    </div>
+  </div>
+
   <div class="modal-backdrop hidden" id="modal-ssh">
     <div class="modal modal-ssh">
       <header class="ssh-modal-head">
@@ -723,6 +766,14 @@ const els = {
   stripApiBar: document.getElementById("strip-api-bar")!,
   stripApiVal: document.getElementById("strip-api-val")!,
   modalSsh: document.getElementById("modal-ssh")!,
+  modalShortcuts: document.getElementById("modal-shortcuts")!,
+  shortcutsList: document.getElementById("shortcuts-list")!,
+  shortcutsFilter: document.getElementById(
+    "shortcuts-filter"
+  ) as HTMLInputElement,
+  btnShortcutsClose: document.getElementById(
+    "btn-shortcuts-close"
+  ) as HTMLButtonElement,
   splashUpdate: document.getElementById("app-splash-update")!,
   splashUpdateTitle: document.getElementById("app-splash-update-title")!,
   splashUpdateLead: document.getElementById("app-splash-update-lead")!,
@@ -1176,6 +1227,9 @@ function applyUiLocale(): void {
   }
   syncBoardThemeUi();
   renderSettingsVersion();
+  if (!els.modalShortcuts.classList.contains("hidden")) {
+    renderShortcutsPanel(els.shortcutsFilter.value);
+  }
   if (board) {
     applyDomI18n(board.root);
     for (const card of board.getCards()) {
@@ -3312,11 +3366,104 @@ function openSettings(): void {
   setNav("settings");
 }
 
+function splitChordTokens(chord: string): string[] {
+  // Keep compound / gesture chords as a single chip.
+  if (
+    chord.includes(" + ") ||
+    chord.includes("…") ||
+    /[←↑→↓]{2,}/.test(chord)
+  ) {
+    return [chord];
+  }
+  if (/[⌘⌥⇧]/.test(chord)) {
+    const tokens: string[] = [];
+    for (const ch of chord) {
+      if ("⌘⌥⇧".includes(ch)) tokens.push(ch);
+      else break;
+    }
+    const rest = chord.slice(tokens.length);
+    if (rest) tokens.push(rest);
+    return tokens.length ? tokens : [chord];
+  }
+  return chord
+    .split("+")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function renderShortcutsPanel(filterRaw = ""): void {
+  const q = filterRaw.trim().toLowerCase();
+  const list = els.shortcutsList;
+  list.innerHTML = "";
+  let shown = 0;
+  for (const category of SHORTCUT_CATEGORIES) {
+    const items = SHORTCUTS.filter((s) => s.category === category).filter(
+      (s) => {
+        if (!q) return true;
+        const label = t(s.labelKey).toLowerCase();
+        const chord = chordFor(s).toLowerCase();
+        const cat = t(`shortcuts.cat.${category}`).toLowerCase();
+        return label.includes(q) || chord.includes(q) || cat.includes(q);
+      }
+    );
+    if (items.length === 0) continue;
+    const group = document.createElement("section");
+    group.className = "shortcuts-group";
+    const title = document.createElement("h3");
+    title.className = "shortcuts-group-title";
+    title.textContent = t(`shortcuts.cat.${category as ShortcutCategory}`);
+    group.append(title);
+    for (const item of items) {
+      const row = document.createElement("div");
+      row.className = "shortcuts-row";
+      const label = document.createElement("span");
+      label.className = "shortcuts-label";
+      label.textContent = t(item.labelKey);
+      const keys = document.createElement("span");
+      keys.className = "shortcuts-keys";
+      for (const token of splitChordTokens(chordFor(item))) {
+        const kbd = document.createElement("kbd");
+        kbd.className = "shortcuts-key";
+        kbd.textContent = token;
+        keys.append(kbd);
+      }
+      row.append(label, keys);
+      group.append(row);
+      shown += 1;
+    }
+    list.append(group);
+  }
+  if (shown === 0) {
+    const empty = document.createElement("p");
+    empty.className = "shortcuts-empty";
+    empty.textContent = t("shortcuts.empty");
+    list.append(empty);
+  }
+}
+
+function openShortcutsPanel(): void {
+  els.modalShortcuts.classList.remove("hidden");
+  renderShortcutsPanel(els.shortcutsFilter.value);
+  applyDomI18n(els.modalShortcuts);
+  requestAnimationFrame(() => {
+    els.shortcutsFilter.focus();
+    els.shortcutsFilter.select();
+  });
+}
+
+function closeShortcutsPanel(): void {
+  els.modalShortcuts.classList.add("hidden");
+}
+
 function closeTopModal(): boolean {
   const splash = document.getElementById("app-splash");
   if (splash && !splash.classList.contains("is-done") && splash.classList.contains("is-updating")) {
     if (updateSplash.phase === "downloading") return true;
     void dismissUpdateSplash();
+    return true;
+  }
+  if (!els.modalShortcuts.classList.contains("hidden")) {
+    closeShortcutsPanel();
     return true;
   }
   if (!els.modalSsh.classList.contains("hidden")) {
@@ -3567,6 +3714,9 @@ function handleShortcut(payload: {
       break;
     case "settings":
       openSettings();
+      break;
+    case "keyboard-shortcuts":
+      openShortcutsPanel();
       break;
     case "refit-terminals":
       requestAnimationFrame(() => refitTerminals());
@@ -4824,6 +4974,19 @@ document.getElementById("btn-add-ssh")!.onclick = () => {
   void openSshModal();
 };
 document.getElementById("btn-cancel-ssh")!.onclick = () => closeSshModal();
+els.btnShortcutsClose.onclick = () => closeShortcutsPanel();
+els.modalShortcuts.addEventListener("click", (e) => {
+  if (e.target === els.modalShortcuts) closeShortcutsPanel();
+});
+els.shortcutsFilter.addEventListener("input", () => {
+  renderShortcutsPanel(els.shortcutsFilter.value);
+});
+els.shortcutsFilter.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeShortcutsPanel();
+  }
+});
 document.getElementById("btn-ssh-password-save")!.onclick = () => {
   void (async () => {
     const form = sshFormEls();
