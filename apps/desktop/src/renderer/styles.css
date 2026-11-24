@@ -433,6 +433,16 @@ html.is-mac .titlebar {
   padding-left: 78px;
 }
 
+/* Windows titleBarOverlay: keep strip content out from under caption buttons. */
+html.is-win .titlebar {
+  padding-right: max(
+    0.65rem,
+    calc(
+      100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)
+    )
+  );
+}
+
 .titlebar button,
 .titlebar a,
 .titlebar input,
@@ -1206,33 +1216,118 @@ body.is-resizing-col {
   transform: rotate(-90deg);
 }
 
-.settings-panel {
-  padding: 1rem 1rem 1.35rem;
-  overflow: auto;
-  flex: 1;
-  display: grid;
+.modal.modal-settings {
+  width: min(720px, calc(100vw - 2rem));
+  max-height: min(640px, calc(100vh - 2.5rem));
+  padding: 0;
   gap: 0;
-  align-content: start;
-}
-
-.settings-section {
   display: grid;
-  gap: 0.95rem;
-  padding: 1.05rem 0 1.15rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  grid-template-columns: 168px minmax(0, 1fr);
+  overflow: hidden;
 }
 
-.settings-section:first-child {
-  padding-top: 0.15rem;
+.settings-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 1.05rem 0.7rem 0.85rem;
+  background: color-mix(in srgb, var(--panel-2) 88%, transparent);
+  border-right: 1px solid var(--line);
+  min-height: 0;
 }
 
-.settings-section:last-child {
-  border-bottom: 0;
-  padding-bottom: 0.2rem;
+.settings-side h2 {
+  margin: 0 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
 }
 
-.settings-api-key .settings-hint {
-  margin-top: 0.2rem;
+.settings-side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.settings-side-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.48rem 0.55rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 520;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-side-item:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+}
+
+.settings-side-item.is-active {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--text);
+}
+
+.settings-side-ico {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  flex: 0 0 auto;
+}
+
+.settings-side-item.is-active .settings-side-ico {
+  color: var(--text-2);
+}
+
+.settings-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 1.2rem 1.35rem 1.35rem;
+  overflow: auto;
+}
+
+.settings-close {
+  position: absolute;
+  top: 0.85rem;
+  right: 0.85rem;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  z-index: 1;
+}
+
+.settings-pane {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+  /* Keep fields clear of the floating close control. */
+  padding-right: 2.1rem;
+  max-width: 440px;
+}
+
+.settings-pane.hidden {
+  display: none;
+}
+
+.settings-api-key .settings-hint,
+.settings-update-lead {
+  margin: 0;
   color: var(--text-3);
   font-size: 0.72rem;
   line-height: 1.5;
@@ -1241,32 +1336,42 @@ body.is-resizing-col {
 }
 
 .settings-about {
-  gap: 0.45rem;
+  display: grid;
+  gap: 0.85rem;
+  max-width: 440px;
 }
 
-.settings-about[hidden] {
-  display: none;
+.settings-update-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem 1rem;
+  flex-wrap: wrap;
+  min-height: 36px;
 }
 
 .settings-about-head {
   display: grid;
   gap: 0.2rem;
+  min-width: 0;
+  flex: 1;
 }
 
 .settings-about-label {
-  color: var(--text-2);
-  font-size: 0.78rem;
-  font-weight: 560;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 
 .settings-version {
   margin: 0;
-  color: var(--text-3);
-  font-size: 0.74rem;
-  font-weight: 500;
+  color: var(--text-2);
+  font-size: 0.78rem;
+  font-weight: 520;
   letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
+  line-height: 1.35;
 }
 
 .settings-update-status {
@@ -1285,28 +1390,31 @@ body.is-resizing-col {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.45rem;
-  margin-top: 0.15rem;
+  gap: 0.4rem;
+  flex: 0 0 auto;
 }
 
 .settings-update-check,
 .settings-update-go {
   justify-self: start;
-  padding: 0.4rem 0.75rem;
+  height: 32px;
+  padding: 0 0.75rem;
   border-radius: 8px;
   font-size: 0.74rem;
   font-weight: 560;
   cursor: pointer;
+  display: inline-grid;
+  place-items: center;
 }
 
 .settings-update-check {
-  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
-  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border: 1px solid var(--line-strong);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
   color: var(--text-2);
 }
 
 .settings-update-check:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--text) 9%, transparent);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
   color: var(--text);
 }
 
@@ -1319,13 +1427,37 @@ body.is-resizing-col {
   display: none;
 }
 
+@media (max-width: 640px) {
+  .modal.modal-settings {
+    width: min(100vw - 1rem, 520px);
+    grid-template-columns: 1fr;
+    max-height: min(90vh, 720px);
+  }
+
+  .settings-side {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 0.65rem;
+  }
+
+  .settings-side-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .settings-side-item {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
+
 .settings-form {
   gap: 1.15rem;
 }
 
 .settings-form label,
 .settings-form .settings-api-key {
-  gap: 0.42rem;
+  gap: 0.4rem;
 }
 
 .settings-form .settings-api-key {
@@ -1334,24 +1466,59 @@ body.is-resizing-col {
   color: var(--text-2);
 }
 
-.settings-form label > span,
+.settings-form label > span:first-child,
 .settings-form .settings-api-key > span:first-child {
+  display: block;
   color: var(--text-2);
   font-size: 0.78rem;
   font-weight: 560;
   letter-spacing: -0.01em;
+  line-height: 1.3;
 }
 
 .settings-form input,
 .settings-form select {
-  padding: 0.52rem 0.7rem;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 36px;
+  height: 36px;
+  padding: 0 0.75rem;
   font-size: 0.82rem;
+  line-height: 1.25;
   border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background-color: var(--elevated);
+  color: var(--text);
+}
+
+.settings-form select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 2.1rem;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2.5 4.5L6 8l3.5-3.5' stroke='%238b95a1' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  background-size: 12px;
+}
+
+.settings-form input:focus,
+.settings-form select:focus {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+  background-color: var(--panel-2);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2.5 4.5L6 8l3.5-3.5' stroke='%238b95a1' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  background-size: 12px;
+}
+
+.settings-form input:focus {
+  background-image: none;
 }
 
 .settings-theme-block {
   display: grid;
-  gap: 0.7rem;
+  gap: 0.75rem;
 }
 
 .settings-shell .settings-hint,
@@ -1362,25 +1529,26 @@ body.is-resizing-col {
 
 .settings-shell .settings-hint,
 .settings-board-theme .settings-hint {
-  margin-top: 0.15rem;
+  margin: 0;
   font-size: 0.7rem;
-  line-height: 1.5;
+  line-height: 1.45;
   color: var(--text-3);
   font-weight: 400;
 }
 
 .settings-toggle-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.55rem 0.15rem 0.15rem;
+  padding: 0.15rem 0;
+  min-height: 28px;
   cursor: pointer;
 }
 
 .settings-toggle-copy {
   display: grid;
-  gap: 0.28rem;
+  gap: 0.2rem;
   min-width: 0;
 }
 
@@ -1389,6 +1557,7 @@ body.is-resizing-col {
   font-size: 0.78rem;
   font-weight: 560;
   letter-spacing: -0.01em;
+  line-height: 1.3;
 }
 
 .settings-toggle-row .settings-hint {
@@ -1405,7 +1574,7 @@ body.is-resizing-col {
   position: relative;
   width: 40px;
   height: 22px;
-  margin: 0.1rem 0 0;
+  margin: 0;
   flex: 0 0 auto;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
@@ -1443,12 +1612,12 @@ body.is-resizing-col {
 
 .settings-snow-controls {
   display: grid;
-  gap: 0.75rem;
+  gap: 0.85rem;
   margin: 0;
-  padding: 0.65rem 0.7rem 0.75rem;
+  padding: 0.85rem 0.9rem;
   border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
-  background: color-mix(in srgb, var(--text) 3.5%, transparent);
+  border: 1px solid var(--line-strong);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
 }
 
 .settings-snow-controls[hidden] {
@@ -1457,7 +1626,7 @@ body.is-resizing-col {
 
 .settings-snow-slider {
   display: grid;
-  gap: 0.35rem;
+  gap: 0.4rem;
 }
 
 .settings-snow-slider-label {
@@ -1465,13 +1634,15 @@ body.is-resizing-col {
   font-size: 0.74rem;
   font-weight: 560;
   letter-spacing: -0.01em;
+  line-height: 1.3;
 }
 
 .settings-snow-slider-track {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: 1.1rem 1fr 1.1rem;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.5rem;
+  min-height: 24px;
 }
 
 .settings-snow-end {
@@ -1479,33 +1650,42 @@ body.is-resizing-col {
   letter-spacing: 0.04em;
   color: var(--text-3);
   user-select: none;
+  text-align: center;
 }
 
 .settings-snow-slider-track input[type="range"] {
   width: 100%;
+  height: 22px;
+  margin: 0;
   accent-color: color-mix(in srgb, #c23b3b 78%, #fff);
   cursor: pointer;
 }
 
 .settings-snow-smooth {
-  padding: 0.15rem 0 0;
+  padding: 0.1rem 0 0;
+  border-top: 1px solid var(--line);
+  margin-top: 0.05rem;
+  padding-top: 0.75rem;
 }
 
 .settings-snow-clear {
   justify-self: start;
-  margin-top: 0.1rem;
-  padding: 0.38rem 0.7rem;
+  margin: 0;
+  height: 32px;
+  padding: 0 0.75rem;
   border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
-  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border: 1px solid var(--line-strong);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
   color: var(--text-2);
   font-size: 0.74rem;
   font-weight: 540;
   cursor: pointer;
+  display: inline-grid;
+  place-items: center;
 }
 
 .settings-snow-clear:hover {
-  background: color-mix(in srgb, var(--text) 9%, transparent);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
   color: var(--text);
 }
 
@@ -1716,11 +1896,12 @@ body.is-resizing-col {
 
 .settings-key-help {
   display: grid;
-  gap: 0.45rem;
-  margin: 0.35rem 0 0.55rem;
-  padding: 0.55rem 0.6rem;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.7rem 0.75rem;
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
 }
 
 .settings-key-help.hidden {
@@ -1773,7 +1954,7 @@ body.is-resizing-col {
 .settings-key-save {
   flex: 0 0 auto;
   min-width: 64px;
-  height: 34px;
+  height: 36px;
   padding: 0 0.75rem;
   border-radius: 8px;
   font-size: 0.76rem;
@@ -1786,7 +1967,7 @@ body.is-resizing-col {
   flex: 1;
   width: 100%;
   min-width: 0;
-  height: 34px;
+  height: 36px;
   padding: 0 0.75rem;
   border: 0;
   border-radius: 8px;

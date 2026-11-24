@@ -691,13 +691,16 @@ function buildApplicationMenu(): void {
 
 function createWindow(): void {
   const icon = loadAppIcon();
+  // Match renderer --chrome so the caption overlay blends with the titlebar.
+  const chromeBg = "#0b0d11";
+  const chromeFg = "#8b95a1";
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 960,
     minHeight: 600,
     title: "Drift",
-    backgroundColor: "#000000",
+    backgroundColor: chromeBg,
     show: false,
     ...(icon ? { icon } : {}),
     ...(process.platform === "darwin"
@@ -705,7 +708,21 @@ function createWindow(): void {
           titleBarStyle: "hiddenInset" as const,
           trafficLightPosition: { x: 16, y: 14 },
         }
-      : {}),
+      : process.platform === "win32"
+        ? {
+            // Frameless chrome like Cursor/VS Code: content paints into the
+            // titlebar; Windows still draws min/max/close via the overlay.
+            titleBarStyle: "hidden" as const,
+            titleBarOverlay: {
+              color: chromeBg,
+              symbolColor: chromeFg,
+              height: 40,
+            },
+            autoHideMenuBar: true,
+          }
+        : {
+            autoHideMenuBar: true,
+          }),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

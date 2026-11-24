@@ -1678,14 +1678,22 @@ export function createBoardPane(
     markMinimapDirty();
   }
 
-  function cascadeOrigin(): { x: number; y: number } {
+  /** Spawn near the current camera view (not world 0,0). */
+  function cascadeOrigin(
+    cardW = TERM_W,
+    cardH = TERM_H
+  ): { x: number; y: number } {
+    const center = viewportWorldCenter();
     const n = cards.filter((c) => c.kind === "terminal").length;
     const col = n % 3;
     const row = Math.floor(n / 3) % 3;
-    return {
-      x: 48 + col * 56 + row * 12,
-      y: 48 + row * 48 + col * 16,
-    };
+    const offsetX = col * 56 + row * 12;
+    const offsetY = row * 48 + col * 16;
+    let x = center.x - cardW / 2 + offsetX;
+    let y = center.y - cardH / 2 + offsetY;
+    x = Math.max(WORLD.x, Math.min(WORLD.x + WORLD.w - cardW, x));
+    y = Math.max(WORLD.y, Math.min(WORLD.y + WORLD.h - cardH, y));
+    return { x, y };
   }
 
   function startPan(e: PointerEvent): void {
@@ -1964,7 +1972,7 @@ export function createBoardPane(
         (c): c is TerminalCard => c.kind === "terminal" && c.tabId === tabId
       );
       if (!card) {
-        const origin = cascadeOrigin();
+        const origin = cascadeOrigin(TERM_W, TERM_H);
         card = {
           id: uid("term"),
           kind: "terminal",
@@ -1977,6 +1985,7 @@ export function createBoardPane(
           h: TERM_H,
           z: nextZ(),
         };
+        clampCardInWorld(card);
         cards = [...cards, card];
         mountCard(card);
       } else {
@@ -2073,9 +2082,9 @@ export function createBoardPane(
               c.kind === "prompt" && c.parentId === parentId
           )
         : [];
-      const origin = cascadeOrigin();
-      let x = origin.x + 40;
-      let y = origin.y + 40;
+      const origin = cascadeOrigin(PROMPT_W, PROMPT_H);
+      let x = origin.x;
+      let y = origin.y;
       let w = PROMPT_W;
       let h = PROMPT_H;
       if (parent) {

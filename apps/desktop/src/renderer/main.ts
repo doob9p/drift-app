@@ -229,6 +229,8 @@ const tabCwds = new Map<string, string>();
 
 if (/Mac|darwin/i.test(navigator.userAgent)) {
   document.documentElement.classList.add("is-mac");
+} else if (/Win/i.test(navigator.userAgent)) {
+  document.documentElement.classList.add("is-win");
 }
 
 const app = document.getElementById("app")!;
@@ -405,162 +407,6 @@ app.innerHTML = `
           </div>
         </section>
 
-        <section class="nav-view hidden" data-view="settings">
-          <div class="settings-panel">
-            <section class="settings-section">
-              <div class="form-grid settings-form">
-                <div class="settings-api-key">
-                  <span data-i18n="settings.apiKey">Cursor API key</span>
-                  <div class="settings-key-help" id="api-key-help">
-                    <ol class="settings-key-steps">
-                      <li data-i18n="settings.keyStep1">Open API Keys in the Cursor dashboard</li>
-                      <li data-i18n="settings.keyStep2">Create a key and copy it once</li>
-                      <li data-i18n="settings.keyStep3">Paste it below and save</li>
-                    </ol>
-                    <button type="button" class="settings-key-open" id="btn-open-api-keys" data-i18n="settings.openKeyPage">Open key page</button>
-                  </div>
-                  <div class="settings-key-row" id="api-key-unset">
-                    <input id="api-key-input" type="password" autocomplete="off" placeholder="cursor_…" />
-                    <button type="button" class="primary settings-key-save" id="btn-save-key" data-i18n="settings.save">Save</button>
-                  </div>
-                  <div class="settings-key-row hidden" id="api-key-set">
-                    <button type="button" class="settings-key-clear" id="btn-clear-key" data-i18n-title="settings.clearKey" title="Delete">
-                      <span class="settings-key-clear-idle" data-i18n="settings.keyConfigured">Configured</span>
-                      <span class="settings-key-clear-hover" data-i18n="settings.clearKey">Delete</span>
-                    </button>
-                  </div>
-                  <span class="settings-hint" data-i18n="settings.lead"
-                    >API key is encrypted in the OS keychain. Sessions never store secrets.</span
-                  >
-                </div>
-              </div>
-            </section>
-            <section class="settings-section">
-              <div class="form-grid settings-form">
-                <label>
-                  <span data-i18n="settings.language">Language</span>
-                  <select id="settings-locale">
-                    <option value="ko">한국어</option>
-                    <option value="en">English</option>
-                  </select>
-                </label>
-                <label class="settings-shell hidden" id="settings-shell-row" hidden>
-                  <span data-i18n="settings.localShell">Local terminal</span>
-                  <select id="settings-local-shell">
-                    <option value="powershell" data-i18n="settings.shell.powershell">PowerShell</option>
-                    <option value="cmd" data-i18n="settings.shell.cmd">Command Prompt</option>
-                    <option value="gitbash" data-i18n="settings.shell.gitbash">Git Bash</option>
-                  </select>
-                  <span class="settings-hint" data-i18n="settings.localShellHint"
-                    >Applies to newly opened local terminals.</span
-                  >
-                </label>
-                <div class="settings-theme-block">
-                  <label class="settings-board-theme" id="settings-board-theme-row">
-                    <span data-i18n="settings.boardTheme">Board theme</span>
-                    <select id="settings-board-theme">
-                      <option value="off" data-i18n="settings.boardThemeOff">Off</option>
-                      <option value="christmas" data-i18n="settings.boardThemeChristmas">Christmas snow</option>
-                      <option value="autumn" data-i18n="settings.boardThemeAutumn">Autumn leaves</option>
-                      <option value="sakura" data-i18n="settings.boardThemeSakura">Cherry blossoms</option>
-                      <option value="rain" data-i18n="settings.boardThemeRain">Rain</option>
-                      <option value="fireflies" data-i18n="settings.boardThemeFireflies">Fireflies</option>
-                    </select>
-                    <span class="settings-hint" id="settings-board-theme-hint" data-i18n="settings.boardThemeHintOff"
-                      >Seasonal overlays for the board. Pick one theme at a time.</span
-                    >
-                  </label>
-                  <div class="settings-snow-controls" id="settings-board-theme-controls" hidden>
-                    <label class="settings-snow-slider" for="settings-theme-amount">
-                      <span class="settings-snow-slider-label" data-i18n="settings.themeAmount">Amount</span>
-                      <div class="settings-snow-slider-track">
-                        <span class="settings-snow-end low" aria-hidden="true">···</span>
-                        <input
-                          type="range"
-                          id="settings-theme-amount"
-                          min="0"
-                          max="100"
-                          step="1"
-                          value="55"
-                        />
-                        <span class="settings-snow-end high" aria-hidden="true">••••</span>
-                      </div>
-                    </label>
-                    <label class="settings-snow-slider" for="settings-theme-speed">
-                      <span class="settings-snow-slider-label" data-i18n="settings.themeSpeed">Speed</span>
-                      <div class="settings-snow-slider-track">
-                        <span class="settings-snow-end low" aria-hidden="true">›</span>
-                        <input
-                          type="range"
-                          id="settings-theme-speed"
-                          min="0"
-                          max="100"
-                          step="1"
-                          value="50"
-                        />
-                        <span class="settings-snow-end high" aria-hidden="true">»</span>
-                      </div>
-                    </label>
-                    <label
-                      class="settings-toggle-row settings-snow-smooth"
-                      for="settings-snow-smooth"
-                      id="settings-snow-smooth-row"
-                      hidden
-                    >
-                      <span class="settings-toggle-copy">
-                        <span data-i18n="settings.christmasSnowSmooth">Smoother (uses more CPU)</span>
-                      </span>
-                      <input
-                        type="checkbox"
-                        id="settings-snow-smooth"
-                        class="settings-toggle"
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      class="settings-snow-clear"
-                      id="btn-clear-theme"
-                      data-i18n="settings.themeClear"
-                    >
-                      Clear overlay
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </section>
-            <section class="settings-section settings-about" id="settings-about" hidden>
-              <div class="settings-about-head">
-                <span class="settings-about-label" data-i18n="settings.about"
-                  >Version</span
-                >
-                <p class="settings-version" id="settings-version"></p>
-              </div>
-              <p
-                class="settings-update-status"
-                id="settings-update-status"
-                aria-live="polite"
-              ></p>
-              <div class="settings-about-actions">
-                <button
-                  type="button"
-                  class="settings-update-check"
-                  id="btn-check-update"
-                  data-i18n="settings.checkUpdate"
-                >
-                  Check for updates
-                </button>
-                <button
-                  type="button"
-                  class="primary settings-update-go hidden"
-                  id="btn-go-update"
-                  data-i18n="update.download"
-                >
-                  Update
-                </button>
-              </div>
-            </section>
-          </div>
-        </section>
       </aside>
 
       <div
@@ -590,6 +436,213 @@ app.innerHTML = `
   <div class="mention-menu hidden" id="mention-menu" role="listbox"></div>
 
   <div class="toast-host" id="toast-host" aria-live="polite"></div>
+
+  <div
+    class="modal-backdrop hidden"
+    id="modal-settings"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="settings-title"
+  >
+    <div class="modal modal-settings">
+      <aside class="settings-side">
+        <h2 id="settings-title" data-i18n="settings.title">Settings</h2>
+        <nav class="settings-side-nav" aria-label="Settings">
+          <button type="button" class="settings-side-item is-active" data-settings-cat="api">
+            <span class="settings-side-ico" aria-hidden="true">${icons.sparkles(15)}</span>
+            <span data-i18n="settings.cat.api">API</span>
+          </button>
+          <button type="button" class="settings-side-item" data-settings-cat="general">
+            <span class="settings-side-ico" aria-hidden="true">${icons.settings(15)}</span>
+            <span data-i18n="settings.cat.general">General</span>
+          </button>
+          <button type="button" class="settings-side-item" data-settings-cat="board">
+            <span class="settings-side-ico" aria-hidden="true">${icons.monitor(15)}</span>
+            <span data-i18n="settings.cat.board">Board</span>
+          </button>
+          <button type="button" class="settings-side-item" data-settings-cat="updates">
+            <span class="settings-side-ico" aria-hidden="true">${icons.refresh(15)}</span>
+            <span data-i18n="settings.cat.updates">Updates</span>
+          </button>
+        </nav>
+      </aside>
+      <div class="settings-body">
+        <button
+          type="button"
+          class="ghost settings-close"
+          id="btn-settings-close"
+          data-i18n-title="settings.close"
+          title="Close"
+          aria-label="Close"
+        >${icons.close(14)}</button>
+
+        <div class="settings-pane" data-settings-pane="api">
+          <div class="form-grid settings-form">
+            <div class="settings-api-key">
+              <span data-i18n="settings.apiKey">Cursor API key</span>
+              <div class="settings-key-help" id="api-key-help">
+                <ol class="settings-key-steps">
+                  <li data-i18n="settings.keyStep1">Open API Keys in the Cursor dashboard</li>
+                  <li data-i18n="settings.keyStep2">Create a key and copy it once</li>
+                  <li data-i18n="settings.keyStep3">Paste it below and save</li>
+                </ol>
+                <button type="button" class="settings-key-open" id="btn-open-api-keys" data-i18n="settings.openKeyPage">Open key page</button>
+              </div>
+              <div class="settings-key-row" id="api-key-unset">
+                <input id="api-key-input" type="password" autocomplete="off" placeholder="cursor_…" />
+                <button type="button" class="primary settings-key-save" id="btn-save-key" data-i18n="settings.save">Save</button>
+              </div>
+              <div class="settings-key-row hidden" id="api-key-set">
+                <button type="button" class="settings-key-clear" id="btn-clear-key" data-i18n-title="settings.clearKey" title="Delete">
+                  <span class="settings-key-clear-idle" data-i18n="settings.keyConfigured">Configured</span>
+                  <span class="settings-key-clear-hover" data-i18n="settings.clearKey">Delete</span>
+                </button>
+              </div>
+              <span class="settings-hint" data-i18n="settings.lead"
+                >API key is encrypted in the OS keychain. Sessions never store secrets.</span
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-pane hidden" data-settings-pane="general">
+          <div class="form-grid settings-form">
+            <label>
+              <span data-i18n="settings.language">Language</span>
+              <select id="settings-locale">
+                <option value="ko">한국어</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+            <label class="settings-shell hidden" id="settings-shell-row" hidden>
+              <span data-i18n="settings.localShell">Local terminal</span>
+              <select id="settings-local-shell">
+                <option value="powershell" data-i18n="settings.shell.powershell">PowerShell</option>
+                <option value="cmd" data-i18n="settings.shell.cmd">Command Prompt</option>
+                <option value="gitbash" data-i18n="settings.shell.gitbash">Git Bash</option>
+              </select>
+              <span class="settings-hint" data-i18n="settings.localShellHint"
+                >Applies to newly opened local terminals.</span
+              >
+            </label>
+          </div>
+        </div>
+
+        <div class="settings-pane hidden" data-settings-pane="board">
+          <div class="form-grid settings-form">
+            <div class="settings-theme-block">
+              <label class="settings-board-theme" id="settings-board-theme-row">
+                <span data-i18n="settings.boardTheme">Board theme</span>
+                <select id="settings-board-theme">
+                  <option value="off" data-i18n="settings.boardThemeOff">Off</option>
+                  <option value="christmas" data-i18n="settings.boardThemeChristmas">Christmas snow</option>
+                  <option value="autumn" data-i18n="settings.boardThemeAutumn">Autumn leaves</option>
+                  <option value="sakura" data-i18n="settings.boardThemeSakura">Cherry blossoms</option>
+                  <option value="rain" data-i18n="settings.boardThemeRain">Rain</option>
+                  <option value="fireflies" data-i18n="settings.boardThemeFireflies">Fireflies</option>
+                </select>
+                <span class="settings-hint" id="settings-board-theme-hint" data-i18n="settings.boardThemeHintOff"
+                  >Seasonal overlays for the board. Pick one theme at a time.</span
+                >
+              </label>
+              <div class="settings-snow-controls" id="settings-board-theme-controls" hidden>
+                <label class="settings-snow-slider" for="settings-theme-amount">
+                  <span class="settings-snow-slider-label" data-i18n="settings.themeAmount">Amount</span>
+                  <div class="settings-snow-slider-track">
+                    <span class="settings-snow-end low" aria-hidden="true">···</span>
+                    <input
+                      type="range"
+                      id="settings-theme-amount"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value="55"
+                    />
+                    <span class="settings-snow-end high" aria-hidden="true">••••</span>
+                  </div>
+                </label>
+                <label class="settings-snow-slider" for="settings-theme-speed">
+                  <span class="settings-snow-slider-label" data-i18n="settings.themeSpeed">Speed</span>
+                  <div class="settings-snow-slider-track">
+                    <span class="settings-snow-end low" aria-hidden="true">›</span>
+                    <input
+                      type="range"
+                      id="settings-theme-speed"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value="50"
+                    />
+                    <span class="settings-snow-end high" aria-hidden="true">»</span>
+                  </div>
+                </label>
+                <label
+                  class="settings-toggle-row settings-snow-smooth"
+                  for="settings-snow-smooth"
+                  id="settings-snow-smooth-row"
+                  hidden
+                >
+                  <span class="settings-toggle-copy">
+                    <span data-i18n="settings.christmasSnowSmooth">Smoother (uses more CPU)</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    id="settings-snow-smooth"
+                    class="settings-toggle"
+                  />
+                </label>
+                <button
+                  type="button"
+                  class="settings-snow-clear"
+                  id="btn-clear-theme"
+                  data-i18n="settings.themeClear"
+                >
+                  Clear overlay
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-pane hidden" data-settings-pane="updates">
+          <div class="settings-about" id="settings-about">
+            <div class="settings-update-row">
+              <div class="settings-about-head">
+                <span class="settings-about-label" data-i18n="settings.about">Version</span>
+                <p class="settings-version" id="settings-version"></p>
+                <p
+                  class="settings-update-status"
+                  id="settings-update-status"
+                  aria-live="polite"
+                ></p>
+              </div>
+              <div class="settings-about-actions">
+                <button
+                  type="button"
+                  class="settings-update-check"
+                  id="btn-check-update"
+                  data-i18n="settings.checkUpdate"
+                >
+                  Check for updates
+                </button>
+                <button
+                  type="button"
+                  class="primary settings-update-go hidden"
+                  id="btn-go-update"
+                  data-i18n="update.download"
+                >
+                  Update
+                </button>
+              </div>
+            </div>
+            <p class="settings-hint settings-update-lead" data-i18n="settings.updateLead">
+              Drift checks GitHub Releases for updates. Install when a newer build is available.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div
     class="modal-backdrop hidden"
@@ -770,6 +823,10 @@ const els = {
   stripApiBar: document.getElementById("strip-api-bar")!,
   stripApiVal: document.getElementById("strip-api-val")!,
   modalSsh: document.getElementById("modal-ssh")!,
+  modalSettings: document.getElementById("modal-settings")!,
+  btnSettingsClose: document.getElementById(
+    "btn-settings-close"
+  ) as HTMLButtonElement,
   modalShortcuts: document.getElementById("modal-shortcuts")!,
   shortcutsList: document.getElementById("shortcuts-list")!,
   shortcutsFilter: document.getElementById(
@@ -1152,16 +1209,13 @@ let settingsUpdateUi: SettingsUpdateUi = {
 };
 
 function renderSettingsVersion(): void {
-  const about = els.settingsAbout;
   const el = els.settingsVersion;
   if (!state.appVersion) {
-    about.hidden = true;
-    el.textContent = "";
+    el.textContent = t("settings.versionUnknown");
     els.settingsUpdateStatus.textContent = "";
     els.btnGoUpdate.classList.add("hidden");
     return;
   }
-  about.hidden = false;
   el.textContent = state.appPackaged
     ? t("settings.version", { version: state.appVersion })
     : t("settings.versionDev", { version: state.appVersion });
@@ -3415,9 +3469,63 @@ function refitTerminals(opts?: { force?: boolean }): void {
   }
 }
 
+type SettingsCategory = "api" | "general" | "board" | "updates";
+
 let activeNav: NavId = "sessions";
+let settingsModalOpen = false;
+let navBeforeSettings: Exclude<NavId, "settings"> = "sessions";
+let settingsCategory: SettingsCategory = "api";
+
+function setSettingsCategory(cat: SettingsCategory): void {
+  settingsCategory = cat;
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-settings-cat]")
+    .forEach((btn) => {
+      btn.classList.toggle("is-active", btn.dataset.settingsCat === cat);
+    });
+  document
+    .querySelectorAll<HTMLElement>("[data-settings-pane]")
+    .forEach((pane) => {
+      pane.classList.toggle("hidden", pane.dataset.settingsPane !== cat);
+    });
+}
+
+function openSettingsModal(category?: SettingsCategory): void {
+  if (!settingsModalOpen) {
+    if (activeNav !== "settings") {
+      navBeforeSettings = activeNav as Exclude<NavId, "settings">;
+    }
+  }
+  settingsModalOpen = true;
+  els.modalSettings.classList.remove("hidden");
+  applyDomI18n(els.modalSettings);
+  document.querySelectorAll<HTMLElement>(".rail-btn[data-nav]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.nav === "settings");
+  });
+  setSettingsCategory(category ?? settingsCategory);
+  renderSettingsVersion();
+}
+
+function closeSettingsModal(): void {
+  if (!settingsModalOpen) return;
+  settingsModalOpen = false;
+  els.modalSettings.classList.add("hidden");
+  activeNav = navBeforeSettings;
+  document.querySelectorAll<HTMLElement>(".rail-btn[data-nav]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.nav === activeNav);
+  });
+}
 
 function setNav(id: NavId): void {
+  if (id === "settings") {
+    if (settingsModalOpen) closeSettingsModal();
+    else openSettingsModal();
+    return;
+  }
+  if (settingsModalOpen) {
+    settingsModalOpen = false;
+    els.modalSettings.classList.add("hidden");
+  }
   activeNav = id;
   document.querySelectorAll<HTMLElement>(".rail-btn[data-nav]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.nav === id);
@@ -3440,7 +3548,7 @@ function setNav(id: NavId): void {
 }
 
 function openSettings(): void {
-  setNav("settings");
+  openSettingsModal("api");
 }
 
 function splitChordTokens(chord: string): string[] {
@@ -3537,6 +3645,10 @@ function closeTopModal(): boolean {
   if (splash && !splash.classList.contains("is-done") && splash.classList.contains("is-updating")) {
     if (updateSplash.phase === "downloading") return true;
     void dismissUpdateSplash();
+    return true;
+  }
+  if (!els.modalSettings.classList.contains("hidden")) {
+    closeSettingsModal();
     return true;
   }
   if (!els.modalShortcuts.classList.contains("hidden")) {
@@ -5137,6 +5249,18 @@ els.btnShortcutsClose.onclick = () => closeShortcutsPanel();
 els.modalShortcuts.addEventListener("click", (e) => {
   if (e.target === els.modalShortcuts) closeShortcutsPanel();
 });
+els.btnSettingsClose.onclick = () => closeSettingsModal();
+els.modalSettings.addEventListener("click", (e) => {
+  if (e.target === els.modalSettings) closeSettingsModal();
+});
+document
+  .querySelectorAll<HTMLButtonElement>("[data-settings-cat]")
+  .forEach((btn) => {
+    btn.onclick = () => {
+      const cat = btn.dataset.settingsCat as SettingsCategory | undefined;
+      if (cat) setSettingsCategory(cat);
+    };
+  });
 els.shortcutsFilter.addEventListener("input", () => {
   renderShortcutsPanel(els.shortcutsFilter.value);
 });
