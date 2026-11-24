@@ -585,11 +585,14 @@ app.innerHTML = `
                   <span class="settings-toggle-copy">
                     <span data-i18n="settings.christmasSnowSmooth">Smoother (uses more CPU)</span>
                   </span>
-                  <input
-                    type="checkbox"
-                    id="settings-snow-smooth"
-                    class="settings-toggle"
-                  />
+                  <span class="settings-switch">
+                    <input
+                      type="checkbox"
+                      id="settings-snow-smooth"
+                      class="settings-toggle"
+                    />
+                    <span class="settings-switch-track" aria-hidden="true"></span>
+                  </span>
                 </label>
                 <button
                   type="button"
