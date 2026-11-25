@@ -31,6 +31,11 @@ import type {
   BoardCard,
   BoardFocus,
   BoardPersistedState,
+  ClaudeAgentStatus,
+  ClaudeCard,
+  ClaudeEffortLevel,
+  ClaudePermissionMode,
+  ClaudeUsageSnapshot,
   FlowCard,
   FlowCardRunStatus,
   FlowCardStepState,
@@ -39,9 +44,13 @@ import type {
   PromptRunStatus,
   TerminalCard,
 } from "./board-types.js";
+import { CURSOR_API_UI_ENABLED } from "./feature-flags.js";
 
 /** Extensible overflow actions on each terminal card (⋯ menu). */
 export type TerminalOverflowAction = "open-cursor" | "add-prompt";
+
+/** Overflow actions on Claude cards. */
+export type ClaudeOverflowAction = "send-to" | "worktree";
 
 export type BoardPaneHandlers = {
   onFocus: (focus: BoardFocus) => void;
@@ -60,6 +69,19 @@ export type BoardPaneHandlers = {
     tabId: string,
     action: TerminalOverflowAction
   ) => void;
+  onClaudeOverflowAction: (
+    cardId: string,
+    action: ClaudeOverflowAction
+  ) => void;
+  onClaudeSetPermissionMode: (
+    cardId: string,
+    mode: ClaudePermissionMode
+  ) => void;
+  /** `/model <id>` — alias or full model id. */
+  onClaudeSetModel: (cardId: string, model: string) => void;
+  onClaudeSetEffort: (cardId: string, effort: ClaudeEffortLevel) => void;
+  /** Project chip / cwd → highlight in Projects rail. */
+  onClaudeRevealProject?: (cardId: string) => void;
   onFlowRun: (cardId: string) => void;
   onFlowAbort: (cardId: string) => void;
   onFlowApprove: (cardId: string, stepId: string) => void;
@@ -67,21 +89,244 @@ export type BoardPaneHandlers = {
   onFlowEdit: (cardId: string) => void;
 };
 
+const CLAUDE_PERMISSION_MODES: Array<{
+  id: ClaudePermissionMode;
+  labelKey: string;
+  tipKey: string;
+}> = [
+  {
+    id: "default",
+    labelKey: "claude.mode.default",
+    tipKey: "claude.mode.defaultTip",
+  },
+  {
+    id: "acceptEdits",
+    labelKey: "claude.mode.acceptEdits",
+    tipKey: "claude.mode.acceptEditsTip",
+  },
+  {
+    id: "plan",
+    labelKey: "claude.mode.plan",
+    tipKey: "claude.mode.planTip",
+  },
+  {
+    id: "auto",
+    labelKey: "claude.mode.auto",
+    tipKey: "claude.mode.autoTip",
+  },
+];
+
+type ClaudeModelOption = {
+  /** Value passed to `/model`. */
+  id: string;
+  label: string;
+  /** Substrings matched against statusline model id/label. */
+  match: string[];
+  /** Show “usage credits required” (Fable family). */
+  credits?: boolean;
+};
+
+function claudeModelCreditsBadge(opt: ClaudeModelOption): string {
+  if (!opt.credits) return "";
+  return `<span class="claude-picker-badge claude-picker-badge-credits" title="${t("claude.model.creditsTip")}">${t("claude.model.credits")}</span>`;
+}
+
+function claudeModelRowHtml(opt: ClaudeModelOption, card: ClaudeCard): string {
+  const selected = modelOptionSelected(opt, card);
+  const trailing = selected
+    ? `<span class="board-overflow-ico" aria-hidden="true">${icons.check(13)}</span>`
+    : "";
+  return `
+      <button type="button" class="board-overflow-item${selected ? " is-active" : ""}" role="menuitemradio" aria-checked="${selected ? "true" : "false"}" data-model="${opt.id}">
+        <span class="board-overflow-label">${opt.label}</span>
+        ${claudeModelCreditsBadge(opt)}
+        ${trailing}
+      </button>`;
+}
+
+/** Primary picker rows — aliases resolve to the latest of each family. */
+const CLAUDE_MODELS_PRIMARY: ClaudeModelOption[] = [
+  {
+    id: "opus",
+    label: "Opus 5.5",
+    match: ["opus 5.5", "opus-5-5", "claude-opus-5-5", "opus"],
+  },
+  {
+    id: "sonnet",
+    label: "Sonnet 5.5",
+    match: ["sonnet 5.5", "sonnet-5-5", "claude-sonnet-5-5", "sonnet"],
+  },
+  {
+    id: "fable",
+    label: "Fable 5.2",
+    match: ["fable 5.2", "fable-5-2", "claude-fable-5-2", "fable"],
+    credits: true,
+  },
+  {
+    id: "haiku",
+    label: "Haiku 5.5",
+    match: ["haiku 5.5", "haiku-5-5", "claude-haiku-5-5", "haiku"],
+  },
+];
+
+/** “More models” submenu — pinned versions + opusplan. */
+const CLAUDE_MODELS_MORE: ClaudeModelOption[] = [
+  {
+    id: "claude-fable-5-1",
+    label: "Fable 5.1",
+    match: ["fable 5.1", "fable-5-1", "claude-fable-5-1"],
+    credits: true,
+  },
+  {
+    id: "claude-haiku-4-5",
+    label: "Haiku 4.5",
+    match: ["haiku 4.5", "haiku-4-5", "claude-haiku-4-5"],
+  },
+  {
+    id: "claude-sonnet-5",
+    label: "Sonnet 5",
+    match: ["sonnet 5", "claude-sonnet-5"],
+  },
+  {
+    id: "claude-opus-5",
+    label: "Opus 5",
+    match: ["opus 5", "claude-opus-5"],
+  },
+  {
+    id: "claude-fable-5",
+    label: "Fable 5",
+    match: ["fable 5", "claude-fable-5"],
+    credits: true,
+  },
+  {
+    id: "claude-opus-4-8",
+    label: "Opus 4.8",
+    match: ["opus 4.8", "opus-4-8", "claude-opus-4-8"],
+  },
+  {
+    id: "claude-opus-4-7",
+    label: "Opus 4.7",
+    match: ["opus 4.7", "opus-4-7", "claude-opus-4-7"],
+  },
+  {
+    id: "claude-opus-4-6",
+    label: "Opus 4.6",
+    match: ["opus 4.6", "opus-4-6", "claude-opus-4-6"],
+  },
+  {
+    id: "claude-sonnet-4-6",
+    label: "Sonnet 4.6",
+    match: ["sonnet 4.6", "sonnet-4-6", "claude-sonnet-4-6"],
+  },
+  {
+    id: "opusplan",
+    label: "Opus plan",
+    match: ["opusplan", "opus plan"],
+  },
+  {
+    id: "default",
+    label: "Default",
+    match: ["default"],
+  },
+];
+
+const CLAUDE_EFFORT_LEVELS: Array<{
+  id: ClaudeEffortLevel;
+  labelKey: string;
+  tipKey: string;
+  recommended?: boolean;
+}> = [
+  { id: "low", labelKey: "claude.effort.low", tipKey: "claude.effort.lowTip" },
+  {
+    id: "medium",
+    labelKey: "claude.effort.medium",
+    tipKey: "claude.effort.mediumTip",
+    recommended: true,
+  },
+  {
+    id: "high",
+    labelKey: "claude.effort.high",
+    tipKey: "claude.effort.highTip",
+  },
+  {
+    id: "xhigh",
+    labelKey: "claude.effort.xhigh",
+    tipKey: "claude.effort.xhighTip",
+  },
+  { id: "max", labelKey: "claude.effort.max", tipKey: "claude.effort.maxTip" },
+];
+
+function claudeModeLabel(mode: ClaudePermissionMode | undefined): string {
+  const row = CLAUDE_PERMISSION_MODES.find((m) => m.id === (mode || "auto"));
+  return row ? t(row.labelKey) : t("claude.mode.auto");
+}
+
+function claudeEffortLabel(
+  level: string | undefined
+): string | null {
+  if (!level || level === "auto") return null;
+  const row = CLAUDE_EFFORT_LEVELS.find((e) => e.id === level);
+  return row ? t(row.labelKey) : level;
+}
+
+function claudeModelChipLabel(card: ClaudeCard): string {
+  const model =
+    card.usage?.modelLabel?.trim() || t("claude.model.unknown");
+  const effort = claudeEffortLabel(
+    card.effortLevel || card.usage?.effortLevel
+  );
+  return effort ? `${model} ${effort}` : model;
+}
+
+function modelOptionSelected(
+  opt: ClaudeModelOption,
+  card: ClaudeCard
+): boolean {
+  const hay = `${card.usage?.modelId || ""} ${card.usage?.modelLabel || ""}`
+    .toLowerCase()
+    .replace(/_/g, "-");
+  if (!hay.trim()) return false;
+  // Prefer the most specific match first (longer needles).
+  const needles = [...opt.match].sort((a, b) => b.length - a.length);
+  const bestPrimary = CLAUDE_MODELS_PRIMARY.concat(CLAUDE_MODELS_MORE)
+    .flatMap((o) => o.match.map((m) => ({ id: o.id, m })))
+    .sort((a, b) => b.m.length - a.m.length)
+    .find((x) => hay.includes(x.m.toLowerCase()));
+  if (bestPrimary) return bestPrimary.id === opt.id;
+  return needles.some((m) => hay.includes(m.toLowerCase()));
+}
+
+type PtyBoardCard = TerminalCard | ClaudeCard;
+
+function isPtyCard(card: BoardCard): card is PtyBoardCard {
+  return card.kind === "terminal" || card.kind === "claude";
+}
+
+function isPtyExpanded(card: BoardCard): boolean {
+  if (card.kind === "terminal") return !card.minimized;
+  if (card.kind === "claude") return !card.minimized;
+  return false;
+}
+
 const TERMINAL_OVERFLOW_ITEMS: Array<{
   id: TerminalOverflowAction;
   labelKey: string;
   icon: (size?: number) => string;
 }> = [
-  {
-    id: "open-cursor",
-    labelKey: "board.menu.openCursor",
-    icon: icons.openCursor,
-  },
-  {
-    id: "add-prompt",
-    labelKey: "board.menu.addPrompt",
-    icon: icons.addPrompt,
-  },
+  ...(CURSOR_API_UI_ENABLED
+    ? ([
+        {
+          id: "open-cursor",
+          labelKey: "board.menu.openCursor",
+          icon: icons.openCursor,
+        },
+        {
+          id: "add-prompt",
+          labelKey: "board.menu.addPrompt",
+          icon: icons.addPrompt,
+        },
+      ] as const)
+    : []),
 ];
 
 export type BoardPane = {
@@ -95,7 +340,36 @@ export type BoardPane = {
     title: string;
     activate?: boolean;
   }) => TerminalCard;
+  addClaude: (input: {
+    tabId: string;
+    title: string;
+    cwd: string;
+    sessionId: string;
+    cardId?: string;
+    agentStatus?: ClaudeAgentStatus;
+    activate?: boolean;
+    x?: number;
+    y?: number;
+    w?: number;
+    h?: number;
+    minimized?: boolean;
+    z?: number;
+  }) => ClaudeCard;
+  updateClaude: (
+    cardId: string,
+    patch: Partial<
+      Pick<ClaudeCard, "tabId" | "title" | "cwd" | "sessionId" | "agentStatus">
+    >
+  ) => void;
+  setClaudeAgentStatus: (cardId: string, status: ClaudeAgentStatus) => void;
+  setClaudeUsage: (cardId: string, usage: ClaudeUsageSnapshot) => void;
+  setClaudePermissionMode: (
+    cardId: string,
+    mode: ClaudePermissionMode
+  ) => void;
+  setClaudeEffortLevel: (cardId: string, effort: ClaudeEffortLevel) => void;
   getTerminalHost: (tabId: string) => HTMLElement | null;
+  getClaudeHost: (cardId: string) => HTMLElement | null;
   minimizeOtherTerminals: (exceptTabId: string) => void;
   expandTerminal: (tabId: string) => void;
   removeTab: (tabId: string) => void;
@@ -218,7 +492,16 @@ function cardScrollSurface(target: Element): HTMLElement | null {
 /** True when `el` can still move in the wheel's vertical direction. */
 function canScrollVertically(el: HTMLElement, dy: number): boolean {
   const oy = getComputedStyle(el).overflowY;
-  if (oy !== "auto" && oy !== "scroll" && oy !== "overlay") return false;
+  // xterm-viewport may report overflow as "hidden" while still scrolling.
+  const isXtermViewport = el.classList.contains("xterm-viewport");
+  if (
+    !isXtermViewport &&
+    oy !== "auto" &&
+    oy !== "scroll" &&
+    oy !== "overlay"
+  ) {
+    return false;
+  }
   const max = el.scrollHeight - el.clientHeight;
   if (max <= 1) return false;
   if (dy < 0) return el.scrollTop > 0;
@@ -250,7 +533,7 @@ function isTypingTarget(el: EventTarget | null): boolean {
 }
 
 function cardTitle(card: BoardCard): string {
-  if (card.kind === "terminal") return card.title;
+  if (card.kind === "terminal" || card.kind === "claude") return card.title;
   if (card.kind === "flow" || card.kind === "flowInspect") {
     return card.title || "Flow";
   }
@@ -258,10 +541,19 @@ function cardTitle(card: BoardCard): string {
 }
 
 function cardSize(card: BoardCard): { w: number; h: number } {
-  if (card.kind === "terminal" && card.minimized) {
+  if (
+    (card.kind === "terminal" || card.kind === "claude") &&
+    card.minimized
+  ) {
     return { w: CHIP_W, h: CHIP_H };
   }
   return { w: card.w, h: card.h };
+}
+
+function shortPathLabel(cwd: string): string {
+  const parts = cwd.replace(/\\/g, "/").split("/").filter(Boolean);
+  if (parts.length <= 2) return cwd;
+  return `…/${parts.slice(-2).join("/")}`;
 }
 
 export function createBoardPane(
@@ -291,6 +583,7 @@ export function createBoardPane(
   function closeTerminalOverflowMenu(): void {
     overflowMenuEl?.remove();
     overflowMenuEl = null;
+    document.querySelectorAll(".claude-picker-flyout").forEach((n) => n.remove());
     document.removeEventListener("pointerdown", onOverflowOutside, true);
     document.removeEventListener("keydown", onOverflowKeydown, true);
   }
@@ -299,9 +592,12 @@ export function createBoardPane(
     const t = e.target as Node | null;
     if (!t) return;
     if (overflowMenuEl?.contains(t)) return;
+    if (t instanceof Element && t.closest(".claude-picker-flyout")) return;
     if (
       t instanceof Element &&
-      t.closest(".board-card-more")
+      (t.closest(".board-card-more") ||
+        t.closest("[data-claude-mode]") ||
+        t.closest("[data-claude-model]"))
     ) {
       return;
     }
@@ -311,6 +607,11 @@ export function createBoardPane(
   function onOverflowKeydown(e: KeyboardEvent): void {
     if (e.key === "Escape") {
       e.preventDefault();
+      const fly = document.querySelector(".claude-picker-flyout");
+      if (fly) {
+        fly.remove();
+        return;
+      }
       closeTerminalOverflowMenu();
     }
   }
@@ -489,9 +790,7 @@ export function createBoardPane(
 
   const roofProvider = () =>
     cards
-      .filter(
-        (c): c is TerminalCard => c.kind === "terminal" && !c.minimized
-      )
+      .filter((c) => isPtyExpanded(c))
       .map((c) => {
         const { w, h } = cardSize(c);
         return { id: c.id, x: c.x, y: c.y, w, h, z: c.z };
@@ -543,7 +842,12 @@ export function createBoardPane(
   }
 
   function nextZ(): number {
-    zCounter += 1;
+    // Stay above every live card — restored Claude/prompt z can outrun zCounter.
+    let maxZ = zCounter;
+    for (const c of cards) {
+      if (c.z > maxZ) maxZ = c.z;
+    }
+    zCounter = maxZ + 1;
     return zCounter;
   }
 
@@ -887,7 +1191,7 @@ export function createBoardPane(
       const node = document.createElement("div");
       node.className = `board-minimap-card board-minimap-card-${card.kind}${
         focus?.cardId === card.id ? " is-focused" : ""
-      }${card.kind === "terminal" && card.minimized ? " is-chip" : ""}`;
+      }${isPtyCard(card) && card.minimized ? " is-chip" : ""}`;
       node.dataset.cardId = card.id;
       node.style.left = `${ox + (card.x - WORLD.x) * scale}px`;
       node.style.top = `${oy + (card.y - WORLD.y) * scale}px`;
@@ -1005,7 +1309,7 @@ export function createBoardPane(
     opts?: { animate?: boolean; refit?: boolean; persist?: boolean }
   ): void {
     const tiles = cards.filter(
-      (c): c is TerminalCard => c.kind === "terminal" && !c.minimized
+      (c): c is PtyBoardCard => isPtyExpanded(c)
     );
     if (tiles.length === 0) {
       tileLayoutMode = null;
@@ -1038,7 +1342,7 @@ export function createBoardPane(
     camera.y = -originY;
 
     for (const card of cards) {
-      if (card.kind === "terminal") {
+      if (isPtyCard(card)) {
         cardEls.get(card.id)?.classList.remove("is-tiled");
       }
     }
@@ -1063,7 +1367,7 @@ export function createBoardPane(
     for (const tile of tiles) {
       const el = cardEls.get(tile.id);
       if (animate) el?.classList.add("is-arranging");
-      if (mode === "fill" && tile.kind === "terminal") {
+      if (mode === "fill" && isPtyCard(tile)) {
         el?.classList.add("is-tiled");
       }
     }
@@ -1139,7 +1443,7 @@ export function createBoardPane(
 
     setViewLocked(false);
     for (const card of cards) {
-      if (card.kind === "terminal") {
+      if (isPtyCard(card)) {
         cardEls.get(card.id)?.classList.remove("is-tiled");
       }
     }
@@ -1152,14 +1456,14 @@ export function createBoardPane(
     const ORIGIN_Y = 80;
 
     type Group = {
-      terminal?: TerminalCard;
+      terminal?: PtyBoardCard;
       prompts: PromptCard[];
     };
     const groups: Group[] = [];
     const seen = new Set<string>();
 
     for (const card of cards) {
-      if (card.kind !== "terminal") continue;
+      if (!isPtyCard(card)) continue;
       seen.add(card.tabId);
       groups.push({
         terminal: card,
@@ -1317,6 +1621,9 @@ export function createBoardPane(
 
   function setFocus(next: BoardFocus): void {
     focus = next;
+    // Any focus (click, chord, minimap, chrome) must raise the card above
+    // siblings — otherwise a rear window can be "focused" while still buried.
+    if (next?.cardId) bringToFront(next.cardId);
     for (const [id, el] of cardEls) {
       el.classList.toggle("is-focused", Boolean(next && next.cardId === id));
     }
@@ -1330,18 +1637,30 @@ export function createBoardPane(
   function bringToFront(cardId: string): void {
     const card = cards.find((c) => c.id === cardId);
     if (!card) return;
-    card.z = nextZ();
     const el = cardEls.get(cardId);
-    if (el) el.style.zIndex = String(card.z);
+    const maxZ = cards.reduce((m, c) => Math.max(m, c.z), 0);
+    if (card.z < maxZ || card.z < zCounter) {
+      card.z = nextZ();
+      if (el) el.style.zIndex = String(card.z);
+      schedulePersist();
+    }
+    // Defer reparent — synchronous surface.append during pointerdown cancels
+    // the following click, so mode/model chrome chips appear dead.
+    if (el && el.parentElement === surface && surface.lastElementChild !== el) {
+      requestAnimationFrame(() => {
+        if (el.isConnected && el.parentElement === surface) surface.append(el);
+      });
+    }
   }
 
   function focusCard(cardId: string): void {
     const card = cards.find((c) => c.id === cardId);
     if (!card) return;
     setViewLocked(false);
-    bringToFront(cardId);
     if (card.kind === "terminal") {
       setFocus({ kind: "terminal", cardId: card.id, tabId: card.tabId });
+    } else if (card.kind === "claude") {
+      setFocus({ kind: "claude", cardId: card.id, tabId: card.tabId });
     } else if (card.kind === "prompt") {
       setFocus({ kind: "prompt", cardId: card.id, tabId: card.tabId });
     } else if (card.kind === "flowInspect") {
@@ -1452,7 +1771,7 @@ export function createBoardPane(
   function layoutCard(card: BoardCard): void {
     const el = cardEls.get(card.id);
     if (!el) return;
-    const minimized = card.kind === "terminal" && card.minimized;
+    const minimized = isPtyCard(card) && Boolean(card.minimized);
     const w = minimized ? CHIP_W : card.w;
     const h = minimized ? CHIP_H : card.h;
     el.style.transform = `translate(${card.x}px, ${card.y}px)`;
@@ -1460,7 +1779,7 @@ export function createBoardPane(
     el.style.height = `${h}px`;
     el.style.zIndex = String(card.z);
     el.classList.toggle("is-minimized", minimized);
-    if (card.kind === "terminal") {
+    if (isPtyCard(card)) {
       const minBtn = el.querySelector(
         ".board-card-min"
       ) as HTMLButtonElement | null;
@@ -1497,7 +1816,7 @@ export function createBoardPane(
       card.x = originX + (e.clientX - startX) / camera.zoom;
       card.y = originY + (e.clientY - startY) / camera.zoom;
       clampCardInWorld(card);
-      if (card.kind === "terminal" && !card.minimized) {
+      if (isPtyExpanded(card)) {
         snow.shake(card.id, card.x - lastCardX);
         leaves.shake(card.id, card.x - lastCardX);
         sakura.shake(card.id, card.x - lastCardX);
@@ -1521,6 +1840,18 @@ export function createBoardPane(
       if (spaceHeld || e.button === 1) return;
       const card = cards.find((c) => c.id === cardId);
       if (!card) return;
+      // Raise + focus immediately so a buried window comes forward on grab.
+      if (card.kind === "terminal") {
+        setFocus({ kind: "terminal", cardId: card.id, tabId: card.tabId });
+      } else if (card.kind === "claude") {
+        setFocus({ kind: "claude", cardId: card.id, tabId: card.tabId });
+      } else if (card.kind === "prompt") {
+        setFocus({ kind: "prompt", cardId: card.id, tabId: card.tabId });
+      } else if (card.kind === "flowInspect") {
+        setFocus({ kind: "flowInspect", cardId: card.id });
+      } else {
+        setFocus({ kind: "flow", cardId: card.id });
+      }
       dragging = true;
       el.classList.remove("is-tiled");
       startX = e.clientX;
@@ -1528,7 +1859,6 @@ export function createBoardPane(
       originX = card.x;
       originY = card.y;
       lastCardX = card.x;
-      bringToFront(cardId);
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
       e.preventDefault();
@@ -1547,7 +1877,7 @@ export function createBoardPane(
     const onMove = (e: PointerEvent) => {
       if (!resizing) return;
       const card = cards.find((c) => c.id === cardId);
-      if (!card || (card.kind === "terminal" && card.minimized)) return;
+      if (!card || (isPtyCard(card) && card.minimized)) return;
       const minW =
         card.kind === "prompt"
           ? 300
@@ -1577,7 +1907,8 @@ export function createBoardPane(
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       schedulePersist();
-      if (cards.find((c) => c.id === cardId)?.kind === "terminal") {
+      const kind = cards.find((c) => c.id === cardId)?.kind;
+      if (kind === "terminal" || kind === "claude") {
         root.dispatchEvent(
           new CustomEvent("board:refit-terminals", { bubbles: true })
         );
@@ -1586,7 +1917,7 @@ export function createBoardPane(
 
     handle.addEventListener("pointerdown", (e) => {
       const card = cards.find((c) => c.id === cardId);
-      if (!card || (card.kind === "terminal" && card.minimized)) return;
+      if (!card || (isPtyCard(card) && card.minimized)) return;
       if (e.button !== 0) return;
       resizing = true;
       el.classList.remove("is-tiled");
@@ -1616,7 +1947,11 @@ export function createBoardPane(
         <span class="board-card-title"></span>
         <span class="board-card-broadcast-badge is-hidden" data-broadcast-badge aria-hidden="true"></span>
         <div class="board-card-actions">
-          <button type="button" class="icon ghost board-card-more" data-i18n-title="board.menu.more" title="${t("board.menu.more")}" aria-label="${t("board.menu.more")}" aria-haspopup="menu">${icons.more(13)}</button>
+          ${
+            TERMINAL_OVERFLOW_ITEMS.length
+              ? `<button type="button" class="icon ghost board-card-more" data-i18n-title="board.menu.more" title="${t("board.menu.more")}" aria-label="${t("board.menu.more")}" aria-haspopup="menu">${icons.more(13)}</button>`
+              : ""
+          }
           <button type="button" class="icon ghost board-card-min" data-i18n-title="board.minimize" title="Minimize">${icons.chevronDown(12)}</button>
           <button type="button" class="icon ghost board-card-close" data-i18n-title="board.close" title="Close">×</button>
         </div>
@@ -1630,8 +1965,7 @@ export function createBoardPane(
       card.title;
     el.addEventListener("pointerdown", (e) => {
       if (spaceHeld || e.button !== 0) return;
-      if ((e.target as HTMLElement).closest("button")) return;
-      bringToFront(card.id);
+      // Always raise + focus, including chrome buttons (⋯ / broadcast).
       setFocus({ kind: "terminal", cardId: card.id, tabId: card.tabId });
       // Minimized chips stay collapsed — expand only via the chevron button.
     });
@@ -1640,7 +1974,7 @@ export function createBoardPane(
       e.stopPropagation();
       handlers.onToggleBroadcastMember(card.tabId);
     });
-    el.querySelector(".board-card-more")!.addEventListener("click", (e) => {
+    el.querySelector(".board-card-more")?.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
       const btn = e.currentTarget as HTMLElement;
@@ -1650,6 +1984,484 @@ export function createBoardPane(
       }
       openTerminalOverflowMenu(btn, card.tabId);
     });
+    el.querySelector(".board-card-min")!.addEventListener("click", (e) => {
+      e.stopPropagation();
+      handlers.onToggleMinimize(card.id);
+    });
+    el.querySelector(".board-card-close")!.addEventListener("click", (e) => {
+      e.stopPropagation();
+      handlers.onCloseTerminal(card.tabId);
+    });
+    wireDrag(el, card.id);
+    wireResize(el, card.id);
+    return el;
+  }
+
+  function syncClaudeStatusBadge(card: ClaudeCard): void {
+    const el = cardEls.get(card.id);
+    if (!el) return;
+    const badge = el.querySelector(
+      "[data-claude-status]"
+    ) as HTMLElement | null;
+    if (!badge) return;
+    const status = card.agentStatus || "idle";
+    badge.dataset.status = status;
+    badge.classList.toggle("is-hidden", status === "idle");
+    const label =
+      status === "running"
+        ? t("claude.status.running")
+        : status === "waiting"
+          ? t("claude.status.waiting")
+          : status === "done"
+            ? t("claude.status.done")
+            : status === "error"
+              ? t("claude.status.error")
+              : "";
+    badge.textContent = label;
+  }
+
+  function syncClaudeUsageUi(card: ClaudeCard): void {
+    const el = cardEls.get(card.id);
+    if (!el) return;
+    const wrap = el.querySelector("[data-claude-usage]") as HTMLElement | null;
+    if (!wrap) return;
+    // Plan limits live in the top strip. Cards only show this session's context %.
+    const ctx = card.usage?.contextPercent;
+    if (typeof ctx !== "number") {
+      wrap.classList.add("is-hidden");
+      wrap.replaceChildren();
+      wrap.removeAttribute("title");
+      return;
+    }
+    const used = Math.round(ctx);
+    wrap.classList.remove("is-hidden");
+    wrap.innerHTML = `<span class="claude-usage-chip is-ctx" data-kind="ctx"><span class="claude-usage-label">${t("claude.usage.context")}</span><span class="claude-usage-val">${used}%</span></span>`;
+    wrap.title = t("claude.usage.contextTip", { used: String(used) });
+  }
+
+  function syncClaudeChromeUi(card: ClaudeCard): void {
+    const el = cardEls.get(card.id);
+    if (!el) return;
+    const modeLabel = el.querySelector(
+      "[data-claude-mode-label]"
+    ) as HTMLElement | null;
+    if (modeLabel) modeLabel.textContent = claudeModeLabel(card.permissionMode);
+    const modeBtn = el.querySelector(
+      "[data-claude-mode]"
+    ) as HTMLElement | null;
+    if (modeBtn) {
+      modeBtn.title = t("claude.mode.chipTip");
+      modeBtn.setAttribute("aria-label", t("claude.mode.chipTip"));
+    }
+    const modelLabel = el.querySelector(
+      "[data-claude-model-label]"
+    ) as HTMLElement | null;
+    if (modelLabel) modelLabel.textContent = claudeModelChipLabel(card);
+    const modelBtn = el.querySelector(
+      "[data-claude-model]"
+    ) as HTMLElement | null;
+    if (modelBtn) {
+      modelBtn.title = t("claude.model.chipTip");
+      modelBtn.setAttribute("aria-label", t("claude.model.chipTip"));
+    }
+  }
+
+  function placeClaudeChromeMenu(anchor: HTMLElement, menu: HTMLElement): void {
+    const rect = anchor.getBoundingClientRect();
+    const mw = menu.offsetWidth;
+    const mh = menu.offsetHeight;
+    let left = rect.left;
+    let top = rect.top - mh - 4;
+    left = Math.max(8, Math.min(left, window.innerWidth - mw - 8));
+    if (top < 8) top = Math.min(window.innerHeight - mh - 8, rect.bottom + 4);
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+  }
+
+  function openClaudeModeMenu(anchor: HTMLElement, card: ClaudeCard): void {
+    closeTerminalOverflowMenu();
+    const current = card.permissionMode || "auto";
+    const menu = document.createElement("div");
+    menu.className = "board-overflow-menu claude-chrome-menu";
+    menu.setAttribute("role", "menu");
+    menu.innerHTML = CLAUDE_PERMISSION_MODES.map(
+      (m) => `
+      <button type="button" class="board-overflow-item${m.id === current ? " is-active" : ""}" role="menuitemradio" aria-checked="${m.id === current ? "true" : "false"}" data-mode="${m.id}" title="${t(m.tipKey)}">
+        <span class="board-overflow-label">${t(m.labelKey)}</span>
+        ${m.id === current ? `<span class="board-overflow-ico" aria-hidden="true">${icons.check(13)}</span>` : ""}
+      </button>`
+    ).join("");
+    document.body.append(menu);
+    overflowMenuEl = menu;
+    placeClaudeChromeMenu(anchor, menu);
+
+    menu.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest(
+        "[data-mode]"
+      ) as HTMLElement | null;
+      const mode = btn?.dataset.mode as ClaudePermissionMode | undefined;
+      if (!mode) return;
+      closeTerminalOverflowMenu();
+      handlers.onClaudeSetPermissionMode(card.id, mode);
+    });
+    document.addEventListener("pointerdown", onOverflowOutside, true);
+    document.addEventListener("keydown", onOverflowKeydown, true);
+  }
+
+  function openClaudeModelMenu(anchor: HTMLElement, card: ClaudeCard): void {
+    closeTerminalOverflowMenu();
+    const effortNow =
+      card.effortLevel ||
+      (card.usage?.effortLevel as ClaudeEffortLevel | undefined) ||
+      "medium";
+    const effortLabel =
+      claudeEffortLabel(effortNow) || t("claude.effort.medium");
+
+    const menu = document.createElement("div");
+    menu.className = "board-overflow-menu claude-chrome-menu claude-model-picker";
+    menu.setAttribute("role", "menu");
+    menu.innerHTML = `
+      <div class="claude-picker-head">${t("claude.model.pickerTitle")}</div>
+      ${CLAUDE_MODELS_PRIMARY.map((m) => claudeModelRowHtml(m, card)).join("")}
+      <button type="button" class="board-overflow-item claude-picker-sub" data-open-effort>
+        <span class="board-overflow-label">${t("claude.effort.label")}</span>
+        <span class="claude-picker-subval">${effortLabel}</span>
+        <span class="board-overflow-ico" aria-hidden="true">${icons.chevronRight(13)}</span>
+      </button>
+      <button type="button" class="board-overflow-item claude-picker-sub" data-open-more>
+        <span class="board-overflow-label">${t("claude.model.more")}</span>
+        <span class="board-overflow-ico" aria-hidden="true">${icons.chevronRight(13)}</span>
+      </button>`;
+    document.body.append(menu);
+    overflowMenuEl = menu;
+    placeClaudeChromeMenu(anchor, menu);
+
+    let flyoutKind: "effort" | "more" | null = null;
+    let closeFlyTimer: number | undefined;
+
+    const clearCloseFlyTimer = () => {
+      if (closeFlyTimer != null) {
+        window.clearTimeout(closeFlyTimer);
+        closeFlyTimer = undefined;
+      }
+    };
+
+    const closeFlyout = () => {
+      clearCloseFlyTimer();
+      document.querySelectorAll(".claude-picker-flyout").forEach((n) => n.remove());
+      flyoutKind = null;
+      menu
+        .querySelectorAll(".claude-picker-sub.is-open")
+        .forEach((n) => n.classList.remove("is-open"));
+    };
+
+    const scheduleCloseFlyout = () => {
+      clearCloseFlyTimer();
+      // Longer grace so the pointer can cross the gap into the flyout.
+      closeFlyTimer = window.setTimeout(() => closeFlyout(), 280);
+    };
+
+    const openSubmenu = (
+      kind: "effort" | "more",
+      fromBtn: HTMLElement
+    ): void => {
+      clearCloseFlyTimer();
+      if (flyoutKind === kind) {
+        const existing = document.querySelector(".claude-picker-flyout");
+        if (existing) return;
+      }
+      closeFlyout();
+      clearCloseFlyTimer();
+      flyoutKind = kind;
+      fromBtn.classList.add("is-open");
+      const fly = document.createElement("div");
+      fly.className =
+        "board-overflow-menu claude-chrome-menu claude-picker-flyout";
+      fly.setAttribute("role", "menu");
+      if (kind === "effort") {
+        fly.classList.add("claude-effort-flyout");
+        fly.innerHTML = `
+        <div class="claude-effort-desc">${t("claude.effort.desc")}</div>
+        ${CLAUDE_EFFORT_LEVELS.map((e) => {
+          const selected = e.id === effortNow;
+          const badge = e.recommended
+            ? `<span class="claude-picker-badge">${t("claude.effort.recommended")}</span>`
+            : "";
+          return `
+        <button type="button" class="board-overflow-item${selected ? " is-active" : ""}" role="menuitemradio" data-effort="${e.id}" title="${t(e.tipKey)}">
+          <span class="board-overflow-label">${t(e.labelKey)}</span>
+          ${badge}
+          ${selected ? `<span class="board-overflow-ico" aria-hidden="true">${icons.check(13)}</span>` : ""}
+        </button>`;
+        }).join("")}`;
+      } else {
+        fly.classList.add("claude-more-flyout");
+        fly.innerHTML = CLAUDE_MODELS_MORE.map((m) =>
+          claudeModelRowHtml(m, card)
+        ).join("");
+      }
+      document.body.append(fly);
+      const parentRect = menu.getBoundingClientRect();
+      const btnRect = fromBtn.getBoundingClientRect();
+      const fw = fly.offsetWidth;
+      const fh = fly.offsetHeight;
+      // Overlap 2px so hover doesn't fall through the gap.
+      let left = parentRect.right - 2;
+      if (left + fw > window.innerWidth - 8) {
+        left = Math.max(8, parentRect.left - fw + 2);
+      }
+      let top = btnRect.top;
+      top = Math.max(8, Math.min(top, window.innerHeight - fh - 8));
+      fly.style.left = `${left}px`;
+      fly.style.top = `${top}px`;
+
+      fly.addEventListener("pointerenter", () => clearCloseFlyTimer());
+      fly.addEventListener("pointerleave", () => scheduleCloseFlyout());
+      fly.addEventListener("click", (ev) => {
+        const effortBtn = (ev.target as HTMLElement).closest(
+          "[data-effort]"
+        ) as HTMLElement | null;
+        if (effortBtn?.dataset.effort) {
+          closeTerminalOverflowMenu();
+          handlers.onClaudeSetEffort(
+            card.id,
+            effortBtn.dataset.effort as ClaudeEffortLevel
+          );
+          return;
+        }
+        const modelBtn = (ev.target as HTMLElement).closest(
+          "[data-model]"
+        ) as HTMLElement | null;
+        if (modelBtn?.dataset.model) {
+          closeTerminalOverflowMenu();
+          handlers.onClaudeSetModel(card.id, modelBtn.dataset.model);
+        }
+      });
+      fly.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+    };
+
+    const wireSubHover = (sel: string, kind: "effort" | "more") => {
+      const btn = menu.querySelector(sel) as HTMLElement | null;
+      if (!btn) return;
+      btn.addEventListener("pointerenter", () => openSubmenu(kind, btn));
+      btn.addEventListener("pointerleave", (e) => {
+        const to = e.relatedTarget;
+        if (to instanceof Element && to.closest(".claude-picker-flyout")) {
+          clearCloseFlyTimer();
+          return;
+        }
+        scheduleCloseFlyout();
+      });
+      // Keep click as a fallback for touch / keyboard activation.
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openSubmenu(kind, btn);
+      });
+    };
+    wireSubHover("[data-open-effort]", "effort");
+    wireSubHover("[data-open-more]", "more");
+
+    menu.addEventListener("pointerleave", (e) => {
+      const to = e.relatedTarget;
+      if (to instanceof Element && to.closest(".claude-picker-flyout")) return;
+      scheduleCloseFlyout();
+    });
+
+    menu.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest(
+        "[data-model]"
+      ) as HTMLElement | null;
+      if (!btn?.dataset.model) return;
+      if (btn.closest("[data-open-more], [data-open-effort]")) return;
+      closeTerminalOverflowMenu();
+      handlers.onClaudeSetModel(card.id, btn.dataset.model);
+    });
+    document.addEventListener("pointerdown", onOverflowOutside, true);
+    document.addEventListener("keydown", onOverflowKeydown, true);
+  }
+
+  function openClaudeOverflowMenu(
+    anchor: HTMLElement,
+    cardId: string
+  ): void {
+    closeTerminalOverflowMenu();
+    const menu = document.createElement("div");
+    menu.className = "board-overflow-menu";
+    menu.setAttribute("role", "menu");
+    menu.innerHTML = `
+      <button type="button" class="board-overflow-item" role="menuitem" data-action="worktree">
+        <span class="board-overflow-ico" aria-hidden="true">${icons.gitBranch(14)}</span>
+        <span class="board-overflow-label">${t("claude.worktree")}</span>
+      </button>
+      <button type="button" class="board-overflow-item" role="menuitem" data-action="send-to">
+        <span class="board-overflow-ico" aria-hidden="true">${icons.bot(14)}</span>
+        <span class="board-overflow-label">${t("claude.sendTo")}</span>
+      </button>`;
+    document.body.append(menu);
+    overflowMenuEl = menu;
+
+    const rect = anchor.getBoundingClientRect();
+    const mw = menu.offsetWidth;
+    const mh = menu.offsetHeight;
+    let left = rect.right - mw;
+    let top = rect.bottom + 4;
+    left = Math.max(8, Math.min(left, window.innerWidth - mw - 8));
+    if (top + mh > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - mh - 4);
+    }
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+
+    menu.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest(
+        "[data-action]"
+      ) as HTMLElement | null;
+      if (!btn?.dataset.action) return;
+      closeTerminalOverflowMenu();
+      handlers.onClaudeOverflowAction(
+        cardId,
+        btn.dataset.action as ClaudeOverflowAction
+      );
+    });
+    document.addEventListener("pointerdown", onOverflowOutside, true);
+    document.addEventListener("keydown", onOverflowKeydown, true);
+  }
+
+  function syncClaudeProjectChip(card: ClaudeCard): void {
+    const el = cardEls.get(card.id);
+    if (!el) return;
+    const chip = el.querySelector(
+      "[data-claude-project]"
+    ) as HTMLElement | null;
+    if (!chip) return;
+    const name = shortPathLabel(card.cwd);
+    chip.textContent = name;
+    chip.title = `${t("claude.projectChipTip")}: ${card.cwd}`;
+  }
+
+  function buildClaudeCard(card: ClaudeCard): HTMLElement {
+    const el = document.createElement("article");
+    el.className = "board-card board-card-claude";
+    el.tabIndex = -1;
+    el.dataset.cardId = card.id;
+    el.dataset.tabId = card.tabId;
+    el.innerHTML = `
+      <header class="board-card-head">
+        <span class="board-card-ico board-card-ico-claude" aria-hidden="true">${icons.bot(13)}</span>
+        <span class="board-card-title"></span>
+        <button type="button" class="claude-project-chip" data-claude-project title="${t("claude.projectChipTip")}"></button>
+        <span class="board-card-cwd" data-claude-cwd></span>
+        <span class="claude-usage" data-claude-usage aria-live="polite"></span>
+        <span class="board-card-status is-hidden" data-claude-status data-status="idle"></span>
+        <div class="board-card-actions">
+          <button type="button" class="icon ghost board-card-more" data-i18n-title="board.menu.more" title="${t("board.menu.more")}" aria-label="${t("board.menu.more")}" aria-haspopup="menu">${icons.more(13)}</button>
+          <button type="button" class="icon ghost board-card-min" data-i18n-title="board.minimize" title="Minimize">${icons.chevronDown(12)}</button>
+          <button type="button" class="icon ghost board-card-close" data-i18n-title="board.close" title="Close">×</button>
+        </div>
+      </header>
+      <div class="board-card-body">
+        <div class="board-term-host" data-term-host></div>
+        <div class="claude-chrome" data-claude-chrome>
+          <button type="button" class="mode-chip claude-chrome-chip" data-claude-mode aria-haspopup="menu" aria-expanded="false">
+            <span class="mode-icon" aria-hidden="true">${icons.lockView(12)}</span>
+            <span data-claude-mode-label></span>
+            <span class="mode-caret" aria-hidden="true">${icons.chevronDown(12)}</span>
+          </button>
+          <button type="button" class="model-chip claude-chrome-chip" data-claude-model aria-haspopup="menu" aria-expanded="false">
+            <span class="mode-icon" aria-hidden="true">${icons.sparkles(12)}</span>
+            <span data-claude-model-label></span>
+            <span class="mode-caret" aria-hidden="true">${icons.chevronDown(12)}</span>
+          </button>
+        </div>
+      </div>
+      <div class="board-card-resize" aria-hidden="true"></div>
+    `;
+    (el.querySelector(".board-card-title") as HTMLElement).textContent =
+      card.title;
+    const cwdEl = el.querySelector("[data-claude-cwd]") as HTMLElement;
+    cwdEl.textContent = shortPathLabel(card.cwd);
+    cwdEl.title = card.cwd;
+    syncClaudeUsageUi(card);
+    syncClaudeChromeUi(card);
+    syncClaudeProjectChip(card);
+    el.querySelector("[data-claude-project]")!.addEventListener(
+      "pointerdown",
+      (e) => {
+        const pe = e as PointerEvent;
+        if (spaceHeld || pe.button !== 0) return;
+        pe.preventDefault();
+        pe.stopPropagation();
+        setFocus({ kind: "claude", cardId: card.id, tabId: card.tabId });
+        handlers.onClaudeRevealProject?.(card.id);
+      }
+    );
+    el.addEventListener("pointerdown", (e) => {
+      if (spaceHeld || e.button !== 0) return;
+      // Chrome chips handle their own pointerdown (stopPropagation).
+      if (
+        (e.target as HTMLElement).closest(
+          "[data-claude-chrome], .board-card-more, [data-claude-project]"
+        )
+      ) {
+        return;
+      }
+      setFocus({ kind: "claude", cardId: card.id, tabId: card.tabId });
+    });
+
+    const liveClaude = () =>
+      cards.find(
+        (c): c is ClaudeCard => c.kind === "claude" && c.id === card.id
+      );
+
+    const onChromePointerDown = (
+      e: PointerEvent,
+      open: (btn: HTMLElement, live: ClaudeCard) => void
+    ) => {
+      if (spaceHeld || e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setFocus({ kind: "claude", cardId: card.id, tabId: card.tabId });
+      const btn = e.currentTarget as HTMLElement;
+      const live = liveClaude();
+      if (!live) return;
+      // Toggle: second press on the same chip closes.
+      if (overflowMenuEl) {
+        closeTerminalOverflowMenu();
+        return;
+      }
+      open(btn, live);
+    };
+
+    el.querySelector("[data-claude-mode]")!.addEventListener(
+      "pointerdown",
+      (e) =>
+        onChromePointerDown(e as PointerEvent, (btn, live) =>
+          openClaudeModeMenu(btn, live)
+        )
+    );
+    el.querySelector("[data-claude-model]")!.addEventListener(
+      "pointerdown",
+      (e) =>
+        onChromePointerDown(e as PointerEvent, (btn, live) =>
+          openClaudeModelMenu(btn, live)
+        )
+    );
+    el.querySelector(".board-card-more")!.addEventListener(
+      "pointerdown",
+      (e) => {
+        const pe = e as PointerEvent;
+        if (spaceHeld || pe.button !== 0) return;
+        pe.preventDefault();
+        pe.stopPropagation();
+        setFocus({ kind: "claude", cardId: card.id, tabId: card.tabId });
+        const btn = pe.currentTarget as HTMLElement;
+        if (overflowMenuEl) {
+          closeTerminalOverflowMenu();
+          return;
+        }
+        openClaudeOverflowMenu(btn, card.id);
+      }
+    );
     el.querySelector(".board-card-min")!.addEventListener("click", (e) => {
       e.stopPropagation();
       handlers.onToggleMinimize(card.id);
@@ -2362,22 +3174,34 @@ export function createBoardPane(
 
   function mountCard(card: BoardCard): void {
     const sessionTitle =
-      card.kind === "terminal" || card.kind === "prompt"
-        ? cards.find((c) => c.kind === "terminal" && c.tabId === card.tabId)
-            ?.title ?? card.tabId
+      card.kind === "terminal" ||
+      card.kind === "claude" ||
+      card.kind === "prompt"
+        ? cards.find(
+            (c) =>
+              (c.kind === "terminal" || c.kind === "claude") &&
+              c.tabId === card.tabId
+          )?.title ?? card.tabId
         : card.title;
     const el =
       card.kind === "terminal"
         ? buildTerminalCard(card)
-        : card.kind === "prompt"
-          ? buildPromptCard(card, sessionTitle)
-          : card.kind === "flowInspect"
-            ? buildFlowInspectCard(card)
-            : buildFlowCard(card);
+        : card.kind === "claude"
+          ? buildClaudeCard(card)
+          : card.kind === "prompt"
+            ? buildPromptCard(card, sessionTitle)
+            : card.kind === "flowInspect"
+              ? buildFlowInspectCard(card)
+              : buildFlowCard(card);
     cardEls.set(card.id, el);
     surface.append(el);
     layoutCard(card);
     if (card.kind === "prompt") syncPromptStatusBadge(card);
+    if (card.kind === "claude") {
+      syncClaudeStatusBadge(card);
+      syncClaudeUsageUi(card);
+      syncClaudeChromeUi(card);
+    }
     if (card.kind === "flow") syncFlowCardUi(card);
     if (card.kind === "flowInspect") syncFlowInspectUi(card);
     markMinimapDirty();
@@ -2395,7 +3219,7 @@ export function createBoardPane(
     cardH = TERM_H
   ): { x: number; y: number } {
     const center = viewportWorldCenter();
-    const n = cards.filter((c) => c.kind === "terminal").length;
+    const n = cards.filter((c) => isPtyCard(c)).length;
     const col = n % 3;
     const row = Math.floor(n / 3) % 3;
     const offsetX = col * 56 + row * 12;
@@ -2491,7 +3315,13 @@ export function createBoardPane(
           if (canScrollVertically(scrollSurface, dy)) {
             return;
           }
-          // No more vertical room — fall through to board pan.
+          // xterm may still consume wheel with no DOM overflow: alt buffer and
+          // mouse tracking (Claude Code, vim, less). Let it reach xterm instead
+          // of stealing the gesture for board pan.
+          if (scrollSurface.classList.contains("xterm-viewport")) {
+            return;
+          }
+          // Other surfaces (chat/log) at edge — fall through to board pan.
         }
       }
 
@@ -2719,9 +3549,167 @@ export function createBoardPane(
       schedulePersist();
       return card;
     },
+    addClaude({
+      tabId,
+      title,
+      cwd,
+      sessionId,
+      cardId,
+      agentStatus,
+      activate = true,
+      x,
+      y,
+      w,
+      h,
+      minimized,
+      z,
+    }) {
+      let card = cards.find(
+        (c): c is ClaudeCard =>
+          c.kind === "claude" &&
+          (c.id === cardId || (Boolean(tabId) && c.tabId === tabId))
+      );
+      if (!card) {
+        const origin = cascadeOrigin(TERM_W, TERM_H);
+        card = {
+          id: cardId || uid("claude"),
+          kind: "claude",
+          tabId,
+          title,
+          cwd,
+          sessionId,
+          agentStatus: agentStatus || "idle",
+          permissionMode: "auto",
+          minimized: Boolean(minimized),
+          x: x ?? origin.x,
+          y: y ?? origin.y,
+          w: w ?? TERM_W,
+          h: h ?? TERM_H,
+          z: z ?? nextZ(),
+        };
+        clampCardInWorld(card);
+        cards = [...cards, card];
+        mountCard(card);
+      } else {
+        card.tabId = tabId;
+        card.title = title;
+        card.cwd = cwd;
+        card.sessionId = sessionId;
+        if (agentStatus) card.agentStatus = agentStatus;
+        const el = cardEls.get(card.id);
+        if (el) {
+          el.dataset.tabId = tabId;
+          const titleEl = el.querySelector(".board-card-title");
+          if (titleEl) titleEl.textContent = title;
+          const cwdEl = el.querySelector("[data-claude-cwd]") as HTMLElement | null;
+          if (cwdEl) {
+            cwdEl.textContent = shortPathLabel(cwd);
+            cwdEl.title = cwd;
+          }
+          syncClaudeStatusBadge(card);
+          syncClaudeProjectChip(card);
+        }
+        markMinimapDirty();
+      }
+      if (activate) {
+        card.minimized = false;
+        card.z = nextZ();
+        layoutCard(card);
+        setFocus({ kind: "claude", cardId: card.id, tabId });
+      }
+      syncEmpty();
+      markMinimapDirty();
+      schedulePersist();
+      return card;
+    },
+    updateClaude(cardId, patch) {
+      const card = cards.find(
+        (c): c is ClaudeCard => c.kind === "claude" && c.id === cardId
+      );
+      if (!card) return;
+      Object.assign(card, patch);
+      const el = cardEls.get(card.id);
+      if (el) {
+        if (patch.tabId) el.dataset.tabId = patch.tabId;
+        if (patch.title) {
+          const titleEl = el.querySelector(".board-card-title");
+          if (titleEl) titleEl.textContent = patch.title;
+        }
+        if (patch.cwd) {
+          const cwdEl = el.querySelector(
+            "[data-claude-cwd]"
+          ) as HTMLElement | null;
+          if (cwdEl) {
+            cwdEl.textContent = shortPathLabel(patch.cwd);
+            cwdEl.title = patch.cwd;
+          }
+          syncClaudeProjectChip(card);
+        }
+        if (patch.agentStatus) syncClaudeStatusBadge(card);
+      }
+      markMinimapDirty();
+      schedulePersist();
+    },
+    setClaudeAgentStatus(cardId, status) {
+      const card = cards.find(
+        (c): c is ClaudeCard => c.kind === "claude" && c.id === cardId
+      );
+      if (!card) return;
+      card.agentStatus = status;
+      syncClaudeStatusBadge(card);
+      schedulePersist();
+    },
+    setClaudeUsage(cardId, usage) {
+      const card = cards.find(
+        (c): c is ClaudeCard => c.kind === "claude" && c.id === cardId
+      );
+      if (!card) return;
+      card.usage = {
+        ...card.usage,
+        ...usage,
+        // Keep prior model/effort if this tick only carried rate limits.
+        modelId: usage.modelId ?? card.usage?.modelId,
+        modelLabel: usage.modelLabel ?? card.usage?.modelLabel,
+        effortLevel: usage.effortLevel ?? card.usage?.effortLevel,
+      };
+      if (usage.effortLevel) {
+        card.effortLevel = usage.effortLevel as ClaudeEffortLevel;
+      }
+      syncClaudeUsageUi(card);
+      syncClaudeChromeUi(card);
+    },
+    setClaudePermissionMode(cardId, mode) {
+      const card = cards.find(
+        (c): c is ClaudeCard => c.kind === "claude" && c.id === cardId
+      );
+      if (!card) return;
+      card.permissionMode = mode;
+      syncClaudeChromeUi(card);
+    },
+    setClaudeEffortLevel(cardId, effort) {
+      const card = cards.find(
+        (c): c is ClaudeCard => c.kind === "claude" && c.id === cardId
+      );
+      if (!card) return;
+      card.effortLevel = effort;
+      if (card.usage) {
+        card.usage = { ...card.usage, effortLevel: effort };
+      }
+      syncClaudeChromeUi(card);
+    },
     getTerminalHost(tabId) {
       const card = cards.find(
-        (c): c is TerminalCard => c.kind === "terminal" && c.tabId === tabId
+        (c): c is PtyBoardCard => isPtyCard(c) && c.tabId === tabId
+      );
+      if (!card) return null;
+      const el = cardEls.get(card.id);
+      return (
+        (el?.querySelector("[data-term-host]") as HTMLElement | null) ?? null
+      );
+    },
+    getClaudeHost(cardId) {
+      const card = cards.find(
+        (c): c is ClaudeCard => c.kind === "claude" && c.id === cardId
       );
       if (!card) return null;
       const el = cardEls.get(card.id);
@@ -2731,7 +3719,7 @@ export function createBoardPane(
     },
     minimizeOtherTerminals(exceptTabId) {
       for (const c of cards) {
-        if (c.kind === "terminal" && c.tabId !== exceptTabId) {
+        if (isPtyCard(c) && c.tabId !== exceptTabId) {
           if (!c.minimized) {
             snow.dump(c.id);
             leaves.dump(c.id);
@@ -2748,13 +3736,17 @@ export function createBoardPane(
     },
     expandTerminal(tabId) {
       const card = cards.find(
-        (c): c is TerminalCard => c.kind === "terminal" && c.tabId === tabId
+        (c): c is PtyBoardCard => isPtyCard(c) && c.tabId === tabId
       );
       if (!card) return;
       card.minimized = false;
       bringToFront(card.id);
       layoutCard(card);
-      setFocus({ kind: "terminal", cardId: card.id, tabId });
+      setFocus({
+        kind: card.kind,
+        cardId: card.id,
+        tabId,
+      });
       markMinimapDirty();
       schedulePersist();
     },
@@ -2762,7 +3754,10 @@ export function createBoardPane(
       const removeIds = cards
         .filter(
           (c) =>
-            (c.kind === "terminal" || c.kind === "prompt") && c.tabId === tabId
+            (c.kind === "terminal" ||
+              c.kind === "claude" ||
+              c.kind === "prompt") &&
+            c.tabId === tabId
         )
         .map((c) => c.id);
       for (const id of removeIds) {
@@ -2775,7 +3770,9 @@ export function createBoardPane(
       cards = cards.filter(
         (c) =>
           !(
-            (c.kind === "terminal" || c.kind === "prompt") &&
+            (c.kind === "terminal" ||
+              c.kind === "claude" ||
+              c.kind === "prompt") &&
             c.tabId === tabId
           )
       );
@@ -2997,24 +3994,32 @@ export function createBoardPane(
       els.composer.classList.toggle("is-follow-up", busy);
     },
     applyPersisted(state, liveTabIds) {
-      // Keep live terminal cards (openLocal may already have mounted them).
-      // Only replace prompt/flow cards from disk — never wipe active terminals.
-      const keptTerminals = cards.filter(
-        (c): c is TerminalCard =>
-          c.kind === "terminal" && liveTabIds.has(c.tabId)
+      // Keep live terminal/claude cards (openLocal/openClaude may already have mounted them).
+      // Only replace prompt/flow cards from disk — never wipe active PTYs.
+      const keptPty = cards.filter(
+        (c): c is PtyBoardCard => isPtyCard(c) && liveTabIds.has(c.tabId)
       );
       for (const [id, el] of [...cardEls]) {
         const existing = cards.find((c) => c.id === id);
-        if (existing?.kind === "terminal" && liveTabIds.has(existing.tabId)) {
+        if (
+          existing &&
+          isPtyCard(existing) &&
+          liveTabIds.has(existing.tabId)
+        ) {
           continue;
         }
         el.remove();
         cardEls.delete(id);
       }
-      cards = [...keptTerminals];
-      zCounter = Math.max(1, ...keptTerminals.map((c) => c.z), 1);
+      cards = [...keptPty];
+      zCounter = Math.max(1, ...keptPty.map((c) => c.z), 1);
 
       for (const raw of state.cards) {
+        if (raw.kind === "claude") {
+          // Claude PTYs are reopened by the renderer after applyPersisted.
+          // Skip here so we don't mount empty shells with stale tabIds.
+          continue;
+        }
         if (raw.kind === "prompt") {
           if (!liveTabIds.has(raw.tabId)) continue;
           const savedStatus = raw.runStatus || "idle";
@@ -3084,13 +4089,13 @@ export function createBoardPane(
       // Saved camera can leave the new terminal off-screen — bring focus into view.
       const focused =
         (focus && cards.find((c) => c.id === focus!.cardId)) ||
-        keptTerminals[0];
+        keptPty[0];
       if (focused) {
         ensureCardVisible(focused);
         if (!focus || focus.cardId !== focused.id) {
-          if (focused.kind === "terminal") {
+          if (focused.kind === "terminal" || focused.kind === "claude") {
             setFocus({
-              kind: "terminal",
+              kind: focused.kind,
               cardId: focused.id,
               tabId: focused.tabId,
             });
@@ -3109,13 +4114,26 @@ export function createBoardPane(
     },
     toPersisted() {
       return {
-        cards: cards.map((c) => ({ ...c })),
+        cards: cards.map((c) => {
+          if (c.kind === "claude") {
+            const status = c.agentStatus || "idle";
+            return {
+              ...c,
+              agentStatus:
+                status === "running" || status === "waiting" ? "idle" : status,
+            };
+          }
+          return { ...c };
+        }),
         camera: { ...camera },
       };
     },
     refreshTitles(tabId, title) {
       for (const c of cards) {
-        if (c.kind === "terminal" && c.tabId === tabId) {
+        if (
+          (c.kind === "terminal" || c.kind === "claude") &&
+          c.tabId === tabId
+        ) {
           c.title = title;
           const el = cardEls.get(c.id);
           const titleEl = el?.querySelector(".board-card-title");
@@ -3134,7 +4152,7 @@ export function createBoardPane(
     focusCard,
     setMinimized(cardId, minimized) {
       const card = cards.find((c) => c.id === cardId);
-      if (!card || card.kind !== "terminal") return;
+      if (!card || !isPtyCard(card)) return;
       if (minimized && !card.minimized) {
         snow.dump(cardId);
         leaves.dump(cardId);

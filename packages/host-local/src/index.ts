@@ -402,12 +402,22 @@ function prepareWindowsPowerShellEnv(
   env.DRIFT_PS_PROFILE = profilePath;
 }
 
+/**
+ * Interactive login shell. Optional `command` runs first (Patchbay-style),
+ * then the shell stays open when the command exits.
+ */
 export function createLocalPty(opts?: {
   cwd?: string;
   cols?: number;
   rows?: number;
   /** Windows local shell preference. Ignored on macOS/Linux. */
   shellKind?: LocalShellId;
+  /** Run once at start (e.g. `claude --resume …`), then keep the shell. */
+  command?: string;
+  /** Extra env merged after cleanEnv (overrides). */
+  env?: Record<string, string>;
+  /** Env keys to strip after cleanEnv (e.g. nested Claude session vars). */
+  stripEnvKeys?: string[];
 }): LocalPtyBackend {
   const shellKind = opts?.shellKind ?? "powershell";
   const shell = defaultShell(shellKind);
@@ -418,8 +428,11 @@ export function createLocalPty(opts?: {
       : process.env.HOME || os.homedir());
   const id = newId();
   const env = cleanEnv();
+  for (const k of opts?.stripEnvKeys ?? []) delete env[k];
+  if (opts?.env) Object.assign(env, opts.env);
   const base = shellBaseName(shell);
   const isPowerShell = base === "powershell" || base === "pwsh";
+  const command = opts?.command?.trim() || "";
 
   if (isWin() && isPowerShell) {
     prepareWindowsPowerShellEnv(shell, id, env);
@@ -428,7 +441,17 @@ export function createLocalPty(opts?: {
   }
 
   let args = shellArgs(shell, isWin() ? shellKind : undefined);
-  if (isWin() && isPowerShell && env.DRIFT_PS_PROFILE) {
+  if (command) {
+    if (isWin() && isPowerShell) {
+      const profileBoot = env.DRIFT_PS_PROFILE
+        ? `if (Test-Path $env:DRIFT_PS_PROFILE) { . $env:DRIFT_PS_PROFILE }; `
+        : "";
+      args = ["-NoLogo", "-NoExit", "-Command", `${profileBoot}${command}`];
+    } else if (!isWin()) {
+      // Login interactive: run agent, then replace with a fresh interactive shell.
+      args = ["-ilc", `${command}; exec ${shell} -il`];
+    }
+  } else if (isWin() && isPowerShell && env.DRIFT_PS_PROFILE) {
     // Load our OSC 7 prompt without replacing the user's default profile permanently.
     args = [
       "-NoLogo",

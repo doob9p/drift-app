@@ -33,6 +33,7 @@ import {
   isApiKeyError,
   openCursorApiKeysPage,
 } from "./cursor-api-key.js";
+import { CURSOR_API_UI_ENABLED } from "./feature-flags.js";
 import { showToast } from "./toast.js";
 import {
   SHORTCUT_CATEGORIES,
@@ -47,11 +48,19 @@ import {
   createBoardPane,
   MAX_PROMPT_SUBS,
   type BoardPane,
+  type ClaudeOverflowAction,
   type TerminalOverflowAction,
 } from "./board-pane.js";
+import {
+  createProjectsRail,
+  type ProjectsRailController,
+} from "./claude-projects-rail.js";
 import type {
   BoardFocus,
   BoardPersistedState,
+  ClaudeCard,
+  ClaudeEffortLevel,
+  ClaudePermissionMode,
   FlowCard,
   FlowCardStepState,
   PromptCard,
@@ -228,7 +237,13 @@ const state = {
   startedAssistant: false,
 };
 
-type NavId = "sessions" | "files" | "flows" | "meetings" | "settings";
+type NavId =
+  | "sessions"
+  | "projects"
+  | "files"
+  | "flows"
+  | "meetings"
+  | "settings";
 const tabCwds = new Map<string, string>();
 
 if (/Mac|darwin/i.test(navigator.userAgent)) {
@@ -279,6 +294,17 @@ app.innerHTML = `
           <span class="strip-bar"><span id="strip-api-bar"></span></span>
           <span class="strip-metric-val" id="strip-api-val">—</span>
         </div>
+        <div class="strip-metric hidden" id="strip-claude-5h" data-i18n-title="strip.claude5hTitle" title="Claude 5-hour remaining">
+          <span class="strip-metric-ico">${icons.bot(13)}</span>
+          <span class="strip-metric-label" data-i18n="claude.usage.fiveHour">5h</span>
+          <span class="strip-bar"><span id="strip-claude-5h-bar"></span></span>
+          <span class="strip-metric-val" id="strip-claude-5h-val">—</span>
+        </div>
+        <div class="strip-metric hidden" id="strip-claude-7d" data-i18n-title="strip.claude7dTitle" title="Claude weekly remaining">
+          <span class="strip-metric-label" data-i18n="claude.usage.sevenDay">Wk</span>
+          <span class="strip-bar"><span id="strip-claude-7d-bar"></span></span>
+          <span class="strip-metric-val" id="strip-claude-7d-val">—</span>
+        </div>
       </div>
     </header>
 
@@ -290,6 +316,7 @@ app.innerHTML = `
           </div>
           <div class="rail-group">
             <button type="button" class="rail-btn active" data-nav="sessions" data-i18n-title="nav.sessions" title="Sessions" aria-label="Sessions">${icons.server(17)}</button>
+            <button type="button" class="rail-btn" data-nav="projects" data-i18n-title="nav.projects" title="Projects" aria-label="Projects">${icons.bot(17)}</button>
             <button type="button" class="rail-btn" data-nav="files" data-i18n-title="nav.files" title="Files" aria-label="Files">${icons.folder(17)}</button>
             <button type="button" class="rail-btn" data-nav="flows" data-i18n-title="nav.flows" title="Flows" aria-label="Flows">${icons.flow(17)}</button>
           </div>
@@ -342,12 +369,86 @@ app.innerHTML = `
           <ul class="session-list" id="session-list"></ul>
         </section>
 
+        <section class="nav-view hidden projects-view" data-view="projects">
+          <div class="sidebar-tools">
+            <button type="button" class="primary" id="btn-claude-projects">
+              ${icons.bot(14)}
+              <span data-i18n="sidebar.newClaude">New Claude</span>
+            </button>
+            <button type="button" class="sidebar-add-ssh" id="btn-claude-import">
+              <span data-i18n="projects.import.button">Import</span>
+            </button>
+          </div>
+          <div class="claude-import-pop hidden" id="claude-import-pop" aria-hidden="true">
+            <div class="claude-import-head">
+              <strong data-i18n="projects.import.title">Past sessions</strong>
+              <button type="button" class="icon ghost" id="btn-claude-import-close" aria-label="Close">${icons.close(14)}</button>
+            </div>
+            <input type="search" id="claude-import-search" class="claude-import-search" data-i18n-placeholder="projects.import.search" placeholder="Search" />
+            <ul class="claude-import-list" id="claude-import-list"></ul>
+          </div>
+          <div class="section-label section-label-projects">
+            <span data-i18n="projects.listTitle">Folders</span>
+            <div class="section-label-actions" role="group" aria-label="Projects">
+              <button
+                type="button"
+                class="icon ghost section-label-btn"
+                id="btn-refresh-projects"
+                data-i18n-title="projects.refresh"
+                title="Refresh"
+                aria-label="Refresh"
+              >${icons.refresh(14)}</button>
+            </div>
+          </div>
+          <div class="claude-projects-rail" id="claude-projects-rail"></div>
+          <form class="claude-wt-form hidden" id="claude-wt-form" autocomplete="off">
+            <div class="claude-wt-head">
+              <div class="claude-wt-repo" data-wt-repo></div>
+              <button type="button" class="icon ghost" data-wt-cancel aria-label="Close">${icons.close(13)}</button>
+            </div>
+            <label class="claude-wt-field">
+              <span data-i18n="projects.worktree.branch">Branch</span>
+              <input type="text" data-wt-branch spellcheck="false" required />
+            </label>
+            <label class="claude-wt-field">
+              <span data-i18n="projects.worktree.base">Base</span>
+              <select data-wt-base></select>
+            </label>
+            <div class="claude-wt-preview" data-wt-preview></div>
+            <div class="claude-wt-error" data-wt-error></div>
+            <div class="claude-wt-actions">
+              <button type="submit" class="primary" data-wt-submit data-i18n="projects.worktree.create">Create</button>
+            </div>
+          </form>
+        </section>
+
         <section class="nav-view hidden" data-view="flows">
           <div class="sidebar-tools">
             <button class="primary" id="btn-new-flow">
               ${icons.flow(14)}
               <span data-i18n="sidebar.newFlow">New flow</span>
             </button>
+          </div>
+          <div class="section-label section-label-hosts">
+            <span data-i18n="sidebar.flows">Flows</span>
+            <div class="section-label-actions" role="group" aria-label="Flow folders">
+              <button
+                type="button"
+                class="icon ghost section-label-btn"
+                id="btn-add-flow-folder"
+                data-i18n-title="sidebar.addFolder"
+                title="New folder"
+                aria-label="New folder"
+              >${icons.folderPlus(14)}</button>
+              <button
+                type="button"
+                class="icon ghost section-label-btn"
+                id="btn-collapse-flow-folders"
+                data-i18n-title="sidebar.collapseFolders"
+                title="Collapse folders"
+                aria-label="Collapse folders"
+              >${icons.foldVertical(14)}</button>
+            </div>
           </div>
           <div class="flow-list-empty" id="flow-list-empty" data-i18n="sidebar.flowsEmpty">No saved flows yet</div>
           <ul class="flow-list" id="flow-list"></ul>
@@ -464,11 +565,11 @@ app.innerHTML = `
       <aside class="settings-side">
         <h2 id="settings-title" data-i18n="settings.title">Settings</h2>
         <nav class="settings-side-nav" aria-label="Settings">
-          <button type="button" class="settings-side-item is-active" data-settings-cat="api">
+          <button type="button" class="settings-side-item${CURSOR_API_UI_ENABLED ? " is-active" : " hidden"}" data-settings-cat="api"${CURSOR_API_UI_ENABLED ? "" : ' hidden aria-hidden="true"'}>
             <span class="settings-side-ico" aria-hidden="true">${icons.sparkles(15)}</span>
             <span data-i18n="settings.cat.api">API</span>
           </button>
-          <button type="button" class="settings-side-item" data-settings-cat="general">
+          <button type="button" class="settings-side-item${CURSOR_API_UI_ENABLED ? "" : " is-active"}" data-settings-cat="general">
             <span class="settings-side-ico" aria-hidden="true">${icons.settings(15)}</span>
             <span data-i18n="settings.cat.general">General</span>
           </button>
@@ -492,7 +593,7 @@ app.innerHTML = `
           aria-label="Close"
         >${icons.close(14)}</button>
 
-        <div class="settings-pane" data-settings-pane="api">
+        <div class="settings-pane${CURSOR_API_UI_ENABLED ? "" : " hidden"}" data-settings-pane="api">
           <div class="form-grid settings-form">
             <div class="settings-api-key">
               <span data-i18n="settings.apiKey">Cursor API key</span>
@@ -521,7 +622,7 @@ app.innerHTML = `
           </div>
         </div>
 
-        <div class="settings-pane hidden" data-settings-pane="general">
+        <div class="settings-pane${CURSOR_API_UI_ENABLED ? " hidden" : ""}" data-settings-pane="general">
           <div class="form-grid settings-form">
             <label>
               <span data-i18n="settings.language">Language</span>
@@ -843,6 +944,12 @@ const els = {
   stripApi: document.getElementById("strip-api")!,
   stripApiBar: document.getElementById("strip-api-bar")!,
   stripApiVal: document.getElementById("strip-api-val")!,
+  stripClaude5h: document.getElementById("strip-claude-5h")!,
+  stripClaude5hBar: document.getElementById("strip-claude-5h-bar")!,
+  stripClaude5hVal: document.getElementById("strip-claude-5h-val")!,
+  stripClaude7d: document.getElementById("strip-claude-7d")!,
+  stripClaude7dBar: document.getElementById("strip-claude-7d-bar")!,
+  stripClaude7dVal: document.getElementById("strip-claude-7d-val")!,
   modalSsh: document.getElementById("modal-ssh")!,
   modalSettings: document.getElementById("modal-settings")!,
   btnSettingsClose: document.getElementById(
@@ -2244,7 +2351,88 @@ function setMetricWarn(el: HTMLElement, hot: boolean): void {
 
 let accountUsageInFlight = false;
 
+type ClaudeStripUsage = {
+  fiveHour?: { usedPercent: number; resetsAt?: number };
+  sevenDay?: { usedPercent: number; resetsAt?: number };
+  updatedAt: number;
+};
+
+let claudeStripUsage: ClaudeStripUsage | null = null;
+
+function formatClaudeResetHint(resetsAt?: number): string {
+  if (!resetsAt) return "";
+  const ms = resetsAt * 1000 - Date.now();
+  if (ms <= 0) return t("claude.usage.resetSoon");
+  const mins = Math.round(ms / 60_000);
+  if (mins < 60) return t("claude.usage.resetInMin", { n: String(mins) });
+  return t("claude.usage.resetInHour", { n: String(Math.round(mins / 60)) });
+}
+
+function refreshClaudeStripUsage(): void {
+  const hasClaudeCard = board
+    .getCards()
+    .some((c) => c.kind === "claude");
+  const usage = claudeStripUsage;
+  if (!hasClaudeCard && !usage) {
+    els.stripClaude5h.classList.add("hidden");
+    els.stripClaude7d.classList.add("hidden");
+    return;
+  }
+  els.stripClaude5h.classList.remove("hidden");
+  els.stripClaude7d.classList.remove("hidden");
+
+  const paint = (
+    root: HTMLElement,
+    bar: HTMLElement,
+    val: HTMLElement,
+    window: { usedPercent: number; resetsAt?: number } | undefined,
+    tipKey: "claude.usage.fiveHourTip" | "claude.usage.sevenDayTip",
+    titleKey: string
+  ) => {
+    if (!window) {
+      val.textContent = "—";
+      bar.style.width = "4%";
+      root.title = t("strip.claudePendingTip");
+      setMetricWarn(root, false);
+      return;
+    }
+    const used = Math.max(0, Math.min(100, Math.round(window.usedPercent)));
+    const left = Math.max(0, 100 - used);
+    // Same shape as Disk: bar fill + percent value (remaining, since this is plan headroom).
+    val.textContent = `${left}%`;
+    bar.style.width = `${Math.max(4, used)}%`;
+    const tip = t(tipKey, {
+      used: String(used),
+      left: String(left),
+    });
+    const reset = formatClaudeResetHint(window.resetsAt);
+    root.title = [t(titleKey), tip, reset].filter(Boolean).join(" · ");
+    setMetricWarn(root, used >= 85);
+  };
+
+  paint(
+    els.stripClaude5h,
+    els.stripClaude5hBar,
+    els.stripClaude5hVal,
+    usage?.fiveHour,
+    "claude.usage.fiveHourTip",
+    "strip.claude5hTitle"
+  );
+  paint(
+    els.stripClaude7d,
+    els.stripClaude7dBar,
+    els.stripClaude7dVal,
+    usage?.sevenDay,
+    "claude.usage.sevenDayTip",
+    "strip.claude7dTitle"
+  );
+}
+
 async function refreshAccountUsage(): Promise<void> {
+  if (!CURSOR_API_UI_ENABLED) {
+    els.stripApi.classList.add("hidden");
+    return;
+  }
   if (accountUsageInFlight) return;
   accountUsageInFlight = true;
   try {
@@ -3234,8 +3422,20 @@ function terminalCardForTab(tabId: string): TerminalCard | undefined {
     );
 }
 
+/** Terminal or Claude board card that owns this PTY tab. */
+function ptyCardForTab(
+  tabId: string
+): TerminalCard | ClaudeCard | undefined {
+  return board
+    .getCards()
+    .find(
+      (c): c is TerminalCard | ClaudeCard =>
+        (c.kind === "terminal" || c.kind === "claude") && c.tabId === tabId
+    );
+}
+
 function isTabTerminalExpanded(tabId: string): boolean {
-  const card = terminalCardForTab(tabId);
+  const card = ptyCardForTab(tabId);
   return Boolean(card && !card.minimized);
 }
 
@@ -3334,8 +3534,11 @@ board = createBoardPane(els.boardStage, {
     syncPromptContexts();
     refreshStatusStrip();
     void refreshStripMetrics();
-    // Files panel follows board terminal selection only.
-    if (focus.kind === "terminal" && focus.tabId) {
+    // Files panel follows board terminal / Claude selection.
+    if (
+      (focus.kind === "terminal" || focus.kind === "claude") &&
+      focus.tabId
+    ) {
       filesFollowTabId = focus.tabId;
       void syncFilesPanel();
       const tab = state.tabs.get(focus.tabId);
@@ -3349,7 +3552,7 @@ board = createBoardPane(els.boardStage, {
   },
   onToggleMinimize(cardId) {
     const card = board.findCard(cardId);
-    if (!card || card.kind !== "terminal") return;
+    if (!card || (card.kind !== "terminal" && card.kind !== "claude")) return;
     const minimized = !card.minimized;
     board.setMinimized(cardId, minimized);
     if (minimized) removeBroadcastMember(card.tabId);
@@ -3372,6 +3575,24 @@ board = createBoardPane(els.boardStage, {
   },
   onTerminalOverflowAction(tabId, action) {
     void handleTerminalOverflowAction(tabId, action);
+  },
+  onClaudeOverflowAction(cardId, action) {
+    void handleClaudeOverflowAction(cardId, action);
+  },
+  onClaudeSetPermissionMode(cardId, mode) {
+    void setClaudePermissionMode(cardId, mode);
+  },
+  onClaudeSetModel(cardId, model) {
+    void setClaudeModel(cardId, model);
+  },
+  onClaudeSetEffort(cardId, effort) {
+    void setClaudeEffort(cardId, effort);
+  },
+  onClaudeRevealProject(cardId) {
+    const card = board.findCard(cardId);
+    if (!card || card.kind !== "claude") return;
+    setNav("projects");
+    projectsRail?.highlightPath(card.cwd);
   },
   onToggleBroadcast() {
     toggleBroadcastInput();
@@ -3493,6 +3714,61 @@ board = createBoardPane(els.boardStage, {
   onLayoutChange: () => scheduleBoardSave(),
 });
 
+let projectsRail: ProjectsRailController | null = null;
+
+projectsRail = createProjectsRail(api, {
+  getBoardClaudeCards: () =>
+    board
+      .getCards()
+      .filter((c): c is ClaudeCard => c.kind === "claude")
+      .map((c) => ({
+        cardId: c.id,
+        tabId: c.tabId,
+        cwd: c.cwd,
+        title: c.title,
+        sessionId: c.sessionId,
+        agentStatus: c.agentStatus,
+      })),
+  openClaudeAt: async (cwd, opts) => {
+    const detected = await api.detectClaude();
+    if (!detected.ok || detected.source !== "path") {
+      showClaudeMissingCliToast({
+        allowBundled: Boolean(detected.ok && detected.source === "bundled"),
+      });
+      return;
+    }
+    await openClaudeSession({ cwd, title: opts?.title });
+    projectsRail?.scheduleRefresh();
+  },
+  focusClaudeCard: (cardId) => {
+    const card = board.findCard(cardId);
+    if (!card || card.kind !== "claude") return;
+    board.setFocus({ kind: "claude", cardId: card.id, tabId: card.tabId });
+    void focusClaudeTab(card.tabId);
+  },
+  openClaudeResume: async (input) => {
+    const detected = await api.detectClaude();
+    if (!detected.ok || detected.source !== "path") {
+      showClaudeMissingCliToast({
+        allowBundled: Boolean(detected.ok && detected.source === "bundled"),
+      });
+      return;
+    }
+    await openClaudeSession({
+      cwd: input.cwd,
+      sessionId: input.sessionId,
+      title: input.title,
+    });
+    projectsRail?.scheduleRefresh();
+  },
+  pickDirectory: () => api.pickDirectory({ title: t("claude.pickCwd") }),
+  showToast,
+  onActiveCwdChange: () => {
+    /* active cwd used by New Claude */
+  },
+});
+void projectsRail.refresh();
+
 function flowStepsToCardStates(flow: FlowDef): FlowCardStepState[] {
   return flow.steps.map((s) => ({
     stepId: s.id,
@@ -3560,24 +3836,504 @@ function openFlowEditorAndPlace(flowId?: string): void {
 
 let sidebarFlows: FlowDef[] = [];
 
+const FLOW_FOLDERS_KEY = "drift.flowFolders";
+const FLOW_FOLDERS_COLLAPSED_KEY = "drift.flowFoldersCollapsed";
+const FLOW_DND_TYPE = "application/x-drift-flow-id";
+const FLOW_FOLDER_DND_TYPE = "application/x-drift-flow-folder-name";
+
+function loadStoredFlowFolderNames(): string[] {
+  try {
+    const raw = localStorage.getItem(FLOW_FOLDERS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const item of parsed) {
+      const name = normalizeFolderName(String(item ?? ""));
+      if (!name) continue;
+      const key = folderKey(name);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(name);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredFlowFolderNames(names: string[]): void {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of names) {
+    const name = normalizeFolderName(raw);
+    if (!name) continue;
+    const key = folderKey(name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  localStorage.setItem(FLOW_FOLDERS_KEY, JSON.stringify(out));
+}
+
+function mergedFlowFolderNames(flows: FlowDef[]): string[] {
+  const names = loadStoredFlowFolderNames();
+  const seen = new Set(names.map(folderKey));
+  let changed = false;
+  for (const f of flows) {
+    const name = normalizeFolderName(f.folder ?? "");
+    if (!name) continue;
+    const key = folderKey(name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+    changed = true;
+  }
+  if (changed) saveStoredFlowFolderNames(names);
+  return names;
+}
+
+function loadCollapsedFlowFolders(): Set<string> {
+  try {
+    const raw = localStorage.getItem(FLOW_FOLDERS_COLLAPSED_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(
+      parsed
+        .map((x) => folderKey(String(x ?? "")))
+        .filter(Boolean)
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedFlowFolders(keys: Set<string>): void {
+  localStorage.setItem(
+    FLOW_FOLDERS_COLLAPSED_KEY,
+    JSON.stringify([...keys])
+  );
+}
+
+function isFlowFolderCollapsed(name: string): boolean {
+  return loadCollapsedFlowFolders().has(folderKey(name));
+}
+
+function setFlowFolderCollapsed(name: string, collapsed: boolean): void {
+  const keys = loadCollapsedFlowFolders();
+  const key = folderKey(name);
+  if (collapsed) keys.add(key);
+  else keys.delete(key);
+  saveCollapsedFlowFolders(keys);
+}
+
+function clearFlowFolderReorderMarks(): void {
+  for (const el of els.flowList.querySelectorAll(".session-folder")) {
+    el.classList.remove("is-drop-before", "is-drop-after");
+  }
+}
+
+function reorderFlowFolder(
+  from: string,
+  to: string,
+  place: "before" | "after"
+): void {
+  if (folderKey(from) === folderKey(to)) return;
+  const names = mergedFlowFolderNames(sidebarFlows);
+  const fromIdx = names.findIndex((n) => folderKey(n) === folderKey(from));
+  if (fromIdx < 0) return;
+  const [moved] = names.splice(fromIdx, 1);
+  if (!moved) return;
+  let insertAt = names.findIndex((n) => folderKey(n) === folderKey(to));
+  if (insertAt < 0) insertAt = names.length;
+  if (place === "after") insertAt += 1;
+  names.splice(insertAt, 0, moved);
+  saveStoredFlowFolderNames(names);
+  renderFlowList();
+}
+
+async function setFlowFolder(
+  flow: FlowDef,
+  folder: string | undefined
+): Promise<void> {
+  const next = folder ? normalizeFolderName(folder) || undefined : undefined;
+  const prev = normalizeFolderName(flow.folder ?? "") || undefined;
+  if ((prev || "") === (next || "")) return;
+  await api.upsertFlow({
+    id: flow.id,
+    name: flow.name,
+    steps: flow.steps,
+    folder: next ?? null,
+  });
+  await refreshFlowList();
+}
+
+function createFlowListItem(flow: FlowDef): HTMLLIElement {
+  const onBoard = board
+    .getCards()
+    .some((c) => c.kind === "flow" && c.flowId === flow.id);
+  const li = document.createElement("li");
+  li.className = `flow-list-item${onBoard ? " is-on-board" : ""}`;
+  li.draggable = true;
+  li.dataset.flowId = flow.id;
+  li.innerHTML = `
+    <button type="button" class="flow-list-main" data-flow-open="${escapeHtml(flow.id)}">
+      <span class="flow-list-title">${escapeHtml(flow.name || t("flow.untitled"))}</span>
+    </button>
+    <button type="button" class="flow-list-edit icon" data-flow-edit="${escapeHtml(flow.id)}" title="${escapeHtml(t("flow.edit"))}" aria-label="${escapeHtml(t("flow.edit"))}">${icons.pencil(13)}</button>
+    <button type="button" class="flow-list-del icon" data-flow-del="${escapeHtml(flow.id)}" title="${escapeHtml(t("flow.delete"))}" aria-label="${escapeHtml(t("flow.delete"))}">${icons.trash(13)}</button>
+  `;
+  li.addEventListener("dragstart", (e) => {
+    if (!e.dataTransfer) return;
+    e.dataTransfer.setData(FLOW_DND_TYPE, flow.id);
+    e.dataTransfer.setData("text/plain", flow.id);
+    e.dataTransfer.effectAllowed = "move";
+    li.classList.add("is-dragging");
+    els.flowList.classList.add("is-dragging-flow");
+  });
+  li.addEventListener("dragend", () => {
+    li.classList.remove("is-dragging");
+    els.flowList.classList.remove("is-dragging-flow");
+    els.flowList.classList.remove("is-drop-ungrouped");
+    for (const el of els.flowList.querySelectorAll(".is-drop-target")) {
+      el.classList.remove("is-drop-target");
+    }
+    clearFlowFolderReorderMarks();
+  });
+  return li;
+}
+
+let flowListDropWired = false;
+
+function wireFlowFolderDropTarget(
+  el: HTMLElement,
+  folder: string | undefined
+): void {
+  el.addEventListener("dragover", (e) => {
+    if (!els.flowList.classList.contains("is-dragging-flow")) return;
+    e.preventDefault();
+    if (folder) e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    if (folder) {
+      el.classList.add("is-drop-target");
+      els.flowList.classList.remove("is-drop-ungrouped");
+    } else {
+      els.flowList.classList.add("is-drop-ungrouped");
+    }
+  });
+  el.addEventListener("dragleave", (e) => {
+    const related = e.relatedTarget as Node | null;
+    if (related && el.contains(related)) return;
+    el.classList.remove("is-drop-target");
+    if (!folder) els.flowList.classList.remove("is-drop-ungrouped");
+  });
+  el.addEventListener("drop", (e) => {
+    if (!els.flowList.classList.contains("is-dragging-flow")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    el.classList.remove("is-drop-target");
+    els.flowList.classList.remove("is-drop-ungrouped");
+    const id =
+      e.dataTransfer?.getData(FLOW_DND_TYPE) ||
+      e.dataTransfer?.getData("text/plain");
+    if (!id) return;
+    const flow = sidebarFlows.find((f) => f.id === id);
+    if (!flow) return;
+    void setFlowFolder(flow, folder);
+  });
+}
+
+function createFlowFolderElement(
+  folderName: string,
+  flows: FlowDef[]
+): HTMLLIElement {
+  const collapsed = isFlowFolderCollapsed(folderName);
+  const li = document.createElement("li");
+  li.className = `session-folder${collapsed ? " is-collapsed" : ""}`;
+  li.dataset.folder = folderName;
+  li.draggable = true;
+  wireFlowFolderDropTarget(li, folderName);
+
+  li.addEventListener("dragstart", (e) => {
+    if ((e.target as HTMLElement | null)?.closest?.(".flow-list-item")) return;
+    if (!e.dataTransfer) return;
+    e.dataTransfer.setData(FLOW_FOLDER_DND_TYPE, folderName);
+    e.dataTransfer.setData("text/plain", folderName);
+    e.dataTransfer.effectAllowed = "move";
+    li.classList.add("is-dragging");
+    els.flowList.classList.add("is-dragging-folder");
+  });
+  li.addEventListener("dragend", () => {
+    li.classList.remove("is-dragging");
+    els.flowList.classList.remove("is-dragging-folder");
+    clearFlowFolderReorderMarks();
+  });
+
+  const head = document.createElement("div");
+  head.className = "session-folder-head";
+
+  li.addEventListener("dragover", (e) => {
+    if (!els.flowList.classList.contains("is-dragging-folder")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    const rect = li.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    for (const other of els.flowList.querySelectorAll(".session-folder")) {
+      if (other === li) continue;
+      other.classList.remove("is-drop-before", "is-drop-after");
+    }
+    li.classList.toggle("is-drop-before", before);
+    li.classList.toggle("is-drop-after", !before);
+  });
+  li.addEventListener("dragleave", (e) => {
+    if (!els.flowList.classList.contains("is-dragging-folder")) return;
+    const related = e.relatedTarget as Node | null;
+    if (related && li.contains(related)) return;
+    li.classList.remove("is-drop-before", "is-drop-after");
+  });
+  li.addEventListener("drop", (e) => {
+    if (!els.flowList.classList.contains("is-dragging-folder")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const from =
+      e.dataTransfer?.getData(FLOW_FOLDER_DND_TYPE) ||
+      e.dataTransfer?.getData("text/plain") ||
+      "";
+    const place = li.classList.contains("is-drop-before") ? "before" : "after";
+    clearFlowFolderReorderMarks();
+    els.flowList.classList.remove("is-dragging-folder");
+    if (!from) return;
+    reorderFlowFolder(from, folderName, place);
+  });
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "session-folder-toggle";
+  toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  toggle.innerHTML = `
+    <span class="folder-chevron" aria-hidden="true">${icons.chevronDown(11)}</span>
+    <span class="folder-ico" aria-hidden="true">${collapsed ? icons.folder(13) : icons.folderOpen(13)}</span>
+    <span class="folder-name" title="${escapeHtml(folderName)}">${escapeHtml(folderName)}</span>
+    <span class="folder-count">${flows.length}</span>
+  `;
+  toggle.onclick = () => {
+    setFlowFolderCollapsed(folderName, !isFlowFolderCollapsed(folderName));
+    renderFlowList();
+  };
+
+  const actions = document.createElement("div");
+  actions.className = "session-folder-actions";
+
+  const openAll = document.createElement("button");
+  openAll.type = "button";
+  openAll.className = "session-action ghost";
+  openAll.title = t("sidebar.flowFolderOpenAll");
+  openAll.setAttribute(
+    "aria-label",
+    `${t("sidebar.flowFolderOpenAll")} ${folderName}`
+  );
+  openAll.innerHTML = icons.flow(13);
+  openAll.disabled = flows.length === 0;
+  openAll.onclick = (e) => {
+    e.stopPropagation();
+    void (async () => {
+      for (const f of flows) await placeFlowOnBoard(f.id);
+    })();
+  };
+
+  const rename = document.createElement("button");
+  rename.type = "button";
+  rename.className = "session-action ghost";
+  rename.title = t("sidebar.folderRename");
+  rename.setAttribute(
+    "aria-label",
+    `${t("sidebar.folderRename")} ${folderName}`
+  );
+  rename.innerHTML = icons.pencil(13);
+  rename.onclick = (e) => {
+    e.stopPropagation();
+    void renameFlowFolder(folderName);
+  };
+
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "session-action ghost";
+  del.title = t("sidebar.folderDelete");
+  del.setAttribute("aria-label", `${t("sidebar.folderDelete")} ${folderName}`);
+  del.innerHTML = icons.trash(13);
+  del.onclick = (e) => {
+    e.stopPropagation();
+    void deleteFlowFolder(folderName);
+  };
+
+  actions.append(openAll, rename, del);
+  head.append(toggle, actions);
+
+  const list = document.createElement("ul");
+  list.className = "session-folder-list";
+  if (flows.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "session-folder-empty";
+    empty.textContent = t("sidebar.flowFolderEmpty");
+    list.append(empty);
+  } else {
+    for (const f of flows) list.append(createFlowListItem(f));
+  }
+
+  li.append(head, list);
+  return li;
+}
+
+async function createFlowFolder(): Promise<void> {
+  const raw = await askFsText({
+    title: t("sidebar.folderNewTitle"),
+    initial: "",
+    okLabel: t("sidebar.folderCreate"),
+    cancelLabel: t("files.dialogCancel"),
+  });
+  if (raw === null) return;
+  const name = normalizeFolderName(raw);
+  if (!name) {
+    showToast(t("sidebar.folderNameRequired"), "info");
+    return;
+  }
+  const folders = mergedFlowFolderNames(sidebarFlows);
+  if (findFolderName(folders, name)) {
+    showToast(t("sidebar.folderExists"), "info");
+    return;
+  }
+  folders.push(name);
+  saveStoredFlowFolderNames(folders);
+  setFlowFolderCollapsed(name, false);
+  renderFlowList();
+}
+
+async function renameFlowFolder(from: string): Promise<void> {
+  const raw = await askFsText({
+    title: t("sidebar.folderRenameTitle"),
+    initial: from,
+    okLabel: t("sidebar.folderRename"),
+    cancelLabel: t("files.dialogCancel"),
+  });
+  if (raw === null) return;
+  const to = normalizeFolderName(raw);
+  if (!to) {
+    showToast(t("sidebar.folderNameRequired"), "info");
+    return;
+  }
+  if (folderKey(to) !== folderKey(from)) {
+    const folders = mergedFlowFolderNames(sidebarFlows);
+    if (findFolderName(folders, to)) {
+      showToast(t("sidebar.folderExists"), "info");
+      return;
+    }
+  } else if (to === from) {
+    return;
+  }
+
+  const members = sidebarFlows.filter(
+    (f) => folderKey(f.folder ?? "") === folderKey(from)
+  );
+  for (const f of members) {
+    await api.upsertFlow({
+      id: f.id,
+      name: f.name,
+      steps: f.steps,
+      folder: to,
+    });
+  }
+
+  const nextNames = loadStoredFlowFolderNames().map((n) =>
+    folderKey(n) === folderKey(from) ? to : n
+  );
+  if (!findFolderName(nextNames, to)) nextNames.push(to);
+  saveStoredFlowFolderNames(nextNames);
+
+  const collapsed = loadCollapsedFlowFolders();
+  if (collapsed.delete(folderKey(from))) {
+    collapsed.add(folderKey(to));
+    saveCollapsedFlowFolders(collapsed);
+  }
+
+  await refreshFlowList();
+}
+
+async function deleteFlowFolder(name: string): Promise<void> {
+  const ok = await askFsConfirm({
+    title: t("sidebar.folderDelete"),
+    body: t("sidebar.folderDeleteConfirm"),
+    okLabel: t("sidebar.folderDelete"),
+    cancelLabel: t("files.dialogCancel"),
+    danger: true,
+  });
+  if (!ok) return;
+
+  const members = sidebarFlows.filter(
+    (f) => folderKey(f.folder ?? "") === folderKey(name)
+  );
+  for (const f of members) {
+    await api.upsertFlow({
+      id: f.id,
+      name: f.name,
+      steps: f.steps,
+      folder: null,
+    });
+  }
+
+  saveStoredFlowFolderNames(
+    loadStoredFlowFolderNames().filter((n) => folderKey(n) !== folderKey(name))
+  );
+  const collapsed = loadCollapsedFlowFolders();
+  collapsed.delete(folderKey(name));
+  saveCollapsedFlowFolders(collapsed);
+
+  await refreshFlowList();
+}
+
 function renderFlowList(): void {
   els.flowList.innerHTML = "";
-  const empty = sidebarFlows.length === 0;
+  const folders = mergedFlowFolderNames(sidebarFlows);
+  const empty = sidebarFlows.length === 0 && folders.length === 0;
   els.flowListEmpty.classList.toggle("hidden", !empty);
+
+  const byFolder = new Map<string, FlowDef[]>();
+  for (const name of folders) byFolder.set(folderKey(name), []);
+  const ungrouped: FlowDef[] = [];
   for (const flow of sidebarFlows) {
-    const onBoard = board
-      .getCards()
-      .some((c) => c.kind === "flow" && c.flowId === flow.id);
-    const li = document.createElement("li");
-    li.className = `flow-list-item${onBoard ? " is-on-board" : ""}`;
-    li.innerHTML = `
-      <button type="button" class="flow-list-main" data-flow-open="${escapeHtml(flow.id)}">
-        <span class="flow-list-title">${escapeHtml(flow.name || t("flow.untitled"))}</span>
-      </button>
-      <button type="button" class="flow-list-edit icon" data-flow-edit="${escapeHtml(flow.id)}" title="${escapeHtml(t("flow.edit"))}" aria-label="${escapeHtml(t("flow.edit"))}">${icons.pencil(13)}</button>
-      <button type="button" class="flow-list-del icon" data-flow-del="${escapeHtml(flow.id)}" title="${escapeHtml(t("flow.delete"))}" aria-label="${escapeHtml(t("flow.delete"))}">${icons.trash(13)}</button>
-    `;
-    els.flowList.append(li);
+    const name = normalizeFolderName(flow.folder ?? "");
+    if (!name) {
+      ungrouped.push(flow);
+      continue;
+    }
+    const key = folderKey(name);
+    const bucket = byFolder.get(key);
+    if (bucket) bucket.push(flow);
+    else ungrouped.push(flow);
+  }
+
+  for (const name of folders) {
+    els.flowList.append(
+      createFlowFolderElement(name, byFolder.get(folderKey(name)) ?? [])
+    );
+  }
+
+  if (folders.length > 0 && ungrouped.length > 0) {
+    const label = document.createElement("li");
+    label.className = "session-ungrouped-label";
+    label.textContent = t("sidebar.ungrouped");
+    els.flowList.append(label);
+  }
+
+  for (const flow of ungrouped) {
+    els.flowList.append(createFlowListItem(flow));
+  }
+
+  if (!flowListDropWired) {
+    wireFlowFolderDropTarget(els.flowList, undefined);
+    flowListDropWired = true;
   }
 }
 
@@ -3780,6 +4536,7 @@ function applyFlowEvent(event: FlowEvent): void {
 api.onFlowEvent((event) => applyFlowEvent(event));
 
 board.root.addEventListener("board:add-prompt", ((e: CustomEvent<{ tabId: string }>) => {
+  if (!CURSOR_API_UI_ENABLED) return;
   const tabId = e.detail?.tabId;
   if (!tabId) return;
   attachPromptCard(board.addPrompt(tabId));
@@ -3890,9 +4647,12 @@ type SettingsCategory = "api" | "general" | "board" | "updates";
 let activeNav: NavId = "sessions";
 let settingsModalOpen = false;
 let navBeforeSettings: Exclude<NavId, "settings"> = "sessions";
-let settingsCategory: SettingsCategory = "api";
+let settingsCategory: SettingsCategory = CURSOR_API_UI_ENABLED
+  ? "api"
+  : "general";
 
 function setSettingsCategory(cat: SettingsCategory): void {
+  if (!CURSOR_API_UI_ENABLED && cat === "api") cat = "general";
   settingsCategory = cat;
   document
     .querySelectorAll<HTMLButtonElement>("[data-settings-cat]")
@@ -3955,6 +4715,7 @@ function setNav(id: NavId): void {
   document.getElementById("main-stage")?.classList.toggle("mode-meetings", meetings);
   if (id === "files") void syncFilesPanel(true);
   if (id === "flows") void refreshFlowList();
+  if (id === "projects") void projectsRail?.refresh();
   if (meetings) {
     void refreshMeetingList();
     syncMeetingStageEmpty();
@@ -3965,7 +4726,7 @@ function setNav(id: NavId): void {
 }
 
 function openSettings(): void {
-  openSettingsModal("api");
+  openSettingsModal(CURSOR_API_UI_ENABLED ? "api" : "general");
 }
 
 function splitChordTokens(chord: string): string[] {
@@ -5012,6 +5773,465 @@ async function openLocal(): Promise<void> {
   }
 }
 
+function basenamePath(p: string): string {
+  const parts = p.replace(/\\/g, "/").split("/").filter(Boolean);
+  return parts[parts.length - 1] || p || "Claude";
+}
+
+function mountClaudeTabView(
+  tabId: string,
+  title: string,
+  cardId: string,
+  opts?: { activate?: boolean }
+): TabView {
+  const host =
+    board.getClaudeHost(cardId) ?? board.getTerminalHost(tabId);
+  if (!host) throw new Error("Claude host missing");
+  host.replaceChildren();
+  const el = document.createElement("div");
+  el.style.height = "100%";
+  host.append(el);
+  const { bar: findBar, input: findInput } = createTerminalFindBar(tabId);
+  host.append(findBar);
+
+  const term = new Terminal(createTermTheme());
+  const fit = new FitAddon();
+  const search = new SearchAddon();
+  const unicode11 = new Unicode11Addon();
+  term.loadAddon(fit);
+  term.loadAddon(search);
+  term.loadAddon(unicode11);
+  term.loadAddon(new WebLinksAddon());
+  term.open(el);
+  patchXtermMouseForCssTransform(term);
+  try {
+    term.unicode.activeVersion = "11";
+  } catch (err) {
+    console.warn("unicode11 activate failed", err);
+  }
+  wireTerminalScrollbar(el, term);
+
+  term.onData((data) => {
+    void api.writeTerminal(tabId, data);
+  });
+
+  term.attachCustomKeyEventHandler((ev) => {
+    if (ev.type !== "keydown") return true;
+    if (
+      ev.key === "Escape" &&
+      !ev.metaKey &&
+      !ev.ctrlKey &&
+      !ev.altKey
+    ) {
+      const openFind = state.tabs.get(tabId);
+      if (openFind && !openFind.findBar.classList.contains("hidden")) {
+        closeTerminalFind(tabId);
+        return false;
+      }
+    }
+    if (isBoardChordEvent(ev)) {
+      const k = ev.key.toLowerCase();
+      const boardKeys = isMacPlatform()
+        ? new Set(["a", "s", "f", "b"])
+        : new Set(["a", "e", "g", "b"]);
+      if (
+        boardKeys.has(k) ||
+        ev.key === "ArrowLeft" ||
+        ev.key === "ArrowRight" ||
+        ev.key === "ArrowUp" ||
+        ev.key === "ArrowDown"
+      ) {
+        return false;
+      }
+    }
+    const mod = ev.metaKey || ev.ctrlKey;
+    if (!mod || ev.altKey) return true;
+    const key = ev.key.toLowerCase();
+    if (key === "f" && !ev.shiftKey) {
+      openTerminalFind(tabId);
+      return false;
+    }
+    if (key === "g") {
+      const tab = state.tabs.get(tabId);
+      if (tab && !tab.findBar.classList.contains("hidden") && tab.findInput.value) {
+        if (ev.shiftKey) tab.search.findPrevious(tab.findInput.value, TERM_SEARCH_OPTS);
+        else tab.search.findNext(tab.findInput.value, TERM_SEARCH_OPTS);
+        return false;
+      }
+    }
+    if (key === "k" && !ev.shiftKey) {
+      term.clear();
+      return false;
+    }
+    return true;
+  });
+
+  const view: TabView = {
+    id: tabId,
+    title,
+    kind: "local",
+    term,
+    fit,
+    search,
+    el,
+    findBar,
+    findInput,
+    lastCols: 0,
+    lastRows: 0,
+  };
+  // Fit on every host size change (card resize / tile / window).
+  view.hostRo = new ResizeObserver(() => {
+    scheduleTerminalFit(view, true);
+    window.setTimeout(() => syncTerminalSize(view, { force: true }), 100);
+  });
+  view.hostRo.observe(host);
+  view.hostRo.observe(el);
+  state.tabs.set(tabId, view);
+  if (opts?.activate !== false) {
+    activateTab(tabId);
+  } else {
+    state.activeTabId = tabId;
+    requestAnimationFrame(() => syncTerminalSize(view, { force: true }));
+  }
+  return view;
+}
+
+async function openClaudeSession(input: {
+  cwd: string;
+  sessionId?: string;
+  cardId?: string;
+  title?: string;
+  layout?: Pick<ClaudeCard, "x" | "y" | "w" | "h" | "minimized" | "z">;
+  activate?: boolean;
+}): Promise<ClaudeCard | null> {
+  try {
+    if (activeNav === "meetings") setNav("sessions");
+    await ensureTermFont();
+
+    const probeEl = document.createElement("div");
+    probeEl.style.cssText =
+      "position:fixed;left:-9999px;top:0;width:800px;height:400px;visibility:hidden;";
+    document.body.append(probeEl);
+    const probeTerm = new Terminal(createTermTheme());
+    const probeFit = new FitAddon();
+    probeTerm.loadAddon(probeFit);
+    probeTerm.open(probeEl);
+    probeFit.fit();
+    const cols = Math.max(20, probeTerm.cols);
+    const rows = Math.max(5, probeTerm.rows);
+    probeTerm.dispose();
+    probeEl.remove();
+
+    const title = input.title || basenamePath(input.cwd);
+    const opened = await api.openClaude({
+      cwd: input.cwd,
+      sessionId: input.sessionId,
+      cardId: input.cardId,
+      title,
+      cols,
+      rows,
+    });
+    if ("error" in opened) {
+      if (isClaudeCliMissingError(opened.error)) {
+        showClaudeMissingCliToast();
+      } else {
+        showToast(t("claude.openFailed"), "error", {
+          detail: t("claude.openFailed.detail", { error: opened.error }),
+          ms: 7000,
+        });
+      }
+      return null;
+    }
+
+    const card = board.addClaude({
+      tabId: opened.tabId,
+      title: opened.title,
+      cwd: opened.cwd,
+      sessionId: opened.sessionId,
+      cardId: opened.cardId,
+      agentStatus: "idle",
+      activate: input.activate !== false,
+      x: input.layout?.x,
+      y: input.layout?.y,
+      w: input.layout?.w,
+      h: input.layout?.h,
+      minimized: input.layout?.minimized,
+      z: input.layout?.z,
+    });
+    const view = mountClaudeTabView(opened.tabId, opened.title, card.id, {
+      activate: input.activate !== false,
+    });
+    view.lastCols = cols;
+    view.lastRows = rows;
+    view.sizeFreezeUntil = Date.now() + 2500;
+    await waitFrames(2);
+    view.fit.fit();
+    await api.resizeTerminal(opened.tabId, view.term.cols, view.term.rows);
+    await api.readyTerminal(opened.tabId);
+    void api.updateClaudeSession({ cardId: card.id, title: card.title });
+    tabCwds.set(opened.tabId, opened.cwd);
+    refreshClaudeStripUsage();
+    projectsRail?.setActiveCwd(opened.cwd);
+    projectsRail?.scheduleRefresh();
+    scheduleBoardSave();
+    return card;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (isClaudeCliMissingError(msg)) {
+      showClaudeMissingCliToast();
+    } else {
+      showToast(t("claude.openFailed"), "error", {
+        detail: t("claude.openFailed.detail", { error: msg }),
+        ms: 7000,
+      });
+    }
+    return null;
+  }
+}
+
+const CLAUDE_CODE_INSTALL_DOCS =
+  "https://docs.anthropic.com/en/docs/claude-code/setup";
+
+function isClaudeCliMissingError(error: string): boolean {
+  const e = error.toLowerCase();
+  return (
+    e.includes("not found") ||
+    e.includes("path") ||
+    e.includes("claude code cli") ||
+    e.includes("`claude`")
+  );
+}
+
+function showClaudeMissingCliToast(opts?: {
+  allowBundled?: boolean;
+}): void {
+  const actions: Array<{ label: string; onClick: () => void }> = [
+    {
+      label: t("claude.missingCli.docs"),
+      onClick: () => {
+        void api.openExternal(CLAUDE_CODE_INSTALL_DOCS);
+      },
+    },
+  ];
+  if (opts?.allowBundled) {
+    actions.push({
+      label: t("claude.missingCli.useApp"),
+      onClick: () => {
+        void continueClaudeWithFolderPick();
+      },
+    });
+  }
+  showToast(t("claude.missingCli"), "error", {
+    detail: t("claude.missingCli.detail"),
+    ms: 16000,
+    actions,
+  });
+}
+
+async function continueClaudeWithFolderPick(): Promise<void> {
+  const active = projectsRail?.getActiveCwd();
+  const cwd =
+    active ||
+    (await api.pickDirectory({ title: t("claude.pickCwd") }));
+  if (!cwd) return;
+  projectsRail?.setActiveCwd(cwd);
+  await openClaudeSession({ cwd });
+  projectsRail?.scheduleRefresh();
+}
+
+async function openClaudeFromSidebar(): Promise<void> {
+  const detected = await api.detectClaude();
+  // Require PATH-installed `claude` (same as `which claude`). Bundled Claude.app
+  // alone is not enough — guide install first; optional escape hatch if bundled.
+  if (!detected.ok || detected.source !== "path") {
+    showClaudeMissingCliToast({
+      allowBundled: Boolean(detected.ok && detected.source === "bundled"),
+    });
+    return;
+  }
+  await continueClaudeWithFolderPick();
+}
+
+async function restoreSavedClaude(saved: BoardPersistedState): Promise<void> {
+  for (const raw of saved.cards) {
+    if (raw.kind !== "claude") continue;
+    if (!raw.cwd?.trim()) continue;
+    const card = await openClaudeSession({
+      cwd: raw.cwd,
+      sessionId: raw.sessionId,
+      cardId: raw.id,
+      title: raw.title,
+      layout: {
+        x: raw.x,
+        y: raw.y,
+        w: raw.w,
+        h: raw.h,
+        minimized: raw.minimized,
+        z: raw.z,
+      },
+      activate: false,
+    });
+    // Chrome-only memory — real CLI mode may differ after resume.
+    if (card && raw.permissionMode) {
+      board.setClaudePermissionMode(card.id, raw.permissionMode);
+    }
+  }
+  projectsRail?.scheduleRefresh();
+}
+
+/** Claude Code Shift+Tab cycle (auto → manual → accept edits → plan → …). */
+const CLAUDE_MODE_CYCLE: ClaudePermissionMode[] = [
+  "default",
+  "acceptEdits",
+  "plan",
+  "auto",
+];
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function focusClaudeTab(tabId: string): Promise<void> {
+  activateTab(tabId);
+  const tab = state.tabs.get(tabId);
+  if (!tab) return;
+  await waitFrames(1);
+  try {
+    tab.term.focus();
+  } catch {
+    /* disposed */
+  }
+}
+
+/** Send N× Shift+Tab into the Claude PTY. */
+async function writeClaudeShiftTabs(tabId: string, count: number): Promise<void> {
+  for (let i = 0; i < count; i++) {
+    await api.writeTerminal(tabId, "\x1b[Z");
+    if (i + 1 < count) await sleepMs(90);
+  }
+}
+
+async function setClaudePermissionMode(
+  cardId: string,
+  mode: ClaudePermissionMode
+): Promise<void> {
+  const card = board.findCard(cardId);
+  if (!card || card.kind !== "claude") return;
+  const from = card.permissionMode || "auto";
+  const fromIdx = CLAUDE_MODE_CYCLE.indexOf(from);
+  const toIdx = CLAUDE_MODE_CYCLE.indexOf(mode);
+  if (fromIdx < 0 || toIdx < 0) return;
+  const steps = (toIdx - fromIdx + CLAUDE_MODE_CYCLE.length) % CLAUDE_MODE_CYCLE.length;
+  board.setClaudePermissionMode(cardId, mode);
+  await focusClaudeTab(card.tabId);
+  if (steps > 0) await writeClaudeShiftTabs(card.tabId, steps);
+}
+
+function claudeModelDisplayLabel(model: string): string {
+  const known: Record<string, string> = {
+    opus: "Opus 5.5",
+    sonnet: "Sonnet 5.5",
+    fable: "Fable 5.2",
+    haiku: "Haiku 5.5",
+    default: "Default",
+    opusplan: "Opus plan",
+    "claude-fable-5-1": "Fable 5.1",
+    "claude-haiku-4-5": "Haiku 4.5",
+    "claude-sonnet-5": "Sonnet 5",
+    "claude-opus-5": "Opus 5",
+    "claude-fable-5": "Fable 5",
+    "claude-opus-4-8": "Opus 4.8",
+    "claude-opus-4-7": "Opus 4.7",
+    "claude-opus-4-6": "Opus 4.6",
+    "claude-sonnet-4-6": "Sonnet 4.6",
+  };
+  return known[model] || model;
+}
+
+async function setClaudeModel(cardId: string, model: string): Promise<void> {
+  const card = board.findCard(cardId);
+  if (!card || card.kind !== "claude") return;
+  await focusClaudeTab(card.tabId);
+  // Ctrl+U clears the current prompt line in most Claude Code builds, then
+  // `/model` applies immediately.
+  await api.writeTerminal(card.tabId, `\x15/model ${model}\r`);
+  board.setClaudeUsage(cardId, {
+    ...card.usage,
+    modelId: model,
+    modelLabel: claudeModelDisplayLabel(model),
+    updatedAt: Date.now(),
+  });
+}
+
+async function setClaudeEffort(
+  cardId: string,
+  effort: ClaudeEffortLevel
+): Promise<void> {
+  const card = board.findCard(cardId);
+  if (!card || card.kind !== "claude") return;
+  board.setClaudeEffortLevel(cardId, effort);
+  await focusClaudeTab(card.tabId);
+  await api.writeTerminal(card.tabId, `\x15/effort ${effort}\r`);
+}
+
+async function handleClaudeOverflowAction(
+  cardId: string,
+  action: ClaudeOverflowAction
+): Promise<void> {
+  const from = board.findCard(cardId);
+  if (!from || from.kind !== "claude") return;
+  if (action === "worktree") {
+    setNav("projects");
+    await projectsRail?.openWorktreeForCwd(from.cwd);
+    return;
+  }
+  if (action !== "send-to") return;
+  const { sessions } = await api.listClaudeSessions();
+  const peers = sessions.filter((s) => s.cardId !== cardId);
+  if (peers.length === 0) {
+    showToast(t("claude.sendTo.none"), "info", { ms: 5000 });
+    return;
+  }
+  let target = peers[0]!;
+  if (peers.length > 1) {
+    const names = peers.map((s) => s.title).join(", ");
+    const pick = await askFsText({
+      title: `${t("claude.sendTo.title")} — ${names}`,
+      initial: target.title,
+      okLabel: t("claude.sendTo.pick"),
+      cancelLabel: t("files.dialogCancel"),
+    });
+    if (pick == null) return;
+    const hit =
+      peers.find((s) => s.title === pick.trim()) ||
+      peers.find((s) =>
+        s.title.toLowerCase().includes(pick.trim().toLowerCase())
+      );
+    if (!hit) {
+      showToast(t("claude.sendTo.none"), "info");
+      return;
+    }
+    target = hit;
+  }
+  const message = await askFsText({
+    title: t("claude.sendTo.to", { name: target.title }),
+    initial: "",
+    okLabel: t("claude.sendTo.send"),
+    cancelLabel: t("files.dialogCancel"),
+  });
+  if (message == null || !message.trim()) return;
+  const res = await api.sendToClaudeSession({
+    fromCardId: cardId,
+    toCardId: target.cardId,
+    message: message.trim(),
+  });
+  if ("error" in res) {
+    showToast(t("claude.sendTo.fail", { error: res.error }), "error");
+    return;
+  }
+  showToast(t("claude.sendTo.ok"), "info");
+}
+
 async function openSsh(sessionId: string): Promise<void> {
   if (activeNav === "meetings") setNav("sessions");
   await ensureTermFont();
@@ -5103,10 +6323,15 @@ async function closeTab(
 ): Promise<void> {
   const tab = state.tabs.get(tabId);
   if (!tab) return;
+  const isClaude = board
+    .getCards()
+    .some((c) => c.kind === "claude" && c.tabId === tabId);
   if (
     !opts?.force &&
     (await terminalTabIsBusy(tabId)) &&
-    !window.confirm(t("close.confirmTerminal"))
+    !window.confirm(
+      isClaude ? t("close.confirmClaude") : t("close.confirmTerminal")
+    )
   ) {
     return;
   }
@@ -5143,6 +6368,8 @@ async function closeTab(
   }
   board.syncEmpty();
   refreshStatusStrip();
+  refreshClaudeStripUsage();
+  if (isClaude) projectsRail?.scheduleRefresh();
   void syncFilesPanel(true);
   scheduleBoardSave();
 }
@@ -5221,6 +6448,7 @@ function notifyParentOfSub(
 }
 
 async function addManualSubPrompt(parentCardId: string): Promise<void> {
+  if (!CURSOR_API_UI_ENABLED) return;
   const parent = board.findCard(parentCardId);
   if (!parent || parent.kind !== "prompt") return;
   if (parent.parentId) return;
@@ -5242,6 +6470,7 @@ async function handleTerminalOverflowAction(
   tabId: string,
   action: TerminalOverflowAction
 ): Promise<void> {
+  if (!CURSOR_API_UI_ENABLED) return;
   if (action === "open-cursor") {
     const tab = state.tabs.get(tabId);
     if (!tab) return;
@@ -5590,7 +6819,7 @@ async function applyCwdToFiles(tabId: string, cwd: string): Promise<void> {
   if (state.activeTabId === tabId) updateStripPath();
   // Only the board-selected terminal drives the files panel.
   if (filesFollowTabId !== tabId) return;
-  if (!terminalCardForTab(tabId)) {
+  if (!ptyCardForTab(tabId)) {
     filesFollowTabId = null;
     filesBrowser.setIdle(t("files.noTerminal"));
     return;
@@ -5617,8 +6846,8 @@ async function syncFilesPanel(_force = false): Promise<void> {
   const tab = filesFollowTabId
     ? state.tabs.get(filesFollowTabId)
     : undefined;
-  // Files follow a board terminal card — a live PTY without a card is ignored.
-  const boardTerminal = tab ? terminalCardForTab(tab.id) : undefined;
+  // Files follow a board terminal/Claude card — a live PTY without a card is ignored.
+  const boardTerminal = tab ? ptyCardForTab(tab.id) : undefined;
   // Restore this terminal's pane collapse / tree expand before loading paths.
   filesBrowser.setFollowSession(boardTerminal ? filesFollowTabId : null);
   if (!tab || !boardTerminal) {
@@ -5651,6 +6880,36 @@ async function syncFilesPanel(_force = false): Promise<void> {
 
 // Wire UI
 document.getElementById("btn-local")!.onclick = () => void openLocal();
+document.getElementById("btn-claude-projects")!.onclick = () =>
+  void openClaudeFromSidebar();
+
+api.onClaudeHook((payload) => {
+  board.setClaudeAgentStatus(payload.cardId, payload.status);
+  void api.updateClaudeSession({
+    cardId: payload.cardId,
+    status: payload.status,
+  });
+  projectsRail?.scheduleRefresh();
+});
+api.onClaudeUsage((payload) => {
+  if (payload.fiveHour || payload.sevenDay) {
+    claudeStripUsage = {
+      fiveHour: payload.fiveHour,
+      sevenDay: payload.sevenDay,
+      updatedAt: payload.updatedAt,
+    };
+    refreshClaudeStripUsage();
+  }
+  board.setClaudeUsage(payload.cardId, {
+    fiveHour: payload.fiveHour,
+    sevenDay: payload.sevenDay,
+    contextPercent: payload.contextPercent,
+    modelId: payload.modelId,
+    modelLabel: payload.modelLabel,
+    effortLevel: payload.effortLevel,
+    updatedAt: payload.updatedAt,
+  });
+});
 document.getElementById("btn-new-flow")!.onclick = () => {
   setNav("flows");
   openFlowEditorAndPlace();
@@ -5698,6 +6957,9 @@ els.meetingList.addEventListener("click", (e) => {
 document.getElementById("btn-add-folder")!.onclick = () => {
   void createSshFolder();
 };
+document.getElementById("btn-add-flow-folder")!.onclick = () => {
+  void createFlowFolder();
+};
 document.getElementById("btn-refresh-sessions")!.onclick = () => {
   void importSshHostsFromConfig();
 };
@@ -5708,6 +6970,14 @@ document.getElementById("btn-collapse-folders")!.onclick = () => {
   for (const name of folders) collapsed.add(folderKey(name));
   saveCollapsedFolders(collapsed);
   void refreshSessions();
+};
+document.getElementById("btn-collapse-flow-folders")!.onclick = () => {
+  const folders = mergedFlowFolderNames(sidebarFlows);
+  if (folders.length === 0) return;
+  const collapsed = loadCollapsedFlowFolders();
+  for (const name of folders) collapsed.add(folderKey(name));
+  saveCollapsedFlowFolders(collapsed);
+  renderFlowList();
 };
 document.getElementById("btn-add-ssh")!.onclick = () => {
   void openSshModal();
@@ -6771,6 +8041,7 @@ void (async () => {
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
     await openLocal();
     restoreSavedPrompts(savedBoard);
+    await restoreSavedClaude(savedBoard);
     applySnowOptionsToBoard();
     applyAutumnOptionsToBoard();
     applySakuraOptionsToBoard();
@@ -6783,9 +8054,13 @@ void (async () => {
     board.setFirefliesTheme(state.firefliesTheme);
     refreshStatusStrip();
     void refreshStripMetrics();
-    void refreshAccountUsage();
     window.setInterval(() => void refreshStripMetrics(), 2500);
-    window.setInterval(() => void refreshAccountUsage(), 5 * 60_000);
+    if (CURSOR_API_UI_ENABLED) {
+      void refreshAccountUsage();
+      window.setInterval(() => void refreshAccountUsage(), 5 * 60_000);
+    } else {
+      els.stripApi.classList.add("hidden");
+    }
 
     setSplashProgress(SPLASH_AT.ready, t("splash.updates"));
     // Check while intro is still up so Update / Later stay on the splash.

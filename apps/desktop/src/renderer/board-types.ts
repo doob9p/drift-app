@@ -14,6 +14,73 @@ export type TerminalCard = BoardCardBase & {
   title: string;
 };
 
+/** Claude Code agent pane (PTY + session resume), distinct from plain terminals. */
+export type ClaudeAgentStatus =
+  | "idle"
+  | "running"
+  | "waiting"
+  | "done"
+  | "error";
+
+/**
+ * Claude Code permission modes (Shift+Tab cycle).
+ * `default` is labeled Manual in the CLI status bar.
+ */
+export type ClaudePermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "plan"
+  | "auto";
+
+/** Claude Code `/effort` levels. */
+export type ClaudeEffortLevel =
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+  | "auto";
+
+/** Plan rate limits from Claude Code statusline (Pro/Max). */
+export type ClaudeRateWindow = {
+  /** 0–100 used. */
+  usedPercent: number;
+  /** Unix epoch seconds when this window resets. */
+  resetsAt?: number;
+};
+
+export type ClaudeUsageSnapshot = {
+  fiveHour?: ClaudeRateWindow;
+  sevenDay?: ClaudeRateWindow;
+  /** Context window fill for the current session (0–100). */
+  contextPercent?: number | null;
+  /** From statusline `model.id` / `model.display_name`. */
+  modelId?: string;
+  modelLabel?: string;
+  /** From statusline `effort.level`. */
+  effortLevel?: ClaudeEffortLevel | string;
+  updatedAt: number;
+};
+
+export type ClaudeCard = BoardCardBase & {
+  kind: "claude";
+  tabId: string;
+  title: string;
+  cwd: string;
+  /** Claude Code session UUID for --resume / --session-id. */
+  sessionId: string;
+  agentStatus?: ClaudeAgentStatus;
+  usage?: ClaudeUsageSnapshot;
+  /**
+   * Optimistic permission mode for the chrome control.
+   * Claude Code does not expose live mode on the statusline yet.
+   */
+  permissionMode?: ClaudePermissionMode;
+  /** Optimistic effort until the next statusline tick. */
+  effortLevel?: ClaudeEffortLevel;
+  minimized?: boolean;
+};
+
 export type PromptRunStatus =
   | "idle"
   | "running"
@@ -96,7 +163,12 @@ export type FlowInspectCard = BoardCardBase & {
   title: string;
 };
 
-export type BoardCard = TerminalCard | PromptCard | FlowCard | FlowInspectCard;
+export type BoardCard =
+  | TerminalCard
+  | ClaudeCard
+  | PromptCard
+  | FlowCard
+  | FlowInspectCard;
 
 export type BoardCamera = {
   x: number;
@@ -110,7 +182,7 @@ export type BoardPersistedState = {
 };
 
 export type BoardFocus = {
-  kind: "terminal" | "prompt" | "flow" | "flowInspect";
+  kind: "terminal" | "claude" | "prompt" | "flow" | "flowInspect";
   cardId: string;
   tabId?: string;
 } | null;

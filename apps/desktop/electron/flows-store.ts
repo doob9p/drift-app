@@ -66,10 +66,15 @@ function normalizeFlow(raw: unknown): FlowDef | null {
     .map(normalizeStep)
     .filter((s): s is FlowStep => Boolean(s));
   const now = new Date().toISOString();
+  const folder =
+    typeof f.folder === "string" && f.folder.trim()
+      ? f.folder.trim()
+      : undefined;
   return {
     id,
     name,
     steps,
+    ...(folder ? { folder } : {}),
     createdAt: typeof f.createdAt === "string" ? f.createdAt : now,
     updatedAt: typeof f.updatedAt === "string" ? f.updatedAt : now,
   };
@@ -116,18 +121,28 @@ export function createFlowsStore(getDir: () => string) {
       id?: string;
       name: string;
       steps: FlowStep[];
+      /** Pass to set/clear; omit to keep the existing folder. */
+      folder?: string | null;
     }): Promise<FlowDef> {
       const all = await loadAll();
       const now = new Date().toISOString();
       const existing = input.id
         ? all.find((f) => f.id === input.id)
         : undefined;
+      let folder = existing?.folder;
+      if ("folder" in input) {
+        folder =
+          typeof input.folder === "string" && input.folder.trim()
+            ? input.folder.trim()
+            : undefined;
+      }
       const flow: FlowDef = {
         id: existing?.id ?? input.id ?? newId(),
         name: input.name.trim() || "Untitled flow",
         steps: input.steps
           .map(normalizeStep)
           .filter((s): s is FlowStep => Boolean(s)),
+        ...(folder ? { folder } : {}),
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       };

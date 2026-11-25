@@ -32,6 +32,8 @@ export type FlowDef = {
   id: string;
   name: string;
   steps: FlowStep[];
+  /** Optional sidebar folder name (same idea as SSH host folders). */
+  folder?: string;
   createdAt: string;
   updatedAt: string;
 };

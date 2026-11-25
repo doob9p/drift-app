@@ -156,6 +156,7 @@ export const icons = {
   /** Per-card broadcast membership chip. */
   broadcastMember: (size = 12) => lucideSvg(Radio, { size, strokeWidth: 2 }),
   addSub: (size = 14) => lucideSvg(GitBranch, { size }),
+  gitBranch: (size = 14) => lucideSvg(GitBranch, { size }),
   attach: (size = 14) => lucideSvg(Paperclip, { size }),
   more: (size = 14) => lucideSvg(Ellipsis, { size }),
   /** Open folder in Cursor desktop editor. */

@@ -25,6 +25,7 @@ export type FlowEditorHandlers = {
     id?: string;
     name: string;
     steps: FlowStep[];
+    folder?: string | null;
   }) => Promise<FlowDef>;
   deleteFlow: (id: string) => Promise<{ ok: boolean }>;
   listSessions: () => Promise<SavedSession[]>;
@@ -421,10 +422,15 @@ export function createFlowEditor(
   backdrop.querySelector("[data-flow-save]")!.addEventListener("click", () => {
     void (async () => {
       draftSteps = readStepsFromDom();
+      const existing = editingId
+        ? flows.find((f) => f.id === editingId)
+        : undefined;
       const saved = await handlers.upsertFlow({
         id: editingId || undefined,
         name: nameInput.value.trim() || t("flow.untitled"),
         steps: draftSteps,
+        // Keep sidebar folder assignment across edits.
+        ...(editingId ? { folder: existing?.folder ?? null } : {}),
       });
       editingId = saved.id;
       onSaved?.(saved);

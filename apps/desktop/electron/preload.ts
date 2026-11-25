@@ -56,6 +56,106 @@ export type DesktopApi = {
     | { tabId: string; title: string; kind?: "ssh"; label?: string }
     | { error: string }
   >;
+  detectClaude: () => Promise<
+    | { ok: true; path: string; source: "path" | "bundled" }
+    | { ok: false; error: string }
+  >;
+  openClaude: (input: {
+    cwd: string;
+    cardId?: string;
+    sessionId?: string;
+    title?: string;
+    cols?: number;
+    rows?: number;
+  }) => Promise<
+    | {
+        tabId: string;
+        cardId: string;
+        sessionId: string;
+        title: string;
+        cwd: string;
+      }
+    | { error: string }
+  >;
+  updateClaudeSession: (input: {
+    cardId: string;
+    title?: string;
+    status?: "idle" | "running" | "waiting" | "done" | "error";
+  }) => Promise<{ ok: boolean }>;
+  listClaudeSessions: () => Promise<{
+    sessions: Array<{
+      cardId: string;
+      tabId: string;
+      title: string;
+      cwd: string;
+      sessionId: string;
+      status: string;
+    }>;
+  }>;
+  listClaudeProjects: (input?: { extraCwds?: string[] }) => Promise<{
+    folders: Array<{
+      path: string;
+      branch?: string;
+      worktreeOf?: string;
+      changes?: number;
+      ahead?: number;
+      behind?: number;
+      trusted?: boolean;
+    }>;
+  }>;
+  listClaudeTranscripts: () => Promise<{
+    sessions: Array<{
+      id: string;
+      cwd: string;
+      title: string;
+      at: number;
+      onBoard: boolean;
+    }>;
+  }>;
+  deleteClaudeTranscript: (
+    sessionId: string
+  ) => Promise<{ ok: true; path: string } | { error: string }>;
+  resolveGitRoot: (cwd: string) => Promise<{ root: string | null }>;
+  listGitBranches: (
+    repo: string
+  ) => Promise<{ branches: string[]; current: string | null }>;
+  previewWorktree: (input: {
+    repo: string;
+    branch: string;
+  }) => Promise<{ path: string } | { error: string }>;
+  addWorktree: (input: {
+    repo: string;
+    branch: string;
+    baseRef?: string;
+  }) => Promise<{ path: string } | { error: string }>;
+  removeWorktree: (
+    worktreePath: string
+  ) => Promise<{ ok: true } | { error: string }>;
+  sendToClaudeSession: (input: {
+    fromCardId?: string;
+    toCardId: string;
+    message: string;
+  }) => Promise<{ ok: true } | { error: string }>;
+  onClaudeHook: (
+    cb: (payload: {
+      cardId: string;
+      event: string;
+      status: "idle" | "running" | "waiting" | "done" | "error";
+      raw?: unknown;
+    }) => void
+  ) => () => void;
+  onClaudeUsage: (
+    cb: (payload: {
+      cardId: string;
+      fiveHour?: { usedPercent: number; resetsAt?: number };
+      sevenDay?: { usedPercent: number; resetsAt?: number };
+      contextPercent?: number | null;
+      modelId?: string;
+      modelLabel?: string;
+      effortLevel?: string;
+      updatedAt: number;
+    }) => void
+  ) => () => void;
   closeTab: (tabId: string) => Promise<void>;
   /** Local PTY only: true when the shell has a child process running. */
   isTabBusy: (tabId: string) => Promise<boolean>;
@@ -126,6 +226,7 @@ export type DesktopApi = {
     id?: string;
     name: string;
     steps: FlowStep[];
+    folder?: string | null;
   }) => Promise<FlowDef>;
   deleteFlow: (id: string) => Promise<{ ok: boolean }>;
   runFlow: (input: {
@@ -575,6 +676,51 @@ const api: DesktopApi = {
   openLocal: (size) => ipcRenderer.invoke("term:open-local", size),
   openSsh: (sessionId, size) =>
     ipcRenderer.invoke("term:open-ssh", sessionId, size),
+  detectClaude: () => ipcRenderer.invoke("claude:detect"),
+  openClaude: (input) => ipcRenderer.invoke("claude:open", input),
+  updateClaudeSession: (input) =>
+    ipcRenderer.invoke("claude:update-session", input),
+  listClaudeSessions: () => ipcRenderer.invoke("claude:list-sessions"),
+  listClaudeProjects: (input) =>
+    ipcRenderer.invoke("claude:list-projects", input ?? {}),
+  listClaudeTranscripts: () => ipcRenderer.invoke("claude:list-transcripts"),
+  deleteClaudeTranscript: (sessionId) =>
+    ipcRenderer.invoke("claude:delete-transcript", sessionId),
+  resolveGitRoot: (cwd) => ipcRenderer.invoke("git:resolve-root", cwd),
+  listGitBranches: (repo) => ipcRenderer.invoke("git:branches", repo),
+  previewWorktree: (input) => ipcRenderer.invoke("git:worktree-preview", input),
+  addWorktree: (input) => ipcRenderer.invoke("git:worktree-add", input),
+  removeWorktree: (worktreePath) =>
+    ipcRenderer.invoke("git:worktree-remove", worktreePath),
+  sendToClaudeSession: (input) =>
+    ipcRenderer.invoke("claude:send-to-session", input),
+  onClaudeHook: (cb) => {
+    const listener = (
+      _e: Electron.IpcRendererEvent,
+      payload: {
+        cardId: string;
+        event: string;
+        status: "idle" | "running" | "waiting" | "done" | "error";
+        raw?: unknown;
+      }
+    ) => cb(payload);
+    ipcRenderer.on("claude:hook", listener);
+    return () => ipcRenderer.removeListener("claude:hook", listener);
+  },
+  onClaudeUsage: (cb) => {
+    const listener = (
+      _e: Electron.IpcRendererEvent,
+      payload: {
+        cardId: string;
+        fiveHour?: { usedPercent: number; resetsAt?: number };
+        sevenDay?: { usedPercent: number; resetsAt?: number };
+        contextPercent?: number | null;
+        updatedAt: number;
+      }
+    ) => cb(payload);
+    ipcRenderer.on("claude:usage", listener);
+    return () => ipcRenderer.removeListener("claude:usage", listener);
+  },
   closeTab: (tabId) => ipcRenderer.invoke("term:close", tabId),
   isTabBusy: (tabId) => ipcRenderer.invoke("term:is-busy", tabId),
   readyTerminal: (tabId) => ipcRenderer.invoke("term:ready", tabId),

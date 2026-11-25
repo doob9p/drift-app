@@ -86,6 +86,22 @@ import {
 import { createFlowsStore } from "./flows-store";
 import { createFlowRunner } from "./flow-runner";
 import type { FlowStep } from "@drift/core";
+import {
+  createClaudeHost,
+  type ClaudeAgentStatus,
+  type ClaudeHost,
+  type ClaudeSessionRecord,
+} from "./claude-host";
+import {
+  addWorktree,
+  deleteClaudeTranscript,
+  listClaudeProjectFolders,
+  listClaudeTranscripts,
+  listLocalBranches,
+  previewWorktreePath,
+  removeWorktree,
+  resolveGitRoot,
+} from "./claude-projects";
 
 type Backend = LocalPtyBackend | SshPtyBackend;
 
@@ -145,7 +161,46 @@ let sessionStore: SessionStore;
 let flowsStore: ReturnType<typeof createFlowsStore>;
 let flowRunner: ReturnType<typeof createFlowRunner>;
 const tabs = new Map<string, Tab>();
+/** Open Claude board cards (for MCP list_sessions / send_to_session). */
+const claudeSessions = new Map<string, ClaudeSessionRecord>();
+/** tabId → cardId for Claude PTYs. */
+const claudeTabToCard = new Map<string, string>();
+let claudeHost: ClaudeHost | null = null;
 const policy = new ApprovalPolicy("ask");
+
+function ensureClaudeHost(): ClaudeHost {
+  if (claudeHost) return claudeHost;
+  claudeHost = createClaudeHost({
+    hooksDir: () => path.join(dataDir(), "claude-hooks"),
+    userDataDir: dataDir,
+    localShellKind: () =>
+      process.platform === "win32" ? appSettings.localShell : undefined,
+    onHook: (payload) => {
+      const rec = claudeSessions.get(payload.cardId);
+      if (rec) rec.status = payload.status;
+      mainWindow?.webContents.send("claude:hook", payload);
+    },
+    onUsage: (payload) => {
+      mainWindow?.webContents.send("claude:usage", payload);
+    },
+    writeToTab: (tabId, data) => {
+      const tab = tabs.get(tabId);
+      if (!tab?.backend) return false;
+      tab.backend.write(data);
+      return true;
+    },
+    listOtherSessions: (fromCardId) =>
+      [...claudeSessions.values()].filter((s) => s.cardId !== fromCardId),
+  });
+  return claudeHost;
+}
+
+function unregisterClaudeByTab(tabId: string): void {
+  const cardId = claudeTabToCard.get(tabId);
+  if (!cardId) return;
+  claudeTabToCard.delete(tabId);
+  claudeSessions.delete(cardId);
+}
 const pendingApprovals = new Map<
   string,
   {
@@ -1787,7 +1842,232 @@ function registerIpc(): void {
     tab.unsubExit?.();
     await tab.backend?.dispose();
     tabs.delete(tabId);
+    unregisterClaudeByTab(tabId);
   });
+
+  ipcMain.handle("claude:detect", async () => ensureClaudeHost().detectClaudeCli());
+
+  ipcMain.handle(
+    "claude:open",
+    async (
+      _e,
+      payload: {
+        cwd: string;
+        cardId?: string;
+        sessionId?: string;
+        title?: string;
+        cols?: number;
+        rows?: number;
+      }
+    ) => {
+      const host = ensureClaudeHost();
+      await host.startServer();
+      const cardId =
+        typeof payload.cardId === "string" && payload.cardId.trim()
+          ? payload.cardId.trim()
+          : newId();
+      const cols = Math.max(2, Math.floor(payload.cols ?? 120));
+      const rows = Math.max(1, Math.floor(payload.rows ?? 30));
+      const opened = await host.openSession({
+        cardId,
+        cwd: payload.cwd,
+        sessionId: payload.sessionId,
+        cols,
+        rows,
+      });
+      if (!opened.ok) return { error: opened.error };
+      const title =
+        (typeof payload.title === "string" && payload.title.trim()) ||
+        path.basename(payload.cwd) ||
+        "Claude";
+      tabs.set(opened.tabId, {
+        id: opened.tabId,
+        title,
+        backend: opened.backend,
+        ready: false,
+        buffer: [],
+        scrollback: "",
+        lastCols: cols,
+        lastRows: rows,
+        lastCwd: path.resolve(payload.cwd),
+      });
+      attachBackend(opened.tabId, opened.backend);
+      const record: ClaudeSessionRecord = {
+        cardId,
+        tabId: opened.tabId,
+        title,
+        cwd: path.resolve(payload.cwd),
+        sessionId: opened.sessionId,
+        status: "idle",
+      };
+      claudeSessions.set(cardId, record);
+      claudeTabToCard.set(opened.tabId, cardId);
+      return {
+        tabId: opened.tabId,
+        cardId,
+        sessionId: opened.sessionId,
+        title,
+        cwd: record.cwd,
+      };
+    }
+  );
+
+  ipcMain.handle(
+    "claude:update-session",
+    async (
+      _e,
+      payload: {
+        cardId: string;
+        title?: string;
+        status?: ClaudeAgentStatus;
+      }
+    ) => {
+      const rec = claudeSessions.get(payload.cardId);
+      if (!rec) return { ok: false as const };
+      if (typeof payload.title === "string" && payload.title.trim()) {
+        rec.title = payload.title.trim();
+      }
+      if (payload.status) rec.status = payload.status;
+      return { ok: true as const };
+    }
+  );
+
+  ipcMain.handle("claude:list-sessions", async () => {
+    return {
+      sessions: [...claudeSessions.values()].map((s) => ({
+        cardId: s.cardId,
+        tabId: s.tabId,
+        title: s.title,
+        cwd: s.cwd,
+        sessionId: s.sessionId,
+        status: s.status,
+      })),
+    };
+  });
+
+  ipcMain.handle(
+    "claude:list-projects",
+    async (_e, payload?: { extraCwds?: string[] }) => {
+      const extra = Array.isArray(payload?.extraCwds)
+        ? payload!.extraCwds!.filter((p): p is string => typeof p === "string")
+        : [...claudeSessions.values()].map((s) => s.cwd);
+      const folders = await listClaudeProjectFolders(extra);
+      return { folders };
+    }
+  );
+
+  ipcMain.handle("claude:list-transcripts", async () => {
+    const onBoard = new Set(
+      [...claudeSessions.values()].map((s) => s.sessionId.toLowerCase())
+    );
+    const sessions = listClaudeTranscripts().map((s) => ({
+      ...s,
+      onBoard: onBoard.has(s.id.toLowerCase()),
+    }));
+    return { sessions };
+  });
+
+  ipcMain.handle(
+    "claude:delete-transcript",
+    async (_e, sessionId: string) => {
+      if (typeof sessionId !== "string" || !sessionId.trim()) {
+        return { error: "Session id is required" };
+      }
+      const id = sessionId.trim();
+      const onBoard = [...claudeSessions.values()].some(
+        (s) => s.sessionId.toLowerCase() === id.toLowerCase()
+      );
+      if (onBoard) {
+        return {
+          error:
+            "This session is open on the board. Close the Claude card first.",
+        };
+      }
+      return deleteClaudeTranscript(id);
+    }
+  );
+
+  ipcMain.handle(
+    "git:resolve-root",
+    async (_e, cwd: string) => {
+      if (typeof cwd !== "string" || !cwd.trim()) {
+        return { root: null as string | null };
+      }
+      return { root: await resolveGitRoot(cwd.trim()) };
+    }
+  );
+
+  ipcMain.handle(
+    "git:branches",
+    async (_e, repo: string) => {
+      if (typeof repo !== "string" || !repo.trim()) {
+        return { branches: [] as string[], current: null as string | null };
+      }
+      return listLocalBranches(repo.trim());
+    }
+  );
+
+  ipcMain.handle(
+    "git:worktree-preview",
+    async (_e, payload: { repo: string; branch: string }) => {
+      const repo = typeof payload?.repo === "string" ? payload.repo.trim() : "";
+      const branch =
+        typeof payload?.branch === "string" ? payload.branch : "";
+      if (!repo) return { error: "Repository path is required" };
+      const root = (await resolveGitRoot(repo)) || repo;
+      return previewWorktreePath(root, branch);
+    }
+  );
+
+  ipcMain.handle(
+    "git:worktree-add",
+    async (
+      _e,
+      payload: { repo: string; branch: string; baseRef?: string }
+    ) => {
+      const repo = typeof payload?.repo === "string" ? payload.repo.trim() : "";
+      const branch =
+        typeof payload?.branch === "string" ? payload.branch : "";
+      const baseRef =
+        typeof payload?.baseRef === "string" ? payload.baseRef : undefined;
+      if (!repo) return { error: "Repository path is required" };
+      return addWorktree(repo, branch, baseRef);
+    }
+  );
+
+  ipcMain.handle(
+    "git:worktree-remove",
+    async (_e, worktreePath: string) => {
+      if (typeof worktreePath !== "string" || !worktreePath.trim()) {
+        return { error: "Path is required" };
+      }
+      return removeWorktree(worktreePath.trim());
+    }
+  );
+
+  ipcMain.handle(
+    "claude:send-to-session",
+    async (
+      _e,
+      payload: { fromCardId?: string; toCardId: string; message: string }
+    ) => {
+      const message = typeof payload.message === "string" ? payload.message : "";
+      if (!message.trim()) return { error: "empty message" };
+      const target = claudeSessions.get(payload.toCardId);
+      if (!target) return { error: "Session not found" };
+      if (
+        payload.fromCardId &&
+        payload.fromCardId === target.cardId
+      ) {
+        return { error: "Cannot send to the same session" };
+      }
+      const paste = `\x1b[200~${message}\x1b[201~\r`;
+      const tab = tabs.get(target.tabId);
+      if (!tab?.backend) return { error: "Target session PTY is not available" };
+      tab.backend.write(paste);
+      return { ok: true as const };
+    }
+  );
 
   /** True when the local shell PTY has a child process (a command is running). */
   ipcMain.handle("term:is-busy", async (_e, tabId: string) => {
@@ -1903,7 +2183,12 @@ function registerIpc(): void {
     "flows:upsert",
     async (
       _e,
-      input: { id?: string; name: string; steps: FlowStep[] }
+      input: {
+        id?: string;
+        name: string;
+        steps: FlowStep[];
+        folder?: string | null;
+      }
     ) => flowsStore.upsert(input)
   );
   ipcMain.handle("flows:delete", async (_e, id: string) => {
@@ -3107,6 +3392,11 @@ app.whenReady().then(async () => {
     },
   });
   registerIpc();
+  try {
+    await ensureClaudeHost().startServer();
+  } catch (err) {
+    console.warn("[claude-host] hook server failed to start", err);
+  }
   buildApplicationMenu();
   createWindow();
   initAutoUpdater(() => mainWindow);
@@ -3122,6 +3412,10 @@ app.on("window-all-closed", () => {
     void tab.backend?.dispose();
   }
   tabs.clear();
+  claudeSessions.clear();
+  claudeTabToCard.clear();
+  claudeHost?.stop();
+  claudeHost = null;
   if (process.platform !== "darwin") app.quit();
 });
 

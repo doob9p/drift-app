@@ -31,6 +31,7 @@ export function showToast(
     detail?: string;
     ms?: number;
     action?: { label: string; onClick: () => void };
+    actions?: Array<{ label: string; onClick: () => void }>;
   }
 ): void {
   const root = ensureHost();
@@ -38,6 +39,11 @@ export function showToast(
   el.className = `toast toast-${kind}`;
   el.setAttribute("role", kind === "error" ? "alert" : "status");
   const detail = opts?.detail?.trim();
+  const actions = opts?.actions?.length
+    ? opts.actions
+    : opts?.action
+      ? [opts.action]
+      : [];
   const parts = [
     `<div class="toast-title">${escapeHtml(message)}</div>`,
   ];
@@ -46,17 +52,24 @@ export function showToast(
       `<div class="toast-detail">${escapeHtml(detail)}</div>`
     );
   }
-  if (opts?.action) {
+  if (actions.length) {
     parts.push(
-      `<button type="button" class="toast-action">${escapeHtml(opts.action.label)}</button>`
+      `<div class="toast-actions">${actions
+        .map(
+          (a, i) =>
+            `<button type="button" class="toast-action" data-toast-action="${i}">${escapeHtml(a.label)}</button>`
+        )
+        .join("")}</div>`
     );
   }
   el.innerHTML = parts.join("");
-  const actionBtn = el.querySelector(".toast-action") as HTMLButtonElement | null;
-  if (actionBtn && opts?.action) {
-    actionBtn.onclick = (e) => {
+  for (const btn of el.querySelectorAll("[data-toast-action]")) {
+    const idx = Number((btn as HTMLElement).dataset.toastAction);
+    const action = actions[idx];
+    if (!action) continue;
+    (btn as HTMLButtonElement).onclick = (e) => {
       e.stopPropagation();
-      opts.action?.onClick();
+      action.onClick();
       el.classList.remove("show");
       window.setTimeout(() => el.remove(), 220);
     };
