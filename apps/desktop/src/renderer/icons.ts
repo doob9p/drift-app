@@ -58,6 +58,7 @@ import {
   Radio,
   Ellipsis,
   AppWindow,
+  Workflow,
 } from "lucide";
 
 type IconOpts = {
@@ -157,4 +158,6 @@ export const icons = {
   more: (size = 14) => lucideSvg(Ellipsis, { size }),
   /** Open folder in Cursor desktop editor. */
   openCursor: (size = 14) => lucideSvg(AppWindow, { size }),
+  /** Deploy / build flow card. */
+  flow: (size = 14) => lucideSvg(Workflow, { size }),
 };

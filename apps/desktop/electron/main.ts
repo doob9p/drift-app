@@ -83,6 +83,9 @@ import {
   loadSshPassword,
   saveSshPassword,
 } from "./ssh-secrets";
+import { createFlowsStore } from "./flows-store";
+import { createFlowRunner } from "./flow-runner";
+import type { FlowStep } from "@drift/core";
 
 type Backend = LocalPtyBackend | SshPtyBackend;
 
@@ -139,6 +142,8 @@ type SessionUsage = {
 
 let mainWindow: BrowserWindow | null = null;
 let sessionStore: SessionStore;
+let flowsStore: ReturnType<typeof createFlowsStore>;
+let flowRunner: ReturnType<typeof createFlowRunner>;
 const tabs = new Map<string, Tab>();
 const policy = new ApprovalPolicy("ask");
 const pendingApprovals = new Map<
@@ -1857,6 +1862,38 @@ function registerIpc(): void {
     return { ok: true as const };
   });
 
+  ipcMain.handle("flows:list", async () => flowsStore.list());
+  ipcMain.handle("flows:get", async (_e, id: string) => flowsStore.get(id));
+  ipcMain.handle(
+    "flows:upsert",
+    async (
+      _e,
+      input: { id?: string; name: string; steps: FlowStep[] }
+    ) => flowsStore.upsert(input)
+  );
+  ipcMain.handle("flows:delete", async (_e, id: string) => {
+    const ok = await flowsStore.remove(id);
+    return { ok };
+  });
+  ipcMain.handle(
+    "flows:run",
+    async (_e, input: { flowId: string; cardId?: string }) =>
+      flowRunner.start(input)
+  );
+  ipcMain.handle(
+    "flows:approve",
+    async (_e, input: { runId: string; stepId: string }) =>
+      flowRunner.approve(input.runId, input.stepId)
+  );
+  ipcMain.handle("flows:abort", async (_e, runId?: string) =>
+    flowRunner.abort(runId)
+  );
+  ipcMain.handle(
+    "flows:stdin",
+    async (_e, input: { runId: string; data: string }) =>
+      flowRunner.writeStdin(input.runId, input.data ?? "")
+  );
+
   ipcMain.handle(
     "settings:set-model",
     async (_e, modelId: string) => {
@@ -3018,6 +3055,22 @@ app.whenReady().then(async () => {
   await sessionStore.load();
   appSettings = await loadSettings();
   applyChatModeToPolicy(appSettings.chatMode);
+  flowsStore = createFlowsStore(dataDir);
+  flowRunner = createFlowRunner({
+    getFlow: (id) => flowsStore.get(id),
+    findBackend: (pred) => {
+      for (const tab of tabs.values()) {
+        if (tab.backend && pred(tab.backend)) return tab.backend;
+      }
+      return null;
+    },
+    getSession: (id) => sessionStore.get(id),
+    loadSshPassword,
+    localPtyOpts,
+    emit: (event) => {
+      mainWindow?.webContents.send("flows:event", event);
+    },
+  });
   registerIpc();
   buildApplicationMenu();
   createWindow();

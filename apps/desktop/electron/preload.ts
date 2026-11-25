@@ -5,6 +5,9 @@ import type {
   AppLocale,
   AppSettings,
   ChatMode,
+  FlowDef,
+  FlowEvent,
+  FlowStep,
   LocalShellId,
   ModelOption,
   ProposedAction,
@@ -115,6 +118,28 @@ export type DesktopApi = {
   listModels: () => Promise<ModelOption[]>;
   getBoard: () => Promise<unknown>;
   saveBoard: (state: unknown) => Promise<{ ok: true }>;
+  listFlows: () => Promise<FlowDef[]>;
+  getFlow: (id: string) => Promise<FlowDef | null>;
+  upsertFlow: (input: {
+    id?: string;
+    name: string;
+    steps: FlowStep[];
+  }) => Promise<FlowDef>;
+  deleteFlow: (id: string) => Promise<{ ok: boolean }>;
+  runFlow: (input: {
+    flowId: string;
+    cardId?: string;
+  }) => Promise<{ runId: string } | { error: string }>;
+  approveFlowStep: (input: {
+    runId: string;
+    stepId: string;
+  }) => Promise<{ ok: true } | { error: string }>;
+  abortFlow: (runId?: string) => Promise<{ stopped: string[] }>;
+  writeFlowStdin: (input: {
+    runId: string;
+    data: string;
+  }) => Promise<{ ok: true } | { error: string }>;
+  onFlowEvent: (cb: (event: FlowEvent) => void) => () => void;
 
   getSessionUsage: () => Promise<SessionUsageView>;
   resetSessionUsage: () => Promise<SessionUsageView>;
@@ -603,6 +628,20 @@ const api: DesktopApi = {
   listModels: () => ipcRenderer.invoke("settings:list-models"),
   getBoard: () => ipcRenderer.invoke("board:get"),
   saveBoard: (state) => ipcRenderer.invoke("board:save", state),
+  listFlows: () => ipcRenderer.invoke("flows:list"),
+  getFlow: (id) => ipcRenderer.invoke("flows:get", id),
+  upsertFlow: (input) => ipcRenderer.invoke("flows:upsert", input),
+  deleteFlow: (id) => ipcRenderer.invoke("flows:delete", id),
+  runFlow: (input) => ipcRenderer.invoke("flows:run", input),
+  approveFlowStep: (input) => ipcRenderer.invoke("flows:approve", input),
+  abortFlow: (runId) => ipcRenderer.invoke("flows:abort", runId),
+  writeFlowStdin: (input) => ipcRenderer.invoke("flows:stdin", input),
+  onFlowEvent: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, event: FlowEvent) =>
+      cb(event);
+    ipcRenderer.on("flows:event", listener);
+    return () => ipcRenderer.removeListener("flows:event", listener);
+  },
 
   getSessionUsage: () => ipcRenderer.invoke("usage:get-session"),
   resetSessionUsage: () => ipcRenderer.invoke("usage:reset-session"),

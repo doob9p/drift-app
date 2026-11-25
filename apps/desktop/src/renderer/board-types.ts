@@ -55,7 +55,40 @@ export type PromptCard = BoardCardBase & {
   messages?: PersistedChatMessage[];
 };
 
-export type BoardCard = TerminalCard | PromptCard;
+export type FlowCardRunStatus =
+  | "idle"
+  | "running"
+  | "waiting"
+  | "done"
+  | "error";
+
+export type FlowCardStepState = {
+  stepId: string;
+  label: string;
+  kind: string;
+  status: "pending" | "running" | "waiting" | "ok" | "fail" | "skipped";
+  /** Shell command (local / ssh). */
+  command?: string;
+  cwd?: string;
+  sessionId?: string;
+  paths?: string[];
+  remoteDir?: string;
+  exitCode?: number | null;
+  output?: string;
+  error?: string;
+};
+
+/** Board card that runs a saved deploy/build flow. */
+export type FlowCard = BoardCardBase & {
+  kind: "flow";
+  flowId: string;
+  title: string;
+  runStatus?: FlowCardRunStatus;
+  runId?: string;
+  steps?: FlowCardStepState[];
+};
+
+export type BoardCard = TerminalCard | PromptCard | FlowCard;
 
 export type BoardCamera = {
   x: number;
@@ -69,7 +102,7 @@ export type BoardPersistedState = {
 };
 
 export type BoardFocus = {
-  kind: "terminal" | "prompt";
+  kind: "terminal" | "prompt" | "flow";
   cardId: string;
-  tabId: string;
+  tabId?: string;
 } | null;

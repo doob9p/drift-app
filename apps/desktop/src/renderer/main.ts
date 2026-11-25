@@ -52,9 +52,13 @@ import {
 import type {
   BoardFocus,
   BoardPersistedState,
+  FlowCard,
+  FlowCardStepState,
   PromptCard,
   TerminalCard,
 } from "./board-types.js";
+import { createFlowEditor } from "./flow-editor.js";
+import type { FlowDef, FlowEvent } from "@drift/core";
 import {
   attachmentsToSdkImages,
   buildAttachmentPromptSuffix,
@@ -224,7 +228,7 @@ const state = {
   startedAssistant: false,
 };
 
-type NavId = "sessions" | "files" | "meetings" | "settings";
+type NavId = "sessions" | "files" | "flows" | "meetings" | "settings";
 const tabCwds = new Map<string, string>();
 
 if (/Mac|darwin/i.test(navigator.userAgent)) {
@@ -287,6 +291,7 @@ app.innerHTML = `
           <div class="rail-group">
             <button type="button" class="rail-btn active" data-nav="sessions" data-i18n-title="nav.sessions" title="Sessions" aria-label="Sessions">${icons.server(17)}</button>
             <button type="button" class="rail-btn" data-nav="files" data-i18n-title="nav.files" title="Files" aria-label="Files">${icons.folder(17)}</button>
+            <button type="button" class="rail-btn" data-nav="flows" data-i18n-title="nav.flows" title="Flows" aria-label="Flows">${icons.flow(17)}</button>
           </div>
         </div>
         <div class="rail-group rail-group-bottom">
@@ -335,6 +340,17 @@ app.innerHTML = `
           </div>
           <div class="session-empty" id="session-empty" data-i18n-html="sidebar.empty"></div>
           <ul class="session-list" id="session-list"></ul>
+        </section>
+
+        <section class="nav-view hidden" data-view="flows">
+          <div class="sidebar-tools">
+            <button class="primary" id="btn-new-flow">
+              ${icons.flow(14)}
+              <span data-i18n="sidebar.newFlow">New flow</span>
+            </button>
+          </div>
+          <div class="flow-list-empty" id="flow-list-empty" data-i18n="sidebar.flowsEmpty">No saved flows yet</div>
+          <ul class="flow-list" id="flow-list"></ul>
         </section>
 
         <section class="nav-view hidden" data-view="meetings">
@@ -807,6 +823,8 @@ const els = {
   meetingStageEmpty: document.getElementById("meeting-stage-empty")!,
   meetingList: document.getElementById("meeting-list")!,
   meetingListEmpty: document.getElementById("meeting-list-empty")!,
+  flowList: document.getElementById("flow-list")!,
+  flowListEmpty: document.getElementById("flow-list-empty")!,
   mentionMenu: document.getElementById("mention-menu")!,
   stripPath: document.getElementById("strip-path") as HTMLButtonElement,
   stripPathText: document.getElementById("strip-path-text")!,
@@ -1050,7 +1068,9 @@ const noopChat: ChatController = {
 };
 
 function getPromptTabId(cardId: string): string {
-  return board.findCard(cardId)?.tabId ?? "";
+  const card = board.findCard(cardId);
+  if (!card || card.kind === "flow") return "";
+  return card.tabId;
 }
 
 function activeChat(): ChatController | null {
@@ -3227,10 +3247,14 @@ board = createBoardPane(els.boardStage, {
       refreshStatusStrip();
       return;
     }
-    state.activeTabId = focus.tabId;
+    if (focus.tabId) state.activeTabId = focus.tabId;
     if (focus.kind === "prompt") {
       activePromptCardId = focus.cardId;
       // Prompt focus is not a terminal selection — clear the files tree.
+      filesFollowTabId = null;
+      void syncFilesPanel();
+    }
+    if (focus.kind === "flow") {
       filesFollowTabId = null;
       void syncFilesPanel();
     }
@@ -3238,7 +3262,7 @@ board = createBoardPane(els.boardStage, {
     refreshStatusStrip();
     void refreshStripMetrics();
     // Files panel follows board terminal selection only.
-    if (focus.kind === "terminal") {
+    if (focus.kind === "terminal" && focus.tabId) {
       filesFollowTabId = focus.tabId;
       void syncFilesPanel();
       const tab = state.tabs.get(focus.tabId);
@@ -3280,6 +3304,14 @@ board = createBoardPane(els.boardStage, {
     }
     board.removeCard(cardId);
   },
+  onCloseFlow(cardId) {
+    const card = board.findCard(cardId);
+    if (card?.kind === "flow" && card.runId) {
+      void api.abortFlow(card.runId);
+    }
+    board.removeCard(cardId);
+    renderFlowList();
+  },
   onAddSub(parentCardId) {
     void addManualSubPrompt(parentCardId);
   },
@@ -3291,6 +3323,49 @@ board = createBoardPane(els.boardStage, {
   },
   onToggleBroadcastMember(tabId) {
     toggleBroadcastMember(tabId);
+  },
+  onAddFlow() {
+    openFlowEditorAndPlace();
+  },
+  onFlowEdit(cardId) {
+    const card = board.findCard(cardId);
+    if (!card || card.kind !== "flow") return;
+    flowEditor.open({
+      flowId: card.flowId,
+      onSaved: async (flow) => {
+        void refreshFlowList();
+        const current = board.findCard(cardId);
+        if (current?.kind === "flow" && current.runId) {
+          await api.abortFlow(current.runId);
+        }
+        board.updateFlowCard(cardId, {
+          flowId: flow.id,
+          title: flow.name,
+          steps: flowStepsToCardStates(flow),
+          runStatus: "idle",
+          runId: undefined,
+        });
+        showToast(t("flow.saved"), "info");
+      },
+    });
+  },
+  onFlowRun(cardId) {
+    void runFlowCard(cardId);
+  },
+  onFlowAbort(cardId) {
+    const card = board.findCard(cardId);
+    if (!card || card.kind !== "flow" || !card.runId) return;
+    void api.abortFlow(card.runId);
+  },
+  onFlowApprove(cardId, stepId) {
+    const card = board.findCard(cardId);
+    if (!card || card.kind !== "flow" || !card.runId) return;
+    void api.approveFlowStep({ runId: card.runId, stepId });
+  },
+  onFlowStdin(cardId, data) {
+    const card = board.findCard(cardId);
+    if (!card || card.kind !== "flow" || !card.runId) return;
+    void api.writeFlowStdin({ runId: card.runId, data });
   },
   onPromptSend(cardId) {
     void sendPrompt(cardId);
@@ -3365,6 +3440,282 @@ board = createBoardPane(els.boardStage, {
   },
   onLayoutChange: () => scheduleBoardSave(),
 });
+
+function flowStepsToCardStates(flow: FlowDef): FlowCardStepState[] {
+  return flow.steps.map((s) => ({
+    stepId: s.id,
+    label: s.label,
+    kind: s.kind,
+    status: "pending" as const,
+    command: s.command,
+    cwd: s.cwd,
+    sessionId: s.sessionId,
+    paths: s.paths,
+    remoteDir: s.remoteDir,
+  }));
+}
+
+const flowEditor = createFlowEditor(document.body, {
+  listFlows: () => api.listFlows(),
+  upsertFlow: (input) => api.upsertFlow(input),
+  deleteFlow: async (id) => {
+    for (const card of [...board.getCards()]) {
+      if (card.kind === "flow" && card.flowId === id && card.runId) {
+        await api.abortFlow(card.runId);
+      }
+    }
+    const res = await api.deleteFlow(id);
+    for (const card of [...board.getCards()]) {
+      if (card.kind === "flow" && card.flowId === id) {
+        board.removeCard(card.id);
+      }
+    }
+    await refreshFlowList();
+    return res;
+  },
+  listSessions: () => api.getSessions(),
+  pickDirectory: () => api.pickDirectory({}),
+});
+
+function openFlowEditorAndPlace(flowId?: string): void {
+  flowEditor.open({
+    flowId,
+    onSaved: (flow) => {
+      void refreshFlowList();
+      const existing = board
+        .getCards()
+        .find((c): c is FlowCard => c.kind === "flow" && c.flowId === flow.id);
+      if (existing) {
+        board.updateFlowCard(existing.id, {
+          title: flow.name,
+          steps: flowStepsToCardStates(flow),
+          runStatus: "idle",
+          runId: undefined,
+        });
+        board.focusCard(existing.id);
+      } else {
+        const card = board.addFlow({
+          flowId: flow.id,
+          title: flow.name,
+          steps: flowStepsToCardStates(flow),
+        });
+        board.focusCard(card.id);
+      }
+      showToast(t("flow.added"), "info");
+    },
+  });
+}
+
+let sidebarFlows: FlowDef[] = [];
+
+function renderFlowList(): void {
+  els.flowList.innerHTML = "";
+  const empty = sidebarFlows.length === 0;
+  els.flowListEmpty.classList.toggle("hidden", !empty);
+  for (const flow of sidebarFlows) {
+    const onBoard = board
+      .getCards()
+      .some((c) => c.kind === "flow" && c.flowId === flow.id);
+    const li = document.createElement("li");
+    li.className = `flow-list-item${onBoard ? " is-on-board" : ""}`;
+    const stepCount = flow.steps.length;
+    const meta = t("sidebar.flowSteps", { n: String(stepCount) });
+    li.innerHTML = `
+      <button type="button" class="flow-list-main" data-flow-open="${escapeHtml(flow.id)}">
+        <span class="flow-list-title">${escapeHtml(flow.name || t("flow.untitled"))}</span>
+        <span class="flow-list-meta">${escapeHtml(meta)}</span>
+      </button>
+      <button type="button" class="flow-list-edit icon" data-flow-edit="${escapeHtml(flow.id)}" title="${escapeHtml(t("flow.edit"))}" aria-label="${escapeHtml(t("flow.edit"))}">${icons.pencil(13)}</button>
+      <button type="button" class="flow-list-del icon" data-flow-del="${escapeHtml(flow.id)}" title="${escapeHtml(t("flow.delete"))}" aria-label="${escapeHtml(t("flow.delete"))}">${icons.trash(13)}</button>
+    `;
+    els.flowList.append(li);
+  }
+}
+
+async function refreshFlowList(): Promise<void> {
+  try {
+    sidebarFlows = await api.listFlows();
+  } catch {
+    sidebarFlows = [];
+  }
+  renderFlowList();
+}
+
+async function placeFlowOnBoard(flowId: string): Promise<void> {
+  const flow =
+    sidebarFlows.find((f) => f.id === flowId) || (await api.getFlow(flowId));
+  if (!flow) {
+    showToast(t("flow.pickOrCreate"), "error");
+    await refreshFlowList();
+    return;
+  }
+  const existing = board
+    .getCards()
+    .find((c): c is FlowCard => c.kind === "flow" && c.flowId === flow.id);
+  if (existing) {
+    board.focusCard(existing.id);
+    renderFlowList();
+    return;
+  }
+  const card = board.addFlow({
+    flowId: flow.id,
+    title: flow.name,
+    steps: flowStepsToCardStates(flow),
+  });
+  board.focusCard(card.id);
+  showToast(t("flow.added"), "info");
+  renderFlowList();
+}
+
+async function deleteFlowFromSidebar(flowId: string): Promise<void> {
+  if (!window.confirm(t("sidebar.flowDeleteConfirm"))) return;
+  for (const card of [...board.getCards()]) {
+    if (card.kind === "flow" && card.flowId === flowId && card.runId) {
+      await api.abortFlow(card.runId);
+    }
+  }
+  await api.deleteFlow(flowId);
+  for (const card of [...board.getCards()]) {
+    if (card.kind === "flow" && card.flowId === flowId) {
+      board.removeCard(card.id);
+    }
+  }
+  await refreshFlowList();
+  showToast(t("flow.deleted"), "info");
+}
+
+async function runFlowCard(cardId: string): Promise<void> {
+  const card = board.findCard(cardId);
+  if (!card || card.kind !== "flow") return;
+  // Avoid overlapping runs on the same card (stale events / double SSH).
+  if (card.runId) {
+    await api.abortFlow(card.runId);
+  }
+  const flow = await api.getFlow(card.flowId);
+  if (!flow) {
+    showToast(t("flow.pickOrCreate"), "error");
+    flowEditor.open({
+      onSaved: (saved) => {
+        board.updateFlowCard(cardId, {
+          flowId: saved.id,
+          title: saved.name,
+          steps: flowStepsToCardStates(saved),
+        });
+        void runFlowCard(cardId);
+      },
+    });
+    return;
+  }
+  board.updateFlowCard(cardId, {
+    title: flow.name,
+    steps: flowStepsToCardStates(flow),
+    runStatus: "running",
+    runId: undefined,
+  });
+  const res = await api.runFlow({ flowId: flow.id, cardId });
+  if ("error" in res) {
+    board.updateFlowCard(cardId, { runStatus: "error" });
+    showToast(res.error || t("flow.runFailed"), "error");
+    return;
+  }
+  board.updateFlowCard(cardId, { runId: res.runId, runStatus: "running" });
+}
+
+function applyFlowEvent(event: FlowEvent): void {
+  const cardId =
+    event.cardId ||
+    board
+      .getCards()
+      .find(
+        (c): c is FlowCard =>
+          c.kind === "flow" &&
+          (("runId" in event && c.runId === event.runId) ||
+            c.flowId === event.flowId)
+      )?.id;
+  if (!cardId) return;
+  const card = board.findCard(cardId);
+  if (!card || card.kind !== "flow") return;
+
+  // Ignore late events from a previous run after restart/abort.
+  if (event.type !== "started") {
+    if (card.runId && event.runId && card.runId !== event.runId) return;
+    if (
+      !card.runId &&
+      (event.type === "finished" ||
+        event.type === "aborted" ||
+        event.type === "step" ||
+        event.type === "output" ||
+        event.type === "waiting")
+    ) {
+      return;
+    }
+  }
+
+  if (event.type === "started") {
+    board.updateFlowCard(cardId, {
+      runId: event.runId,
+      runStatus: "running",
+    });
+    return;
+  }
+  if (event.type === "waiting") {
+    const steps = (card.steps || []).map((s) =>
+      s.stepId === event.stepId
+        ? { ...s, status: "waiting" as const }
+        : s
+    );
+    board.updateFlowCard(cardId, { steps, runStatus: "waiting" });
+    return;
+  }
+  if (event.type === "output") {
+    board.appendFlowStepOutput(cardId, event.stepId, event.chunk);
+    return;
+  }
+  if (event.type === "step") {
+    const steps = (card.steps || []).map((s) =>
+      s.stepId === event.stepId
+        ? {
+            ...s,
+            status: event.status,
+            exitCode:
+              event.exitCode !== undefined ? event.exitCode : s.exitCode,
+            output: event.output ?? s.output,
+            error: event.error,
+          }
+        : s
+    );
+    const runStatus =
+      event.status === "waiting"
+        ? "waiting"
+        : event.status === "fail"
+          ? "error"
+          : card.runStatus === "waiting" && event.status === "ok"
+            ? "running"
+            : card.runStatus === "error"
+              ? "error"
+              : "running";
+    board.updateFlowCard(cardId, {
+      steps,
+      runStatus: runStatus as FlowCard["runStatus"],
+    });
+    return;
+  }
+  if (event.type === "finished") {
+    board.updateFlowCard(cardId, {
+      runStatus: event.status === "done" ? "done" : "error",
+      runId: undefined,
+    });
+    return;
+  }
+  if (event.type === "aborted") {
+    board.updateFlowCard(cardId, {
+      runStatus: "idle",
+      runId: undefined,
+    });
+  }
+}
+
+api.onFlowEvent((event) => applyFlowEvent(event));
 
 board.root.addEventListener("board:add-prompt", ((e: CustomEvent<{ tabId: string }>) => {
   const tabId = e.detail?.tabId;
@@ -3541,6 +3892,7 @@ function setNav(id: NavId): void {
   els.meetingStage.classList.toggle("hidden", !meetings);
   document.getElementById("main-stage")?.classList.toggle("mode-meetings", meetings);
   if (id === "files") void syncFilesPanel(true);
+  if (id === "flows") void refreshFlowList();
   if (meetings) {
     void refreshMeetingList();
     syncMeetingStageEmpty();
@@ -5212,6 +5564,32 @@ async function syncFilesPanel(_force = false): Promise<void> {
 
 // Wire UI
 document.getElementById("btn-local")!.onclick = () => void openLocal();
+document.getElementById("btn-new-flow")!.onclick = () => {
+  setNav("flows");
+  openFlowEditorAndPlace();
+};
+els.flowList.addEventListener("click", (e) => {
+  const del = (e.target as HTMLElement).closest(
+    "[data-flow-del]"
+  ) as HTMLElement | null;
+  if (del?.dataset.flowDel) {
+    e.preventDefault();
+    void deleteFlowFromSidebar(del.dataset.flowDel);
+    return;
+  }
+  const edit = (e.target as HTMLElement).closest(
+    "[data-flow-edit]"
+  ) as HTMLElement | null;
+  if (edit?.dataset.flowEdit) {
+    e.preventDefault();
+    openFlowEditorAndPlace(edit.dataset.flowEdit);
+    return;
+  }
+  const open = (e.target as HTMLElement).closest(
+    "[data-flow-open]"
+  ) as HTMLElement | null;
+  if (open?.dataset.flowOpen) void placeFlowOnBoard(open.dataset.flowOpen);
+});
 document.getElementById("btn-new-meeting")!.onclick = () => {
   setNav("meetings");
   void createAndOpenMeeting();

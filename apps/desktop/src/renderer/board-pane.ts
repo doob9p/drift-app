@@ -31,6 +31,9 @@ import type {
   BoardCard,
   BoardFocus,
   BoardPersistedState,
+  FlowCard,
+  FlowCardRunStatus,
+  FlowCardStepState,
   PromptCard,
   PromptRunStatus,
   TerminalCard,
@@ -44,6 +47,7 @@ export type BoardPaneHandlers = {
   onLayoutChange: () => void;
   onCloseTerminal: (tabId: string) => void;
   onClosePrompt: (cardId: string) => void;
+  onCloseFlow: (cardId: string) => void;
   onToggleMinimize: (cardId: string) => void;
   onPromptSend: (cardId: string) => void;
   onPromptInputKeydown: (cardId: string, e: KeyboardEvent) => void;
@@ -54,6 +58,12 @@ export type BoardPaneHandlers = {
     tabId: string,
     action: TerminalOverflowAction
   ) => void;
+  onFlowRun: (cardId: string) => void;
+  onFlowAbort: (cardId: string) => void;
+  onFlowApprove: (cardId: string, stepId: string) => void;
+  onFlowStdin: (cardId: string, data: string) => void;
+  onFlowEdit: (cardId: string) => void;
+  onAddFlow: () => void;
 };
 
 const TERMINAL_OVERFLOW_ITEMS: Array<{
@@ -93,6 +103,19 @@ export type BoardPane = {
     title?: string,
     opts?: { parentId?: string }
   ) => PromptCard;
+  addFlow: (input: {
+    flowId: string;
+    title: string;
+    steps?: FlowCardStepState[];
+  }) => FlowCard;
+  updateFlowCard: (
+    cardId: string,
+    patch: Partial<
+      Pick<FlowCard, "title" | "flowId" | "runStatus" | "runId" | "steps">
+    >
+  ) => void;
+  /** Append live log text without rebuilding the whole flow card. */
+  appendFlowStepOutput: (cardId: string, stepId: string, chunk: string) => void;
   getPromptEls: (cardId: string) => {
     thread: HTMLElement;
     input: HTMLDivElement;
@@ -115,6 +138,8 @@ export type BoardPane = {
   refreshTitles: (tabId: string, title: string) => void;
   syncEmpty: () => void;
   bringToFront: (cardId: string) => void;
+  /** Unlock view, focus, bring forward, and center the camera on a card. */
+  focusCard: (cardId: string) => void;
   setMinimized: (cardId: string, minimized: boolean) => void;
   findCard: (cardId: string) => BoardCard | undefined;
   removeCard: (cardId: string) => void;
@@ -150,6 +175,8 @@ const PROMPT_W = 380;
 const PROMPT_H = 520;
 const SUB_PROMPT_W = 320;
 const SUB_PROMPT_H = 420;
+const FLOW_W = 520;
+const FLOW_H = 360;
 const CHIP_W = 200;
 const CHIP_H = 36;
 export const MAX_PROMPT_SUBS = 4;
@@ -172,6 +199,12 @@ function wheelDeltaY(e: WheelEvent): number {
 }
 
 function cardScrollSurface(target: Element): HTMLElement | null {
+  const flowOut = target.closest(".flow-step-out");
+  if (flowOut instanceof HTMLElement) return flowOut;
+  const flowDetail = target.closest(".flow-detail");
+  if (flowDetail instanceof HTMLElement) return flowDetail;
+  const flowPipe = target.closest(".flow-pipeline");
+  if (flowPipe instanceof HTMLElement) return flowPipe;
   const thread = target.closest(".board-prompt-thread");
   if (thread instanceof HTMLElement) return thread;
   const term =
@@ -340,6 +373,7 @@ export function createBoardPane(
           <button type="button" class="icon ghost" id="btn-board-tile-fit" data-i18n-title="board.tileFit" data-shortcut="tile-fit" title="${labelWithChord(t("board.tileFit"), "tile-fit")}" aria-label="${labelWithChord(t("board.tileFit"), "tile-fit")}">${icons.tileFit(14)}</button>
           <button type="button" class="icon ghost" id="btn-board-lock" data-i18n-title="board.lockView" title="${t("board.lockView")}" aria-label="${t("board.lockView")}" aria-pressed="false">${icons.lockView(14)}</button>
           <button type="button" class="icon ghost" id="btn-board-broadcast" data-i18n-title="board.broadcast" data-shortcut="broadcast" title="${labelWithChord(t("board.broadcast"), "broadcast")}" aria-label="${labelWithChord(t("board.broadcast"), "broadcast")}" aria-pressed="false">${icons.broadcast(14)}</button>
+          <button type="button" class="icon ghost" id="btn-board-add-flow" data-i18n-title="board.addFlow" title="${t("board.addFlow")}" aria-label="${t("board.addFlow")}">${icons.flow(14)}</button>
         </div>
         <aside class="board-minimap" id="board-minimap" aria-label="${t("board.minimap")}">
           <header class="board-minimap-head">
@@ -595,11 +629,14 @@ export function createBoardPane(
 
   function resolvePromptTabId(): string | null {
     if (focus?.tabId) return focus.tabId;
-    return (
-      cards.find((c) => c.kind === "terminal" && !c.minimized)?.tabId ??
-      cards.find((c) => c.kind === "terminal")?.tabId ??
-      null
+    const openTerm = cards.find(
+      (c): c is TerminalCard => c.kind === "terminal" && !c.minimized
     );
+    if (openTerm) return openTerm.tabId;
+    const anyTerm = cards.find(
+      (c): c is TerminalCard => c.kind === "terminal"
+    );
+    return anyTerm?.tabId ?? null;
   }
 
   function requestAddPrompt(tabId?: string | null): void {
@@ -853,18 +890,19 @@ export function createBoardPane(
   }
 
   /**
-   * Pack open (non-minimized) terminals into the viewport.
-   * - fill: edge-to-edge, no gaps (flush chrome)
-   * - fit: small outer margin + gaps so every terminal is visible at once
+   * Pack open terminals + flow cards into the viewport.
+   * - fill: edge-to-edge, no gaps (flush chrome on terminals)
+   * - fit: small outer margin + gaps so every tile is visible at once
    */
   function layoutOpenTerminals(
     mode: "fill" | "fit",
     opts?: { animate?: boolean; refit?: boolean; persist?: boolean }
   ): void {
-    const terms = cards.filter(
-      (c): c is TerminalCard => c.kind === "terminal" && !c.minimized
+    const tiles = cards.filter(
+      (c): c is TerminalCard | FlowCard =>
+        (c.kind === "terminal" && !c.minimized) || c.kind === "flow"
     );
-    if (terms.length === 0) {
+    if (tiles.length === 0) {
       tileLayoutMode = null;
       return;
     }
@@ -876,7 +914,7 @@ export function createBoardPane(
     const vh = Math.max(1, viewport.clientHeight);
     lastTileViewport = { w: vw, h: vh };
     tileLayoutMode = mode;
-    const n = terms.length;
+    const n = tiles.length;
     const cols = Math.ceil(Math.sqrt(n));
     const rows = Math.ceil(n / cols);
     const pad = mode === "fit" ? 20 : 0;
@@ -908,29 +946,31 @@ export function createBoardPane(
       const cellW =
         (usableW - gap * Math.max(0, itemsInRow - 1)) / itemsInRow;
       const cellH = (usableH - gap * Math.max(0, rows - 1)) / rows;
-      const term = terms[i]!;
-      term.x = originX + pad + col * (cellW + gap);
-      term.y = originY + pad + row * (cellH + gap);
-      term.w = cellW;
-      term.h = cellH;
-      if (animate || shouldPersist) term.z = nextZ();
-      clampCardInWorld(term);
+      const tile = tiles[i]!;
+      tile.x = originX + pad + col * (cellW + gap);
+      tile.y = originY + pad + row * (cellH + gap);
+      tile.w = cellW;
+      tile.h = cellH;
+      if (animate || shouldPersist) tile.z = nextZ();
+      clampCardInWorld(tile);
     }
 
-    for (const term of terms) {
-      const el = cardEls.get(term.id);
+    for (const tile of tiles) {
+      const el = cardEls.get(tile.id);
       if (animate) el?.classList.add("is-arranging");
-      if (mode === "fill") el?.classList.add("is-tiled");
+      if (mode === "fill" && tile.kind === "terminal") {
+        el?.classList.add("is-tiled");
+      }
     }
     if (animate) void surface.offsetWidth;
     applyCamera(true);
-    for (const term of terms) {
-      layoutCard(term);
+    for (const tile of tiles) {
+      layoutCard(tile);
     }
     if (animate) {
       window.setTimeout(() => {
-        for (const term of terms) {
-          cardEls.get(term.id)?.classList.remove("is-arranging");
+        for (const tile of tiles) {
+          cardEls.get(tile.id)?.classList.remove("is-arranging");
         }
       }, 320);
     }
@@ -1104,6 +1144,22 @@ export function createBoardPane(
       y += groupH + GROUP_GAP_Y;
     }
 
+    const flowCards = cards.filter((c): c is FlowCard => c.kind === "flow");
+    for (const flow of flowCards) {
+      const fw = flow.w;
+      const fh = flow.h;
+      if (y > ORIGIN_Y && y + fh > WORLD.y + WORLD.h - 48) {
+        colX += colW + GROUP_GAP_X;
+        y = ORIGIN_Y;
+        colW = 0;
+      }
+      flow.x = colX;
+      flow.y = y;
+      clampCardInWorld(flow);
+      colW = Math.max(colW, fw);
+      y += fh + GROUP_GAP_Y;
+    }
+
     for (const card of cards) {
       cardEls.get(card.id)?.classList.add("is-arranging");
     }
@@ -1172,6 +1228,22 @@ export function createBoardPane(
     card.z = nextZ();
     const el = cardEls.get(cardId);
     if (el) el.style.zIndex = String(card.z);
+  }
+
+  function focusCard(cardId: string): void {
+    const card = cards.find((c) => c.id === cardId);
+    if (!card) return;
+    setViewLocked(false);
+    bringToFront(cardId);
+    if (card.kind === "terminal") {
+      setFocus({ kind: "terminal", cardId: card.id, tabId: card.tabId });
+    } else if (card.kind === "prompt") {
+      setFocus({ kind: "prompt", cardId: card.id, tabId: card.tabId });
+    } else {
+      setFocus({ kind: "flow", cardId: card.id });
+    }
+    const center = cardCenter(card);
+    centerCameraOnWorld(center.x, center.y);
   }
 
   function cardCenter(card: BoardCard): { x: number; y: number } {
@@ -1250,7 +1322,11 @@ export function createBoardPane(
     if (!best) return false;
 
     bringToFront(best.id);
-    setFocus({ kind: best.kind, cardId: best.id, tabId: best.tabId });
+    if (best.kind === "flow") {
+      setFocus({ kind: "flow", cardId: best.id });
+    } else {
+      setFocus({ kind: best.kind, cardId: best.id, tabId: best.tabId });
+    }
     ensureCardVisible(best);
     const el = cardEls.get(best.id);
     if (best.kind === "prompt") {
@@ -1363,8 +1439,10 @@ export function createBoardPane(
       if (!resizing) return;
       const card = cards.find((c) => c.id === cardId);
       if (!card || (card.kind === "terminal" && card.minimized)) return;
-      const minW = card.kind === "prompt" ? 300 : 280;
-      const minH = card.kind === "prompt" ? 280 : 200;
+      const minW =
+        card.kind === "prompt" ? 300 : card.kind === "flow" ? 280 : 280;
+      const minH =
+        card.kind === "prompt" ? 280 : card.kind === "flow" ? 240 : 200;
       card.w = Math.max(minW, originW + (e.clientX - startX) / camera.zoom);
       card.h = Math.max(minH, originH + (e.clientY - startY) / camera.zoom);
       card.w = Math.min(card.w, WORLD.x + WORLD.w - card.x);
@@ -1657,18 +1735,301 @@ export function createBoardPane(
     return el;
   }
 
+  function flowStepCommandText(step: FlowCardStepState): string {
+    if (step.kind === "approve") return "";
+    if (step.kind === "upload") {
+      const paths = (step.paths || []).map((p) => p.trim()).filter(Boolean);
+      const dest = (step.remoteDir || "~").trim();
+      if (paths.length === 0) return `upload → ${dest}`;
+      return `upload ${paths.join(" ")}\n→ ${dest}`;
+    }
+    return (step.command || "").trim();
+  }
+
+  function renderFlowDetail(
+    detail: HTMLElement,
+    cardId: string,
+    step: FlowCardStepState
+  ): void {
+    const waiting = step.status === "waiting";
+    const cmd = flowStepCommandText(step);
+    const cwd = (step.cwd || "").trim();
+    const logText = (step.output || "").trim()
+      ? step.output!
+      : step.error && step.status === "fail"
+        ? step.error
+        : "";
+    const exitLabel =
+      step.exitCode != null
+        ? `exit ${step.exitCode}`
+        : step.error?.match(/^Exit\s+\d+/i)?.[0] || "";
+    const hasMeta = Boolean(cmd || cwd || exitLabel);
+    detail.innerHTML = `
+      <div class="flow-detail-head">
+        <span class="flow-detail-label"></span>
+        <span class="flow-detail-status" data-status="${step.status}">${step.status}</span>
+      </div>
+      ${
+        hasMeta
+          ? `<div class="flow-step-meta">
+              ${cwd ? `<div class="flow-step-cwd-line"><span class="flow-meta-key">cwd</span> <code class="flow-meta-val" data-flow-cwd></code></div>` : ""}
+              ${cmd ? `<pre class="flow-step-cmd" data-flow-cmd></pre>` : ""}
+              ${exitLabel ? `<div class="flow-step-exit" data-status="${step.status}">${exitLabel}</div>` : ""}
+            </div>`
+          : ""
+      }
+      ${logText ? `<pre class="flow-step-out" data-flow-out></pre>` : ""}
+      ${
+        waiting
+          ? `<button type="button" class="primary flow-step-approve" data-approve-step="${step.stepId}">${t("flow.approve")}</button>`
+          : ""
+      }
+      ${
+        step.status === "running"
+          ? `<form class="flow-stdin-row" data-flow-stdin>
+              <input type="text" class="flow-stdin-input" autocomplete="off" spellcheck="false" placeholder="${t("flow.stdinPlaceholder")}" />
+              <button type="submit" class="primary flow-stdin-send">${t("flow.stdinSend")}</button>
+            </form>`
+          : ""
+      }
+      ${
+        !hasMeta && !logText && !waiting && step.status !== "running"
+          ? `<p class="flow-detail-empty">${t("flow.detailIdle")}</p>`
+          : ""
+      }
+    `;
+    (detail.querySelector(".flow-detail-label") as HTMLElement).textContent =
+      step.label;
+    const cwdEl = detail.querySelector("[data-flow-cwd]") as HTMLElement | null;
+    if (cwdEl) cwdEl.textContent = cwd;
+    const cmdEl = detail.querySelector("[data-flow-cmd]") as HTMLElement | null;
+    if (cmdEl) cmdEl.textContent = cmd;
+    const out = detail.querySelector("[data-flow-out]") as HTMLElement | null;
+    if (out && logText) out.textContent = logText;
+    detail
+      .querySelector<HTMLButtonElement>("[data-approve-step]")
+      ?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        handlers.onFlowApprove(cardId, step.stepId);
+      });
+    const stdinForm = detail.querySelector(
+      "[data-flow-stdin]"
+    ) as HTMLFormElement | null;
+    const stdinInput = detail.querySelector(
+      ".flow-stdin-input"
+    ) as HTMLInputElement | null;
+    stdinForm?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const value = stdinInput?.value ?? "";
+      if (!stdinInput) return;
+      handlers.onFlowStdin(cardId, value);
+      stdinInput.value = "";
+      stdinInput.focus();
+    });
+    // Keep focus usable while the step is running.
+    if (stdinInput && step.status === "running") {
+      requestAnimationFrame(() => stdinInput.focus());
+    }
+  }
+
+  function syncFlowCardUi(card: FlowCard): void {
+    const el = cardEls.get(card.id);
+    if (!el) return;
+    const statusEl = el.querySelector(
+      "[data-flow-status]"
+    ) as HTMLElement | null;
+    if (statusEl) {
+      const st = card.runStatus || "idle";
+      statusEl.dataset.status = st;
+      statusEl.classList.toggle("is-hidden", st === "idle");
+      statusEl.textContent =
+        st === "running"
+          ? t("flow.status.running")
+          : st === "waiting"
+            ? t("flow.status.waiting")
+            : st === "done"
+              ? t("flow.status.done")
+              : st === "error"
+                ? t("flow.status.error")
+                : "";
+    }
+    const pipeline = el.querySelector(
+      "[data-flow-pipeline]"
+    ) as HTMLElement | null;
+    const detail = el.querySelector(
+      "[data-flow-detail]"
+    ) as HTMLElement | null;
+    if (pipeline) {
+      const steps = card.steps || [];
+      const parts: string[] = [];
+      for (let i = 0; i < steps.length; i++) {
+        const step = steps[i]!;
+        if (i > 0) {
+          const prev = steps[i - 1]!;
+          const edgeOn =
+            prev.status === "ok" ||
+            step.status === "running" ||
+            step.status === "waiting" ||
+            step.status === "ok" ||
+            step.status === "fail";
+          parts.push(
+            `<div class="flow-edge${edgeOn ? " is-on" : ""}" aria-hidden="true"></div>`
+          );
+        }
+        const mark =
+          step.status === "ok"
+            ? "✓"
+            : step.status === "fail"
+              ? "!"
+              : step.status === "running" || step.status === "waiting"
+                ? "●"
+                : "";
+        parts.push(`
+          <button type="button" class="flow-node" data-step-id="${step.stepId}" data-status="${step.status}" data-flow-select-step="${step.stepId}">
+            <span class="flow-node-kind">${step.kind}</span>
+            <span class="flow-node-label"></span>
+            <span class="flow-node-mark" aria-hidden="true">${mark}</span>
+          </button>`);
+      }
+      pipeline.innerHTML = parts.join("");
+      for (const step of steps) {
+        const node = pipeline.querySelector(
+          `[data-step-id="${step.stepId}"] .flow-node-label`
+        ) as HTMLElement | null;
+        if (node) node.textContent = step.label;
+      }
+      const activeStep = steps.find(
+        (s) =>
+          s.status === "running" ||
+          s.status === "waiting" ||
+          s.status === "fail"
+      );
+      const remembered = steps.find(
+        (s) => s.stepId === el.dataset.flowSelectedStep
+      );
+      const focusStep =
+        activeStep ||
+        remembered ||
+        steps.filter((s) => s.status === "ok").at(-1) ||
+        steps[0];
+      if (focusStep) el.dataset.flowSelectedStep = focusStep.stepId;
+      pipeline
+        .querySelectorAll<HTMLElement>("[data-flow-select-step]")
+        .forEach((btn) => {
+          btn.classList.toggle(
+            "is-selected",
+            Boolean(focusStep && btn.dataset.flowSelectStep === focusStep.stepId)
+          );
+          btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const id = btn.dataset.flowSelectStep;
+            if (!id) return;
+            el.dataset.flowSelectedStep = id;
+            const selected = steps.find((s) => s.stepId === id);
+            if (selected && detail) renderFlowDetail(detail, card.id, selected);
+            pipeline
+              .querySelectorAll<HTMLElement>("[data-flow-select-step]")
+              .forEach((b) =>
+                b.classList.toggle(
+                  "is-selected",
+                  b.dataset.flowSelectStep === id
+                )
+              );
+          });
+        });
+      if (detail) {
+        if (focusStep) renderFlowDetail(detail, card.id, focusStep);
+        else {
+          detail.innerHTML = `<p class="flow-detail-empty">${t("flow.detailEmpty")}</p>`;
+        }
+      }
+    }
+    const runBtn = el.querySelector(
+      "[data-flow-run]"
+    ) as HTMLButtonElement | null;
+    const abortBtn = el.querySelector(
+      "[data-flow-abort]"
+    ) as HTMLButtonElement | null;
+    // Keep Stop available until the run fully settles (incl. after a failed step).
+    const busy = Boolean(card.runId) ||
+      card.runStatus === "running" ||
+      card.runStatus === "waiting";
+    if (runBtn) runBtn.disabled = busy;
+    if (abortBtn) abortBtn.classList.toggle("hidden", !busy);
+  }
+
+  function buildFlowCard(card: FlowCard): HTMLElement {
+    const el = document.createElement("article");
+    el.className = "board-card board-card-flow";
+    el.tabIndex = -1;
+    el.dataset.cardId = card.id;
+    el.dataset.flowId = card.flowId;
+    el.innerHTML = `
+      <header class="board-card-head">
+        <span class="board-card-ico" aria-hidden="true">${icons.flow(13)}</span>
+        <span class="board-card-title"></span>
+        <span class="board-card-status is-hidden" data-flow-status data-status="idle"></span>
+        <div class="board-card-actions">
+          <button type="button" class="icon ghost" data-flow-edit data-i18n-title="flow.edit" title="${t("flow.edit")}">${icons.pencil(13)}</button>
+          <button type="button" class="icon ghost board-card-close" data-i18n-title="board.close" title="Close">×</button>
+        </div>
+      </header>
+      <div class="board-card-body board-flow-body">
+        <div class="flow-pipeline" data-flow-pipeline></div>
+        <div class="flow-detail" data-flow-detail></div>
+        <div class="flow-card-actions">
+          <button type="button" class="primary" data-flow-run>${t("flow.run")}</button>
+          <button type="button" class="ghost hidden" data-flow-abort>${t("flow.abort")}</button>
+        </div>
+      </div>
+      <div class="board-card-resize" aria-hidden="true"></div>
+    `;
+    (el.querySelector(".board-card-title") as HTMLElement).textContent =
+      card.title || t("flow.untitled");
+    el.addEventListener("mousedown", () => {
+      if (spaceHeld) return;
+      bringToFront(card.id);
+      setFocus({ kind: "flow", cardId: card.id });
+    });
+    el.querySelector(".board-card-close")!.addEventListener("click", (e) => {
+      e.stopPropagation();
+      handlers.onCloseFlow(card.id);
+    });
+    el.querySelector("[data-flow-edit]")!.addEventListener("click", (e) => {
+      e.stopPropagation();
+      handlers.onFlowEdit(card.id);
+    });
+    el.querySelector("[data-flow-run]")!.addEventListener("click", (e) => {
+      e.stopPropagation();
+      handlers.onFlowRun(card.id);
+    });
+    el.querySelector("[data-flow-abort]")!.addEventListener("click", (e) => {
+      e.stopPropagation();
+      handlers.onFlowAbort(card.id);
+    });
+    wireDrag(el, card.id);
+    wireResize(el, card.id);
+    return el;
+  }
+
   function mountCard(card: BoardCard): void {
     const sessionTitle =
-      cards.find((c) => c.kind === "terminal" && c.tabId === card.tabId)
-        ?.title ?? card.tabId;
+      card.kind === "terminal" || card.kind === "prompt"
+        ? cards.find((c) => c.kind === "terminal" && c.tabId === card.tabId)
+            ?.title ?? card.tabId
+        : card.title;
     const el =
       card.kind === "terminal"
         ? buildTerminalCard(card)
-        : buildPromptCard(card, sessionTitle);
+        : card.kind === "prompt"
+          ? buildPromptCard(card, sessionTitle)
+          : buildFlowCard(card);
     cardEls.set(card.id, el);
     surface.append(el);
     layoutCard(card);
     if (card.kind === "prompt") syncPromptStatusBadge(card);
+    if (card.kind === "flow") syncFlowCardUi(card);
     markMinimapDirty();
   }
 
@@ -1925,6 +2286,9 @@ export function createBoardPane(
   broadcastBtn.addEventListener("click", () => {
     handlers.onToggleBroadcast();
   });
+  root.querySelector("#btn-board-add-flow")!.addEventListener("click", () => {
+    handlers.onAddFlow();
+  });
   root.querySelector("#btn-board-zoom-in")!.addEventListener("click", () => {
     zoomByFactor(ZOOM_BTN_STEP);
   });
@@ -2049,7 +2413,10 @@ export function createBoardPane(
     },
     removeTab(tabId) {
       const removeIds = cards
-        .filter((c) => c.tabId === tabId)
+        .filter(
+          (c) =>
+            (c.kind === "terminal" || c.kind === "prompt") && c.tabId === tabId
+        )
         .map((c) => c.id);
       for (const id of removeIds) {
         snow.dump(id);
@@ -2058,7 +2425,13 @@ export function createBoardPane(
         rain.dump(id);
         fireflies.dump(id);
       }
-      cards = cards.filter((c) => c.tabId !== tabId);
+      cards = cards.filter(
+        (c) =>
+          !(
+            (c.kind === "terminal" || c.kind === "prompt") &&
+            c.tabId === tabId
+          )
+      );
       for (const id of removeIds) removeCardEl(id);
       // Closing the focused terminal clears selection — do not auto-pick
       // another card (that would keep the Files "This computer" pane open).
@@ -2119,6 +2492,81 @@ export function createBoardPane(
       updateLinks();
       schedulePersist();
       return card;
+    },
+    addFlow({ flowId, title, steps }) {
+      const origin = cascadeOrigin(FLOW_W, FLOW_H);
+      const card: FlowCard = {
+        id: uid("flow"),
+        kind: "flow",
+        flowId,
+        title: title || t("flow.untitled"),
+        runStatus: "idle",
+        steps: steps || [],
+        x: origin.x,
+        y: origin.y,
+        w: FLOW_W,
+        h: FLOW_H,
+        z: nextZ(),
+      };
+      clampCardInWorld(card);
+      cards = [...cards, card];
+      mountCard(card);
+      syncFlowCardUi(card);
+      setFocus({ kind: "flow", cardId: card.id });
+      syncEmpty();
+      schedulePersist();
+      return card;
+    },
+    updateFlowCard(cardId, patch) {
+      const card = cards.find(
+        (c): c is FlowCard => c.kind === "flow" && c.id === cardId
+      );
+      if (!card) return;
+      if (patch.title !== undefined) card.title = patch.title;
+      if (patch.flowId !== undefined) card.flowId = patch.flowId;
+      if (patch.runStatus !== undefined) card.runStatus = patch.runStatus;
+      if (patch.runId !== undefined) card.runId = patch.runId;
+      if (patch.steps !== undefined) card.steps = patch.steps;
+      const el = cardEls.get(card.id);
+      const titleEl = el?.querySelector(".board-card-title");
+      if (titleEl) titleEl.textContent = card.title;
+      syncFlowCardUi(card);
+      markMinimapDirty();
+      schedulePersist();
+    },
+    appendFlowStepOutput(cardId, stepId, chunk) {
+      if (!chunk) return;
+      const card = cards.find(
+        (c): c is FlowCard => c.kind === "flow" && c.id === cardId
+      );
+      if (!card) return;
+      const step = (card.steps || []).find((s) => s.stepId === stepId);
+      if (!step) return;
+      const next = `${step.output || ""}${chunk}`;
+      step.output = next.length > 100_000 ? next.slice(-100_000) : next;
+      const el = cardEls.get(card.id);
+      if (!el) return;
+      // Prefer the live log pane; if this step isn't selected yet, select it.
+      if (el.dataset.flowSelectedStep !== stepId) {
+        el.dataset.flowSelectedStep = stepId;
+        syncFlowCardUi(card);
+        return;
+      }
+      const detail = el.querySelector("[data-flow-detail]") as HTMLElement | null;
+      if (!detail) return;
+      let out = detail.querySelector(
+        "[data-flow-out]"
+      ) as HTMLPreElement | null;
+      if (!out) {
+        // First chunk — rebuild detail so the log pane exists.
+        renderFlowDetail(detail, card.id, step);
+        out = detail.querySelector(
+          "[data-flow-out]"
+        ) as HTMLPreElement | null;
+      }
+      if (!out) return;
+      out.textContent = step.output;
+      out.scrollTop = out.scrollHeight;
     },
     setPromptRunStatus(cardId, status) {
       const card = cards.find(
@@ -2192,7 +2640,7 @@ export function createBoardPane(
     },
     applyPersisted(state, liveTabIds) {
       // Keep live terminal cards (openLocal may already have mounted them).
-      // Only replace prompt cards from disk — never wipe active terminals.
+      // Only replace prompt/flow cards from disk — never wipe active terminals.
       const keptTerminals = cards.filter(
         (c): c is TerminalCard =>
           c.kind === "terminal" && liveTabIds.has(c.tabId)
@@ -2209,21 +2657,44 @@ export function createBoardPane(
       zCounter = Math.max(1, ...keptTerminals.map((c) => c.z), 1);
 
       for (const raw of state.cards) {
-        if (raw.kind !== "prompt") continue;
-        if (!liveTabIds.has(raw.tabId)) continue;
-        const savedStatus = raw.runStatus || "idle";
-        const card: PromptCard = {
-          ...raw,
-          kind: "prompt",
-          parentId: raw.parentId,
-          // Mid-run status cannot resume after restart — settle to idle/done/error.
-          runStatus:
-            savedStatus === "running" || savedStatus === "waiting"
-              ? "idle"
-              : savedStatus,
-          z: nextZ(),
-        };
-        cards.push(card);
+        if (raw.kind === "prompt") {
+          if (!liveTabIds.has(raw.tabId)) continue;
+          const savedStatus = raw.runStatus || "idle";
+          const card: PromptCard = {
+            ...raw,
+            kind: "prompt",
+            parentId: raw.parentId,
+            // Mid-run status cannot resume after restart — settle to idle/done/error.
+            runStatus:
+              savedStatus === "running" || savedStatus === "waiting"
+                ? "idle"
+                : savedStatus,
+            z: nextZ(),
+          };
+          cards.push(card);
+          continue;
+        }
+        if (raw.kind === "flow") {
+          const savedStatus = raw.runStatus || "idle";
+          const card: FlowCard = {
+            ...raw,
+            kind: "flow",
+            runStatus:
+              savedStatus === "running" || savedStatus === "waiting"
+                ? "idle"
+                : savedStatus,
+            runId: undefined,
+            steps: (raw.steps || []).map((s) => ({
+              ...s,
+              status:
+                s.status === "running" || s.status === "waiting"
+                  ? "pending"
+                  : s.status,
+            })),
+            z: nextZ(),
+          };
+          cards.push(card);
+        }
       }
       // Drop parentId when parent was not restored.
       const ids = new Set(cards.map((c) => c.id));
@@ -2232,9 +2703,13 @@ export function createBoardPane(
         if (!ids.has(card.parentId)) delete card.parentId;
       }
       for (const card of cards) {
-        if (card.kind !== "prompt") continue;
-        mountCard(card);
-        syncPromptStatusBadge(card);
+        if (card.kind === "prompt") {
+          mountCard(card);
+          syncPromptStatusBadge(card);
+        } else if (card.kind === "flow") {
+          mountCard(card);
+          syncFlowCardUi(card);
+        }
       }
       if (state.camera) {
         camera = {
@@ -2294,6 +2769,7 @@ export function createBoardPane(
     },
     syncEmpty,
     bringToFront,
+    focusCard,
     setMinimized(cardId, minimized) {
       const card = cards.find((c) => c.id === cardId);
       if (!card || card.kind !== "terminal") return;
@@ -2391,11 +2867,13 @@ export function createBoardPane(
       for (const id of removeIds) removeCardEl(id);
       if (focus && removeIds.includes(focus.cardId)) {
         const next = cards[0];
-        setFocus(
-          next
-            ? { kind: next.kind, cardId: next.id, tabId: next.tabId }
-            : null
-        );
+        if (!next) {
+          setFocus(null);
+        } else if (next.kind === "flow") {
+          setFocus({ kind: "flow", cardId: next.id });
+        } else {
+          setFocus({ kind: next.kind, cardId: next.id, tabId: next.tabId });
+        }
       }
       syncEmpty();
       syncAddPromptEnabled();

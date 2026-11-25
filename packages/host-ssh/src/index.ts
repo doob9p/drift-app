@@ -188,7 +188,14 @@ export interface SshPtyBackend {
   resize(cols: number, rows: number): void;
   exec(
     command: string,
-    opts?: { cwd?: string; timeoutMs?: number; stdin?: string | Buffer }
+    opts?: {
+      cwd?: string;
+      timeoutMs?: number;
+      stdin?: string | Buffer;
+      onChunk?: (chunk: string) => void;
+      abortSignal?: AbortSignal;
+      onStdin?: (write: (data: string) => void) => void;
+    }
   ): Promise<ExecResult>;
   getCwd(): Promise<string>;
   setCwd(cwd: string): void;
@@ -205,12 +212,16 @@ export function sshMuxSupported(): boolean {
 }
 
 /**
- * When mux is unavailable, password auth needs ASKPASS instead of BatchMode.
- * Returns null when BatchMode (key/mux) is enough.
+ * Attach SSH_ASKPASS when a password is available.
+ *
+ * Previously skipped askpass whenever ControlMaster was supported (macOS/Linux).
+ * That only works while a live master already exists — flow uploads and one-shot
+ * exec often run with no master, then BatchMode fails with
+ * `Permission denied (publickey,...,password)`.
  */
 function createNonMuxAskpass(password?: string): AskpassHandle | null {
   const pw = password?.trim();
-  if (!pw || sshMuxSupported()) return null;
+  if (!pw) return null;
   return createAskpassHandle(pw);
 }
 
@@ -401,7 +412,10 @@ export function createSshPty(
         execOpts?.cwd ?? cwdGuess,
         execOpts?.timeoutMs,
         storedPassword || undefined,
-        execOpts?.stdin
+        execOpts?.stdin,
+        execOpts?.onChunk,
+        execOpts?.abortSignal,
+        execOpts?.onStdin
       );
     },
     async getCwd() {
@@ -823,12 +837,15 @@ export async function uploadFilesViaScp(
     onProgress?: (p: UploadProgress) => void;
     /** Required on Windows for password-auth hosts (no ControlMaster). */
     password?: string;
+    abortSignal?: AbortSignal;
   }
 ): Promise<{ ok: true } | { error: string }> {
   const cleaned = localPaths.map((p) => p.trim()).filter(Boolean);
   if (!cleaned.length) return { error: "No files" };
+  if (opts?.abortSignal?.aborted) return { error: "Aborted" };
   const idleMs = resolveTransferIdleMs(opts?.timeoutMs);
   const onProgress = opts?.onProgress;
+  const abortSignal = opts?.abortSignal;
   const askpass = createNonMuxAskpass(opts?.password);
   const passwordAuth = Boolean(askpass);
   const transferEnv = askpass
@@ -870,15 +887,30 @@ export async function uploadFilesViaScp(
         currentFileStart: 0,
         currentName: path.basename(cleaned[0] || ""),
       };
+      let watch: ReturnType<typeof createIdleWatch> | undefined;
       const finish = (
         result: { ok: true } | { error: string } | "missing" | "unsupported"
       ) => {
         if (settled) return;
         settled = true;
-        watch.clear();
+        watch?.clear();
+        abortSignal?.removeEventListener("abort", onAbort);
         resolve(result);
       };
-      const watch = createIdleWatch(
+      const onAbort = () => {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          /* ignore */
+        }
+        finish({ error: "Aborted" });
+      };
+      if (abortSignal?.aborted) {
+        onAbort();
+        return;
+      }
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
+      watch = createIdleWatch(
         (reason) => {
           child.kill("SIGKILL");
           finish({
@@ -891,7 +923,7 @@ export async function uploadFilesViaScp(
         { idleMs }
       );
       const onChunk = (d: Buffer) => {
-        watch.touch();
+        watch?.touch();
         const text = d.toString("utf8");
         stderr += text;
         if (!onProgress) return;
@@ -979,6 +1011,7 @@ export async function uploadFilesViaScp(
       src,
       dest,
     ];
+    if (abortSignal?.aborted) return { error: "Aborted" };
     const one = await new Promise<{ ok: true } | { error: string }>((resolve) => {
       const child = spawn(scpBinary(), args, {
         env: transferEnv,
@@ -987,14 +1020,30 @@ export async function uploadFilesViaScp(
       let stderr = "";
       let settled = false;
       let lastRemoteBytes = 0;
+      let watch: ReturnType<typeof createIdleWatch> | undefined;
+      let poll: ReturnType<typeof setInterval> | undefined;
       const finish = (result: { ok: true } | { error: string }) => {
         if (settled) return;
         settled = true;
-        clearInterval(poll);
-        watch.clear();
+        if (poll) clearInterval(poll);
+        watch?.clear();
+        abortSignal?.removeEventListener("abort", onAbort);
         resolve(result);
       };
-      const watch = createIdleWatch(
+      const onAbort = () => {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          /* ignore */
+        }
+        finish({ error: "Aborted" });
+      };
+      if (abortSignal?.aborted) {
+        onAbort();
+        return;
+      }
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
+      watch = createIdleWatch(
         (reason) => {
           child.kill("SIGKILL");
           finish({
@@ -1019,10 +1068,10 @@ export async function uploadFilesViaScp(
         });
         if (!heartbeat && fileBytes > lastRemoteBytes) {
           lastRemoteBytes = fileBytes;
-          watch.touch();
+          watch?.touch();
         }
       };
-      const poll = setInterval(() => {
+      poll = setInterval(() => {
         void probeRemoteFileSize(
           session,
           remoteFile,
@@ -1035,10 +1084,10 @@ export async function uploadFilesViaScp(
         });
       }, 1_000);
       child.stderr.on("data", (d: Buffer) => {
-        watch.touch();
+        watch?.touch();
         stderr += d.toString("utf8");
       });
-      child.stdout?.on("data", () => watch.touch());
+      child.stdout?.on("data", () => watch?.touch());
       child.on("error", (err) => finish({ error: err.message }));
       child.on("close", (code) => {
         if (code === 0) finish({ ok: true });
@@ -1345,21 +1394,47 @@ export async function downloadFilesViaScp(
   }
 }
 
+/**
+ * Run with the account login shell (often zsh) so aliases like `ll` match an
+ * interactive SSH session. Caller must request a TTY (`-tt`) or zsh/bash will
+ * print ioctl / job-control noise and may skip interactive rc aliases.
+ */
+function wrapRemoteLoginCommand(cwd: string, command: string): string {
+  const body = [
+    `cd ${shellQuote(cwd)} 2>/dev/null || true`,
+    command,
+  ].join("; ");
+  const quoted = shellQuote(body);
+  // Prefer $SHELL (zsh on many hosts); bash fallback.
+  return (
+    `if [ -n "\${SHELL:-}" ] && [ -x "$SHELL" ]; then ` +
+    `exec "$SHELL" -lic ${quoted}; ` +
+    `elif [ -x /bin/zsh ]; then ` +
+    `exec /bin/zsh -lic ${quoted}; ` +
+    `else ` +
+    `exec /bin/bash -lic ${quoted}; ` +
+    `fi`
+  );
+}
+
 function runSshExec(
   session: SavedSession,
   command: string,
   cwd: string,
   timeoutMs = 60_000,
   password?: string,
-  stdin?: string | Buffer
+  stdin?: string | Buffer,
+  onChunk?: (chunk: string) => void,
+  abortSignal?: AbortSignal,
+  onStdin?: (write: (data: string) => void) => void
 ): Promise<ExecResult> {
-  const remote = `cd ${shellQuote(cwd)} 2>/dev/null; ${command}`;
+  const remote = wrapRemoteLoginCommand(cwd || "~", command);
   const askpass = createNonMuxAskpass(password);
   const passwordAuth = Boolean(askpass);
-  // Mux platforms: slave reuses ControlMaster (BatchMode). Windows: ASKPASS.
+  // TTY required so login-shell rc/aliases load cleanly (same as `ssh host`).
   const base = buildSshArgs(
     { ...session, startDir: undefined },
-    { tty: false, batch: !passwordAuth }
+    { tty: true, batch: !passwordAuth }
   );
   if (passwordAuth) {
     pushPasswordAuthOptions(base, {
@@ -1373,6 +1448,11 @@ function runSshExec(
     : process.env;
 
   return new Promise((resolve) => {
+    if (abortSignal?.aborted) {
+      askpass?.cleanup();
+      resolve({ stdout: "", stderr: "Aborted", exitCode: null });
+      return;
+    }
     const child = spawn(sshBinary(), base, {
       env,
       windowsHide: true,
@@ -1381,27 +1461,47 @@ function runSshExec(
     let stdout = "";
     let stderr = "";
     let settled = false;
-    const finish = (result: ExecResult) => {
-      askpass?.cleanup();
-      resolve(result);
+    const push = (chunk: string, sink: "stdout" | "stderr") => {
+      if (sink === "stdout") stdout += chunk;
+      else stderr += chunk;
+      onChunk?.(chunk);
     };
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill("SIGKILL");
-      finish({ stdout, stderr, exitCode: null, timedOut: true });
-    }, timeoutMs);
-
-    child.stdout.on("data", (d: Buffer) => {
-      stdout += d.toString("utf8");
-    });
-    child.stderr.on("data", (d: Buffer) => {
-      stderr += d.toString("utf8");
-    });
-    child.on("error", (err) => {
+    const finish = (result: ExecResult, kill = false) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      abortSignal?.removeEventListener("abort", onAbort);
+      if (kill) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          /* ignore */
+        }
+      }
+      askpass?.cleanup();
+      resolve(result);
+    };
+    const onAbort = () =>
+      finish({ stdout, stderr: stderr || "Aborted", exitCode: null }, true);
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+    onStdin?.((data) => {
+      try {
+        if (!settled) child.stdin.write(data);
+      } catch {
+        /* ignore */
+      }
+    });
+    const timer = setTimeout(() => {
+      finish({ stdout, stderr, exitCode: null, timedOut: true }, true);
+    }, timeoutMs);
+
+    child.stdout.on("data", (d: Buffer) => {
+      push(d.toString("utf8"), "stdout");
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      push(d.toString("utf8"), "stderr");
+    });
+    child.on("error", (err) => {
       finish({
         stdout,
         stderr: stderr || err.message,
@@ -1409,9 +1509,6 @@ function runSshExec(
       });
     });
     child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
       finish({ stdout, stderr, exitCode: code });
     });
 
@@ -1423,6 +1520,10 @@ function runSshExec(
         : typeof stdin === "string"
           ? Buffer.from(stdin, "utf8")
           : stdin;
+    // Keep stdin open for interactive answers from the flow card UI.
+    if (onStdin && (!payload || payload.length === 0)) {
+      return;
+    }
     if (!payload || payload.length === 0) {
       child.stdin.end();
       return;

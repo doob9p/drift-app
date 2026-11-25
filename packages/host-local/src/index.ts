@@ -23,7 +23,15 @@ export interface LocalPtyBackend {
   resize(cols: number, rows: number): void;
   exec(
     command: string,
-    opts?: { cwd?: string; timeoutMs?: number; stdin?: string | Buffer }
+    opts?: {
+      cwd?: string;
+      timeoutMs?: number;
+      stdin?: string | Buffer;
+      onChunk?: (chunk: string) => void;
+      abortSignal?: AbortSignal;
+      /** Called once the process is ready to accept typed input. */
+      onStdin?: (write: (data: string) => void) => void;
+    }
   ): Promise<ExecResult>;
   getCwd(): Promise<string>;
   dispose(): Promise<void>;
@@ -146,13 +154,24 @@ function cleanEnv(): Record<string, string> {
   }
 
   const pathKey = isWin() && env.Path && !env.PATH ? "Path" : "PATH";
-  const inherited = env.PATH || env.Path || "";
+  const inherited = scrubPathValue(env.PATH || env.Path || "");
   const loginPath = resolveLoginPath();
-  if (loginPath) {
-    env.PATH = loginPath;
+  if (loginPath || inherited) {
+    // Login PATH first (Homebrew etc.), then scrubbed parent PATH so tools
+    // from the launch shell (pnpm via corepack/nvm/fnm in .zshrc) remain
+    // visible — login-only PATH often misses those.
+    const sep = pathSep();
+    const merged: string[] = [];
+    const seen = new Set<string>();
+    for (const part of [...(loginPath || "").split(sep), ...inherited.split(sep)]) {
+      if (!part) continue;
+      const key = isWin() ? part.toLowerCase() : part;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(part);
+    }
+    env.PATH = merged.join(sep);
     if (isWin() && env.Path) delete env.Path;
-  } else if (inherited) {
-    env[pathKey] = scrubPathValue(inherited);
   } else {
     env.PATH = isWin()
       ? [
@@ -468,7 +487,10 @@ export function createLocalPty(opts?: {
       return runDetached(
         command,
         execOpts?.cwd ?? live ?? cwdGuess,
-        execOpts?.timeoutMs
+        execOpts?.timeoutMs,
+        execOpts?.onChunk,
+        execOpts?.abortSignal,
+        execOpts?.onStdin
       );
     },
     async getCwd() {
@@ -542,54 +564,208 @@ export async function readProcessCwd(pid: number): Promise<string | null> {
 function runDetached(
   command: string,
   cwd: string,
-  timeoutMs = 60_000
+  timeoutMs = 60_000,
+  onChunk?: (chunk: string) => void,
+  abortSignal?: AbortSignal,
+  onStdin?: (write: (data: string) => void) => void
 ): Promise<ExecResult> {
+  // Live flow logs need a real TTY — otherwise Next/pnpm block-buffer pipes
+  // and chunks only arrive when the process exits.
+  if (onChunk) {
+    return runDetachedPty(
+      command,
+      cwd,
+      timeoutMs,
+      onChunk,
+      abortSignal,
+      onStdin
+    );
+  }
   return new Promise((resolve) => {
-    const child = isWin()
-      ? spawn(
-          process.env.ComSpec || process.env.COMSPEC || "cmd.exe",
-          ["/d", "/s", "/c", command],
-          { cwd, env: process.env, windowsHide: true }
-        )
-      : spawn(process.env.SHELL || "/bin/zsh", ["-lc", command], {
-          cwd,
-          env: process.env,
-        });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
+    // Same scrubbing as interactive PTYs — otherwise Electron/Vite NODE_ENV
+    // (and npm lifecycle vars) leak into flow `pnpm build` / Next.js prerender.
+    const env = cleanEnv();
+    if (isWin()) {
+      const child = spawn(
+        process.env.ComSpec || process.env.COMSPEC || "cmd.exe",
+        ["/d", "/s", "/c", command],
+        { cwd, env, windowsHide: true }
+      );
+      onStdin?.((data) => {
+        try {
+          child.stdin?.write(data);
+        } catch {
+          /* ignore */
+        }
+      });
+      return settleDetached(child, timeoutMs, resolve, abortSignal);
+    }
+
+    // Interactive login so ~/.zshrc (nvm / fnm / corepack pnpm) loads — plain
+    // `zsh -lc` skips .zshrc and then `pnpm` is missing even though the board
+    // terminal finds it.
+    const shell = defaultShell();
+    const id = newId();
+    prepareUnixShellEnv(shell, id, env);
+    const base = shellBaseName(shell);
+    const args =
+      base === "zsh" || base === "bash" ? ["-ilc", command] : ["-lc", command];
+    const child = spawn(shell, args, { cwd, env });
+    onStdin?.((data) => {
       try {
-        child.kill();
+        child.stdin?.write(data);
       } catch {
         /* ignore */
       }
-      resolve({ stdout, stderr, exitCode: null, timedOut: true });
-    }, timeoutMs);
+    });
+    return settleDetached(child, timeoutMs, resolve, abortSignal);
+  });
+}
 
-    child.stdout?.on("data", (d: Buffer) => {
-      stdout += d.toString("utf8");
-    });
-    child.stderr?.on("data", (d: Buffer) => {
-      stderr += d.toString("utf8");
-    });
-    child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ stdout, stderr, exitCode: code });
-    });
-    child.on("error", (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({
-        stdout,
-        stderr: stderr || (err instanceof Error ? err.message : String(err)),
-        exitCode: null,
+function runDetachedPty(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+  onChunk: (chunk: string) => void,
+  abortSignal?: AbortSignal,
+  onStdin?: (write: (data: string) => void) => void
+): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    if (abortSignal?.aborted) {
+      resolve({ stdout: "", stderr: "Aborted", exitCode: null });
+      return;
+    }
+    const env = cleanEnv();
+    const shell = defaultShell();
+    const id = newId();
+    // Avoid interactive ZDOTDIR wrappers (oh-my-zsh chatter). Quietly load the
+    // user rc so PATH/aliases match a normal terminal, then run the command.
+    if (isWin()) prepareWindowsPowerShellEnv(shell, id, env);
+
+    const base = shellBaseName(shell);
+    let args: string[];
+    if (isWin() && (base === "powershell" || base === "pwsh")) {
+      args = ["-NoLogo", "-Command", command];
+    } else if (isWin() && base === "cmd") {
+      args = ["/d", "/s", "/c", command];
+    } else if (base === "zsh") {
+      args = [
+        "-lc",
+        `source "$HOME/.zshrc" >/dev/null 2>&1 || true; ${command}`,
+      ];
+    } else if (base === "bash") {
+      args = [
+        "-lc",
+        `eval "$(bash -ic 'alias -p' 2>/dev/null)"; shopt -s expand_aliases 2>/dev/null || true; ${command}`,
+      ];
+    } else {
+      args = ["-lc", command];
+    }
+
+    let output = "";
+    let settled = false;
+    let pty: IPty;
+    try {
+      pty = ptySpawn(shell, args, {
+        name: "xterm-256color",
+        cols: 120,
+        rows: 40,
+        cwd,
+        env,
       });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      onChunk(message);
+      resolve({ stdout: "", stderr: message, exitCode: 1 });
+      return;
+    }
+
+    const finish = (exitCode: number | null, timedOut?: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      abortSignal?.removeEventListener("abort", onAbort);
+      try {
+        pty.kill();
+      } catch {
+        /* ignore */
+      }
+      resolve({
+        stdout: output,
+        stderr: "",
+        exitCode,
+        timedOut,
+      });
+    };
+
+    const onAbort = () => finish(null);
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+    onStdin?.((data) => {
+      try {
+        if (!settled) pty.write(data);
+      } catch {
+        /* ignore */
+      }
+    });
+
+    const timer = setTimeout(() => finish(null, true), timeoutMs);
+    pty.onData((chunk) => {
+      output += chunk;
+      if (output.length > 100_000) output = output.slice(-100_000);
+      onChunk(chunk);
+    });
+    pty.onExit(({ exitCode }) => finish(exitCode ?? 0));
+  });
+}
+
+function settleDetached(
+  child: ReturnType<typeof spawn>,
+  timeoutMs: number,
+  resolve: (result: ExecResult) => void,
+  abortSignal?: AbortSignal
+): void {
+  let stdout = "";
+  let stderr = "";
+  let settled = false;
+  const finish = (result: ExecResult, kill = false) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    abortSignal?.removeEventListener("abort", onAbort);
+    if (kill) {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* ignore */
+      }
+    }
+    resolve(result);
+  };
+  const onAbort = () =>
+    finish({ stdout, stderr: stderr || "Aborted", exitCode: null }, true);
+  if (abortSignal?.aborted) {
+    onAbort();
+    return;
+  }
+  abortSignal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => {
+    finish({ stdout, stderr, exitCode: null, timedOut: true }, true);
+  }, timeoutMs);
+
+  child.stdout?.on("data", (d: Buffer) => {
+    stdout += d.toString("utf8");
+  });
+  child.stderr?.on("data", (d: Buffer) => {
+    stderr += d.toString("utf8");
+  });
+  child.on("close", (code) => {
+    finish({ stdout, stderr, exitCode: code });
+  });
+  child.on("error", (err) => {
+    finish({
+      stdout,
+      stderr: stderr || (err instanceof Error ? err.message : String(err)),
+      exitCode: null,
     });
   });
 }
