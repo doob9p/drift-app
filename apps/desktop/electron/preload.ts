@@ -57,6 +57,8 @@ export type DesktopApi = {
     | { error: string }
   >;
   closeTab: (tabId: string) => Promise<void>;
+  /** Local PTY only: true when the shell has a child process running. */
+  isTabBusy: (tabId: string) => Promise<boolean>;
   readyTerminal: (tabId: string) => Promise<void>;
   writeTerminal: (tabId: string, data: string) => Promise<void>;
   resizeTerminal: (
@@ -574,6 +576,7 @@ const api: DesktopApi = {
   openSsh: (sessionId, size) =>
     ipcRenderer.invoke("term:open-ssh", sessionId, size),
   closeTab: (tabId) => ipcRenderer.invoke("term:close", tabId),
+  isTabBusy: (tabId) => ipcRenderer.invoke("term:is-busy", tabId),
   readyTerminal: (tabId) => ipcRenderer.invoke("term:ready", tabId),
   writeTerminal: (tabId, data) =>
     ipcRenderer.invoke("term:write", { tabId, data }),

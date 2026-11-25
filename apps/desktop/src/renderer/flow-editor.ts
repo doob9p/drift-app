@@ -6,6 +6,19 @@ function uid(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function kindIcon(kind: FlowStepKind, size = 12): string {
+  switch (kind) {
+    case "local":
+      return icons.terminal(size);
+    case "ssh":
+      return icons.server(size);
+    case "upload":
+      return icons.upload(size);
+    case "approve":
+      return icons.checkCircle(size);
+  }
+}
+
 export type FlowEditorHandlers = {
   listFlows: () => Promise<FlowDef[]>;
   upsertFlow: (input: {
@@ -38,32 +51,40 @@ export function createFlowEditor(
   backdrop.innerHTML = `
     <div class="modal modal-flow">
       <header class="flow-editor-head">
-        <h2 data-i18n="flow.editorTitle">${t("flow.editorTitle")}</h2>
-        <button type="button" class="ghost" data-flow-close title="${t("settings.close")}">${icons.close(14)}</button>
+        <div class="flow-editor-head-copy">
+          <h2 data-i18n="flow.editorTitle">${t("flow.editorTitle")}</h2>
+          <p class="flow-editor-lead">${t("flow.editorLead")}</p>
+        </div>
+        <button type="button" class="ghost icon" data-flow-close title="${t("settings.close")}" aria-label="${t("settings.close")}">${icons.close(14)}</button>
       </header>
-      <div class="flow-editor-main">
+      <div class="flow-editor-scroll">
         <label class="flow-editor-name">
           <span>${t("flow.name")}</span>
           <input type="text" data-flow-name maxlength="80" />
         </label>
-        <div class="flow-editor-steps-head">
-          <span>${t("flow.steps")}</span>
-          <div class="flow-editor-add-kinds">
-            <button type="button" class="ghost" data-add-kind="local">${t("flow.kind.local")}</button>
-            <button type="button" class="ghost" data-add-kind="ssh">${t("flow.kind.ssh")}</button>
-            <button type="button" class="ghost" data-add-kind="upload">${t("flow.kind.upload")}</button>
-            <button type="button" class="ghost" data-add-kind="approve">${t("flow.kind.approve")}</button>
+        <div class="flow-editor-steps-block">
+          <div class="flow-editor-steps-head">
+            <div class="flow-editor-steps-title">
+              <span>${t("flow.steps")}</span>
+              <span class="flow-editor-steps-count" data-flow-step-count></span>
+            </div>
+            <div class="flow-editor-add-kinds" role="group" aria-label="${t("flow.addStep")}">
+              <button type="button" class="flow-add-kind" data-add-kind="local" data-kind="local">${kindIcon("local", 12)}<span>${t("flow.kind.local")}</span></button>
+              <button type="button" class="flow-add-kind" data-add-kind="ssh" data-kind="ssh">${kindIcon("ssh", 12)}<span>${t("flow.kind.ssh")}</span></button>
+              <button type="button" class="flow-add-kind" data-add-kind="upload" data-kind="upload">${kindIcon("upload", 12)}<span>${t("flow.kind.upload")}</span></button>
+              <button type="button" class="flow-add-kind" data-add-kind="approve" data-kind="approve">${kindIcon("approve", 12)}<span>${t("flow.kind.approve")}</span></button>
+            </div>
           </div>
-        </div>
-        <div class="flow-editor-steps" data-flow-steps></div>
-        <div class="flow-editor-foot">
-          <button type="button" class="ghost danger" data-flow-delete>${t("flow.delete")}</button>
-          <div class="flow-editor-foot-right">
-            <button type="button" class="ghost" data-flow-close>${t("flow.cancel")}</button>
-            <button type="button" class="primary" data-flow-save>${t("flow.save")}</button>
-          </div>
+          <div class="flow-editor-steps" data-flow-steps></div>
         </div>
       </div>
+      <footer class="flow-editor-foot">
+        <button type="button" class="ghost danger" data-flow-delete>${t("flow.delete")}</button>
+        <div class="flow-editor-foot-right">
+          <button type="button" class="ghost" data-flow-close>${t("flow.cancel")}</button>
+          <button type="button" class="primary" data-flow-save>${t("flow.save")}</button>
+        </div>
+      </footer>
     </div>
   `;
   host.append(backdrop);
@@ -80,6 +101,9 @@ export function createFlowEditor(
   const stepsEl = backdrop.querySelector(
     "[data-flow-steps]"
   ) as HTMLElement;
+  const stepCountEl = backdrop.querySelector(
+    "[data-flow-step-count]"
+  ) as HTMLElement;
   const deleteBtn = backdrop.querySelector(
     "[data-flow-delete]"
   ) as HTMLButtonElement;
@@ -91,6 +115,12 @@ export function createFlowEditor(
 
   function syncDeleteVisibility(): void {
     deleteBtn.classList.toggle("hidden", !editingId);
+  }
+
+  function syncStepCount(): void {
+    const n = draftSteps.length;
+    stepCountEl.textContent = n ? String(n) : "";
+    stepCountEl.classList.toggle("is-empty", n === 0);
   }
 
   function readStepsFromDom(): FlowStep[] {
@@ -145,7 +175,79 @@ export function createFlowEditor(
     });
   }
 
+  function renderStepBody(step: FlowStep, sessionOptions: string): string {
+    if (step.kind === "approve") {
+      return `<p class="flow-step-hint">${t("flow.approveHint")}</p>`;
+    }
+    if (step.kind === "upload") {
+      return `
+        <div class="flow-step-fields">
+          <label class="flow-step-field">
+            <span>${t("flow.sshSession")}</span>
+            <select data-step-session>${sessionOptions || `<option value="">${t("flow.noSessions")}</option>`}</select>
+          </label>
+          <label class="flow-step-field">
+            <span>${t("flow.cwd")}</span>
+            <div class="flow-step-cwd-row">
+              <input type="text" data-step-cwd placeholder="${t("flow.cwdPlaceholder")}" spellcheck="false" />
+              <button type="button" class="ghost" data-step-pick-cwd>${t("flow.cwdBrowse")}</button>
+            </div>
+          </label>
+          <label class="flow-step-field">
+            <span>${t("flow.uploadPaths")}</span>
+            <textarea data-step-paths rows="3" spellcheck="false"></textarea>
+          </label>
+          <label class="flow-step-field">
+            <span>${t("flow.remoteDir")}</span>
+            <input type="text" data-step-remote placeholder="~" spellcheck="false" />
+          </label>
+        </div>
+        <p class="flow-step-hint">${t("flow.uploadHint")}</p>`;
+    }
+    const hasAuto = (step.autoInputs || []).length > 0;
+    return `
+      <div class="flow-step-fields">
+        ${
+          step.kind === "ssh"
+            ? `<label class="flow-step-field">
+                <span>${t("flow.sshSession")}</span>
+                <select data-step-session>${sessionOptions || `<option value="">${t("flow.noSessions")}</option>`}</select>
+              </label>`
+            : ""
+        }
+        <label class="flow-step-field">
+          <span>${t("flow.cwd")}</span>
+          <div class="flow-step-cwd-row">
+            <input type="text" data-step-cwd placeholder="${t("flow.cwdPlaceholder")}" spellcheck="false" />
+            ${
+              step.kind === "local"
+                ? `<button type="button" class="ghost" data-step-pick-cwd>${t("flow.cwdBrowse")}</button>`
+                : ""
+            }
+          </div>
+        </label>
+        <label class="flow-step-field flow-step-field-command">
+          <span>${t("flow.command")}</span>
+          <textarea data-step-command rows="3" spellcheck="false"></textarea>
+        </label>
+      </div>
+      <details class="flow-step-advanced"${hasAuto ? " open" : ""}>
+        <summary>${t("flow.advanced")}</summary>
+        <label class="flow-step-field">
+          <span>${t("flow.autoInputs")}</span>
+          <textarea data-step-auto-inputs rows="3" spellcheck="false"></textarea>
+          <p class="flow-step-hint">${t("flow.autoInputsHint")}</p>
+        </label>
+      </details>`;
+  }
+
   function renderSteps(): void {
+    syncStepCount();
+    if (draftSteps.length === 0) {
+      stepsEl.innerHTML = `<div class="flow-steps-empty">${t("flow.stepsEmpty")}</div>`;
+      return;
+    }
+
     stepsEl.innerHTML = draftSteps
       .map((step, index) => {
         const sessionOptions = sessions
@@ -155,70 +257,25 @@ export function createFlowEditor(
           )
           .join("");
         return `
-        <div class="flow-step-row" data-step-row data-step-id="${step.id}" data-kind="${step.kind}">
-          <div class="flow-step-row-top">
-            <span class="flow-step-index">${index + 1}</span>
-            <input type="text" data-step-label value="" />
-            <span class="flow-step-kind-tag">${t(`flow.kind.${step.kind}`)}</span>
-            <button type="button" class="icon ghost" data-step-up title="Up">${icons.chevronUp(12)}</button>
-            <button type="button" class="icon ghost" data-step-down title="Down">${icons.chevronDown(12)}</button>
-            <button type="button" class="icon ghost" data-step-remove title="Remove">${icons.trash(13)}</button>
+        <div class="flow-step-rail">
+          <div class="flow-step-rail-mark" aria-hidden="true">
+            <span class="flow-step-rail-dot">${index + 1}</span>
+            ${index < draftSteps.length - 1 ? `<span class="flow-step-rail-line"></span>` : ""}
           </div>
-          ${
-            step.kind === "approve"
-              ? `<p class="flow-step-hint">${t("flow.approveHint")}</p>`
-              : step.kind === "upload"
-                ? `
-            <p class="flow-step-hint">${t("flow.uploadHint")}</p>
-            <label class="flow-step-session">
-              <span>${t("flow.sshSession")}</span>
-              <select data-step-session>${sessionOptions || `<option value="">${t("flow.noSessions")}</option>`}</select>
-            </label>
-            <label class="flow-step-cwd">
-              <span>${t("flow.cwd")}</span>
-              <div class="flow-step-cwd-row">
-                <input type="text" data-step-cwd placeholder="${t("flow.cwdPlaceholder")}" spellcheck="false" />
-                <button type="button" class="ghost" data-step-pick-cwd>${t("flow.cwdBrowse")}</button>
+          <div class="flow-step-row" data-step-row data-step-id="${step.id}" data-kind="${step.kind}">
+            <div class="flow-step-row-top">
+              <div class="flow-step-identity">
+                <span class="flow-step-kind-tag" data-kind="${step.kind}">${kindIcon(step.kind, 11)}<span>${t(`flow.kind.${step.kind}`)}</span></span>
+                <input type="text" class="flow-step-label" data-step-label value="" placeholder="${t(`flow.kind.${step.kind}`)}" />
               </div>
-            </label>
-            <label class="flow-step-command">
-              <span>${t("flow.uploadPaths")}</span>
-              <textarea data-step-paths rows="3" spellcheck="false"></textarea>
-            </label>
-            <label class="flow-step-cwd">
-              <span>${t("flow.remoteDir")}</span>
-              <input type="text" data-step-remote placeholder="~" spellcheck="false" />
-            </label>`
-                : `
-            ${
-              step.kind === "ssh"
-                ? `<label class="flow-step-session">
-                    <span>${t("flow.sshSession")}</span>
-                    <select data-step-session>${sessionOptions || `<option value="">${t("flow.noSessions")}</option>`}</select>
-                  </label>`
-                : ""
-            }
-            <label class="flow-step-cwd">
-              <span>${t("flow.cwd")}</span>
-              <div class="flow-step-cwd-row">
-                <input type="text" data-step-cwd placeholder="${t("flow.cwdPlaceholder")}" spellcheck="false" />
-                ${
-                  step.kind === "local"
-                    ? `<button type="button" class="ghost" data-step-pick-cwd>${t("flow.cwdBrowse")}</button>`
-                    : ""
-                }
+              <div class="flow-step-actions">
+                <button type="button" class="icon ghost" data-step-up title="${t("flow.moveUp")}" aria-label="${t("flow.moveUp")}">${icons.chevronUp(12)}</button>
+                <button type="button" class="icon ghost" data-step-down title="${t("flow.moveDown")}" aria-label="${t("flow.moveDown")}">${icons.chevronDown(12)}</button>
+                <button type="button" class="icon ghost" data-step-remove title="${t("flow.removeStep")}" aria-label="${t("flow.removeStep")}">${icons.trash(13)}</button>
               </div>
-            </label>
-            <label class="flow-step-command">
-              <span>${t("flow.command")}</span>
-              <textarea data-step-command rows="3" spellcheck="false"></textarea>
-            </label>
-            <label class="flow-step-command">
-              <span>${t("flow.autoInputs")}</span>
-              <textarea data-step-auto-inputs rows="3" spellcheck="false" placeholder="${t("flow.autoInputsPlaceholder")}"></textarea>
-              <p class="flow-step-hint">${t("flow.autoInputsHint")}</p>
-            </label>`
-          }
+            </div>
+            ${renderStepBody(step, sessionOptions)}
+          </div>
         </div>`;
       })
       .join("");
@@ -353,6 +410,11 @@ export function createFlowEditor(
         }
         draftSteps.push(step);
         renderSteps();
+        const last = stepsEl.querySelector(
+          `[data-step-id="${step.id}"] [data-step-label]`
+        ) as HTMLInputElement | null;
+        last?.focus();
+        last?.select();
       });
     }
   );
@@ -392,6 +454,7 @@ export function createFlowEditor(
       }
       backdrop.classList.remove("hidden");
       nameInput.focus();
+      nameInput.select();
     },
     close,
   };

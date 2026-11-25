@@ -1069,7 +1069,7 @@ const noopChat: ChatController = {
 
 function getPromptTabId(cardId: string): string {
   const card = board.findCard(cardId);
-  if (!card || card.kind === "flow") return "";
+  if (!card || card.kind === "flow" || card.kind === "flowInspect") return "";
   return card.tabId;
 }
 
@@ -3239,6 +3239,79 @@ function isTabTerminalExpanded(tabId: string): boolean {
   return Boolean(card && !card.minimized);
 }
 
+function promptCardIsBusy(cardId: string): boolean {
+  const ids = [
+    cardId,
+    ...board
+      .getCards()
+      .filter((c) => c.kind === "prompt" && c.parentId === cardId)
+      .map((c) => c.id),
+  ];
+  return ids.some((id) => isCardGenerating(id));
+}
+
+function flowCardIsBusy(cardId: string): boolean {
+  const card = board.findCard(cardId);
+  if (!card || card.kind !== "flow") return false;
+  return (
+    card.runStatus === "running" ||
+    card.runStatus === "waiting" ||
+    Boolean(card.runId)
+  );
+}
+
+async function terminalTabIsBusy(tabId: string): Promise<boolean> {
+  const promptsBusy = board
+    .getCards()
+    .some(
+      (c) =>
+        c.kind === "prompt" &&
+        c.tabId === tabId &&
+        isCardGenerating(c.id)
+    );
+  if (promptsBusy) return true;
+  try {
+    return Boolean(await api.isTabBusy(tabId));
+  } catch {
+    return false;
+  }
+}
+
+function closePromptCard(cardId: string): void {
+  if (promptCardIsBusy(cardId) && !window.confirm(t("close.confirmPrompt"))) {
+    return;
+  }
+  const childIds = board
+    .getCards()
+    .filter((c) => c.kind === "prompt" && c.parentId === cardId)
+    .map((c) => c.id);
+  for (const id of [cardId, ...childIds]) {
+    if (isCardGenerating(id)) stopPromptAgent(id);
+    promptChats.delete(id);
+    clearPromptAttachments(id);
+    clearPromptQueue(id);
+    promptAgentSessions.delete(id);
+    for (const [runId, cid] of [...runToPrompt]) {
+      if (cid === id) clearRun(runId);
+    }
+    generatingCards.delete(id);
+    if (activePromptCardId === id) activePromptCardId = null;
+  }
+  board.removeCard(cardId);
+}
+
+function closeFlowCard(cardId: string): void {
+  if (flowCardIsBusy(cardId) && !window.confirm(t("close.confirmFlow"))) {
+    return;
+  }
+  const card = board.findCard(cardId);
+  if (card?.kind === "flow" && card.runId) {
+    void api.abortFlow(card.runId);
+  }
+  board.removeCard(cardId);
+  renderFlowList();
+}
+
 board = createBoardPane(els.boardStage, {
   onFocus(focus: BoardFocus) {
     if (!focus) {
@@ -3286,31 +3359,13 @@ board = createBoardPane(els.boardStage, {
     void closeTab(tabId);
   },
   onClosePrompt(cardId) {
-    const childIds = board
-      .getCards()
-      .filter((c) => c.kind === "prompt" && c.parentId === cardId)
-      .map((c) => c.id);
-    for (const id of [cardId, ...childIds]) {
-      if (isCardGenerating(id)) stopPromptAgent(id);
-      promptChats.delete(id);
-      clearPromptAttachments(id);
-      clearPromptQueue(id);
-      promptAgentSessions.delete(id);
-      for (const [runId, cid] of [...runToPrompt]) {
-        if (cid === id) clearRun(runId);
-      }
-      generatingCards.delete(id);
-      if (activePromptCardId === id) activePromptCardId = null;
-    }
-    board.removeCard(cardId);
+    closePromptCard(cardId);
   },
   onCloseFlow(cardId) {
-    const card = board.findCard(cardId);
-    if (card?.kind === "flow" && card.runId) {
-      void api.abortFlow(card.runId);
-    }
+    closeFlowCard(cardId);
+  },
+  onCloseFlowInspect(cardId) {
     board.removeCard(cardId);
-    renderFlowList();
   },
   onAddSub(parentCardId) {
     void addManualSubPrompt(parentCardId);
@@ -3323,9 +3378,6 @@ board = createBoardPane(els.boardStage, {
   },
   onToggleBroadcastMember(tabId) {
     toggleBroadcastMember(tabId);
-  },
-  onAddFlow() {
-    openFlowEditorAndPlace();
   },
   onFlowEdit(cardId) {
     const card = board.findCard(cardId);
@@ -3518,12 +3570,9 @@ function renderFlowList(): void {
       .some((c) => c.kind === "flow" && c.flowId === flow.id);
     const li = document.createElement("li");
     li.className = `flow-list-item${onBoard ? " is-on-board" : ""}`;
-    const stepCount = flow.steps.length;
-    const meta = t("sidebar.flowSteps", { n: String(stepCount) });
     li.innerHTML = `
       <button type="button" class="flow-list-main" data-flow-open="${escapeHtml(flow.id)}">
         <span class="flow-list-title">${escapeHtml(flow.name || t("flow.untitled"))}</span>
-        <span class="flow-list-meta">${escapeHtml(meta)}</span>
       </button>
       <button type="button" class="flow-list-edit icon" data-flow-edit="${escapeHtml(flow.id)}" title="${escapeHtml(t("flow.edit"))}" aria-label="${escapeHtml(t("flow.edit"))}">${icons.pencil(13)}</button>
       <button type="button" class="flow-list-del icon" data-flow-del="${escapeHtml(flow.id)}" title="${escapeHtml(t("flow.delete"))}" aria-label="${escapeHtml(t("flow.delete"))}">${icons.trash(13)}</button>
@@ -3614,10 +3663,23 @@ async function runFlowCard(cardId: string): Promise<void> {
   });
   const res = await api.runFlow({ flowId: flow.id, cardId });
   if ("error" in res) {
-    board.updateFlowCard(cardId, { runStatus: "error" });
+    board.updateFlowCard(cardId, { runStatus: "error", runId: undefined });
     showToast(res.error || t("flow.runFailed"), "error");
     return;
   }
+  const current = board.findCard(cardId);
+  if (!current || current.kind !== "flow") return;
+  // finished/aborted (or started) may have already applied before invoke returned.
+  // Never revive a settled card back into "running".
+  if (
+    current.runStatus === "done" ||
+    current.runStatus === "idle" ||
+    (current.runStatus === "error" && !current.runId)
+  ) {
+    return;
+  }
+  if (current.runId === res.runId) return;
+  if (current.runId && current.runId !== res.runId) return;
   board.updateFlowCard(cardId, { runId: res.runId, runStatus: "running" });
 }
 
@@ -4222,10 +4284,25 @@ function handleShortcut(payload: {
       void openLocal();
       break;
     case "close-tab":
-      // Close the focused surface first (editor doc vs terminal tab).
+      // Close the focused surface first (editor → board card → terminal tab).
       if (editorPane.isFocused()) {
         void editorPane.closeActive();
         break;
+      }
+      {
+        const focus = board.getFocus();
+        if (focus?.kind === "flow") {
+          closeFlowCard(focus.cardId);
+          break;
+        }
+        if (focus?.kind === "flowInspect") {
+          board.removeCard(focus.cardId);
+          break;
+        }
+        if (focus?.kind === "prompt") {
+          closePromptCard(focus.cardId);
+          break;
+        }
       }
       if (state.activeTabId) void closeTab(state.activeTabId);
       break;
@@ -4924,7 +5001,7 @@ async function openLocal(): Promise<void> {
     const started = await api.startLocalPty(created.tabId, { cols, rows });
     if ("error" in started) {
       chat.addError(`Local PTY error: ${started.error}`);
-      await closeTab(created.tabId);
+      await closeTab(created.tabId, { force: true });
       return;
     }
     await api.readyTerminal(created.tabId);
@@ -5020,9 +5097,19 @@ async function openLargeFileInPager(
   tab.term.focus();
 }
 
-async function closeTab(tabId: string): Promise<void> {
+async function closeTab(
+  tabId: string,
+  opts?: { force?: boolean }
+): Promise<void> {
   const tab = state.tabs.get(tabId);
   if (!tab) return;
+  if (
+    !opts?.force &&
+    (await terminalTabIsBusy(tabId)) &&
+    !window.confirm(t("close.confirmTerminal"))
+  ) {
+    return;
+  }
   if (tab.fitTimer != null) window.clearTimeout(tab.fitTimer);
   tab.hostRo?.disconnect();
   tab.search.clearDecorations();

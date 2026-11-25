@@ -59,6 +59,8 @@ import {
   Ellipsis,
   AppWindow,
   Workflow,
+  Upload,
+  CircleCheck,
 } from "lucide";
 
 type IconOpts = {
@@ -160,4 +162,6 @@ export const icons = {
   openCursor: (size = 14) => lucideSvg(AppWindow, { size }),
   /** Deploy / build flow card. */
   flow: (size = 14) => lucideSvg(Workflow, { size }),
+  upload: (size = 14) => lucideSvg(Upload, { size }),
+  checkCircle: (size = 14) => lucideSvg(CircleCheck, { size }),
 };

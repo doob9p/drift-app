@@ -88,7 +88,15 @@ export type FlowCard = BoardCardBase & {
   steps?: FlowCardStepState[];
 };
 
-export type BoardCard = TerminalCard | PromptCard | FlowCard;
+/** Detached step inspector linked to a flow card (n8n-style detail pane). */
+export type FlowInspectCard = BoardCardBase & {
+  kind: "flowInspect";
+  flowCardId: string;
+  stepId: string;
+  title: string;
+};
+
+export type BoardCard = TerminalCard | PromptCard | FlowCard | FlowInspectCard;
 
 export type BoardCamera = {
   x: number;
@@ -102,7 +110,7 @@ export type BoardPersistedState = {
 };
 
 export type BoardFocus = {
-  kind: "terminal" | "prompt" | "flow";
+  kind: "terminal" | "prompt" | "flow" | "flowInspect";
   cardId: string;
   tabId?: string;
 } | null;

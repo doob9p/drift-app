@@ -13,7 +13,7 @@ import {
   type NativeImage,
 } from "electron";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import {
   mkdir,
@@ -771,6 +771,32 @@ function emitTabCwd(tabId: string, cwd: string): void {
     tab.backend.setCwd(cwd);
   }
   mainWindow?.webContents.send("term:cwd", { tabId, cwd });
+}
+
+/** Local interactive shell has a foreground/background child (command running). */
+function localShellHasChildren(pid: number): boolean {
+  if (!Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    if (process.platform === "win32") {
+      const ps = spawnSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-Command",
+          `(Get-CimInstance Win32_Process -Filter "ParentProcessId=${pid}").Count -gt 0`,
+        ],
+        { encoding: "utf8", windowsHide: true, timeout: 1500 }
+      );
+      return (ps.stdout || "").trim().toLowerCase() === "true";
+    }
+    const out = spawnSync("pgrep", ["-P", String(pid)], {
+      encoding: "utf8",
+      timeout: 800,
+    });
+    return out.status === 0 && (out.stdout || "").trim().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /** OSC 7: \x1b]7;file://host/path\x07 or ST-terminated. */
@@ -1761,6 +1787,15 @@ function registerIpc(): void {
     tab.unsubExit?.();
     await tab.backend?.dispose();
     tabs.delete(tabId);
+  });
+
+  /** True when the local shell PTY has a child process (a command is running). */
+  ipcMain.handle("term:is-busy", async (_e, tabId: string) => {
+    const tab = tabs.get(tabId);
+    if (!tab?.backend) return false;
+    const backend = tab.backend as LocalPtyBackend | SshPtyBackend;
+    if (!("pid" in backend) || typeof backend.pid !== "number") return false;
+    return localShellHasChildren(backend.pid);
   });
 
   ipcMain.handle("term:ready", async (_e, tabId: string) => {
