@@ -6040,16 +6040,35 @@ async function continueClaudeWithFolderPick(): Promise<void> {
 }
 
 async function openClaudeFromSidebar(): Promise<void> {
-  const detected = await api.detectClaude();
-  // Require PATH-installed `claude` (same as `which claude`). Bundled Claude.app
-  // alone is not enough — guide install first; optional escape hatch if bundled.
-  if (!detected.ok || detected.source !== "path") {
-    showClaudeMissingCliToast({
-      allowBundled: Boolean(detected.ok && detected.source === "bundled"),
-    });
-    return;
+  const btn = document.getElementById(
+    "btn-claude-projects"
+  ) as HTMLButtonElement | null;
+  if (btn?.disabled) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add("is-busy");
+    btn.setAttribute("aria-busy", "true");
+    btn.innerHTML = `${icons.loading(14)}<span>${t("claude.preparing")}</span>`;
   }
-  await continueClaudeWithFolderPick();
+  try {
+    const detected = await api.detectClaude();
+    // Require PATH-installed `claude` (same as `which claude`). Bundled Claude.app
+    // alone is not enough — guide install first; optional escape hatch if bundled.
+    if (!detected.ok || detected.source !== "path") {
+      showClaudeMissingCliToast({
+        allowBundled: Boolean(detected.ok && detected.source === "bundled"),
+      });
+      return;
+    }
+    await continueClaudeWithFolderPick();
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove("is-busy");
+      btn.removeAttribute("aria-busy");
+      btn.innerHTML = `${icons.bot(14)}<span data-i18n="sidebar.newClaude">${t("sidebar.newClaude")}</span>`;
+    }
+  }
 }
 
 async function restoreSavedClaude(saved: BoardPersistedState): Promise<void> {

@@ -157,6 +157,7 @@ const en: Dict = {
   "claude.worktree": "Add worktree…",
   "claude.projectChipTip": "Show in Projects rail",
   "claude.pickCwd": "Choose a folder for Claude Code",
+  "claude.preparing": "Preparing…",
   "claude.missingCli": "Install the Claude Code CLI first",
   "claude.missingCli.detail":
     "Drift needs `claude` on your PATH (check with: which claude).\n\n1. npm install -g @anthropic-ai/claude-code\n2. Run `claude` once in Terminal to log in\n3. Confirm `which claude` prints a path\n4. Come back and click New Claude again",
@@ -829,6 +830,7 @@ const ko: Dict = {
   "claude.worktree": "워크트리 추가…",
   "claude.projectChipTip": "프로젝트 레일에서 보기",
   "claude.pickCwd": "Claude Code 작업 폴더 선택",
+  "claude.preparing": "준비 중…",
   "claude.missingCli": "먼저 Claude Code CLI를 설치해 주세요",
   "claude.missingCli.detail":
     "Drift는 PATH의 `claude` 명령이 필요합니다. (터미널에서 which claude 로 확인)\n\n1. npm install -g @anthropic-ai/claude-code\n2. 터미널에서 `claude`를 한 번 실행해 로그인\n3. which claude 로 경로가 나오는지 확인\n4. Drift로 돌아와 다시 «새 Claude»를 누르세요",

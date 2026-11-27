@@ -911,6 +911,22 @@ body.is-resizing-col {
   font-weight: 600;
 }
 
+.sidebar-tools .primary.is-busy,
+.sidebar-tools .primary:disabled {
+  opacity: 0.78;
+  cursor: wait;
+}
+
+.sidebar-tools .primary.is-busy svg {
+  animation: drift-spin 0.85s linear infinite;
+}
+
+@keyframes drift-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .btn-row {
   display: grid;
   grid-template-columns: 1fr 1fr;

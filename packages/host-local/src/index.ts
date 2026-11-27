@@ -107,7 +107,9 @@ function scrubPathValue(raw: string): string {
 let cachedLoginPath: string | null | undefined;
 
 /**
- * PATH as a fresh login shell would see it — not Electron/npm's polluted PATH.
+ * PATH as a fresh interactive login shell would see it — not Electron/npm's
+ * polluted PATH. Interactive (`-i`) is required so ~/.zshrc loads (nvm, fnm,
+ * ~/.local/bin/env). Plain `-l` misses those on Dock-launched macOS apps.
  * Cached: login startup is slow and stable for the app lifetime.
  */
 function resolveLoginPath(): string | null {
@@ -120,9 +122,9 @@ function resolveLoginPath(): string | null {
   try {
     const home = os.homedir();
     const user = os.userInfo().username;
-    const result = spawnSync(shell, ["-l", "-c", "printenv PATH"], {
+    const result = spawnSync(shell, ["-il", "-c", "printenv PATH"], {
       encoding: "utf8",
-      timeout: 8000,
+      timeout: 12000,
       env: {
         HOME: home,
         USER: user,
@@ -201,6 +203,14 @@ function cleanEnv(): Record<string, string> {
     }
   }
   return env;
+}
+
+/**
+ * Env for spawning/detecting user CLI tools (e.g. `claude`) from a Dock-launched
+ * Electron app — same PATH Terminal/iTerm would see after ~/.zshrc.
+ */
+export function localShellEnv(): Record<string, string> {
+  return cleanEnv();
 }
 
 function firstExisting(paths: string[]): string | null {

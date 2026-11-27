@@ -4,7 +4,11 @@ import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { createLocalPty, type LocalPtyBackend } from "@drift/host-local";
+import {
+  createLocalPty,
+  localShellEnv,
+  type LocalPtyBackend,
+} from "@drift/host-local";
 
 /** Written to userData so ELECTRON_RUN_AS_NODE can load it without packaging gymnastics. */
 const MCP_SESSIONS_SOURCE = `/**
@@ -295,7 +299,7 @@ export function hasClaudeTranscript(sessionId: string): boolean {
   }
 }
 
-function isExecutableFile(p: string): boolean {
+function isExecutableFile(p: string, env?: NodeJS.ProcessEnv): boolean {
   try {
     if (!existsSync(p)) return false;
     // Skip Linux ELF VM binaries shipped next to the macOS app bundle.
@@ -306,12 +310,45 @@ function isExecutableFile(p: string): boolean {
       encoding: "utf8",
       timeout: 8000,
       stdio: ["ignore", "pipe", "ignore"],
-      env: process.env,
+      env: env ?? localShellEnv(),
     });
     return true;
   } catch {
     return false;
   }
+}
+
+/** Native / npm installs that Dock-launched Electron often misses without shell PATH. */
+function knownClaudeCliPaths(): string[] {
+  const home = os.homedir();
+  const out: string[] = [];
+  if (process.platform === "win32") {
+    const local = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+    out.push(
+      path.join(local, "claude", "claude.exe"),
+      path.join(home, ".local", "bin", "claude.exe")
+    );
+  } else {
+    out.push(path.join(home, ".local", "bin", "claude"));
+    const nvmDir = process.env.NVM_DIR || path.join(home, ".nvm");
+    const nvmCurrent = path.join(nvmDir, "current", "bin", "claude");
+    out.push(nvmCurrent);
+    // Also try the active nvm version directory if `current` symlink is missing.
+    try {
+      const versionsRoot = path.join(nvmDir, "versions", "node");
+      if (existsSync(versionsRoot)) {
+        const versions = readdirSync(versionsRoot).sort((a, b) =>
+          b.localeCompare(a, undefined, { numeric: true })
+        );
+        for (const ver of versions.slice(0, 3)) {
+          out.push(path.join(versionsRoot, ver, "bin", "claude"));
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return out;
 }
 
 /** Claude Desktop ships Claude Code under Application Support (not always on PATH). */
@@ -346,7 +383,7 @@ function findBundledClaudeCli(): string | null {
             "MacOS",
             "claude"
           );
-          if (isExecutableFile(candidate)) return candidate;
+          if (isExecutableFile(candidate, process.env)) return candidate;
         }
       }
     } catch {
@@ -363,7 +400,7 @@ function findBundledClaudeCli(): string | null {
       path.join(root, "claude-code", "claude.exe"),
     ];
     for (const c of candidates) {
-      if (isExecutableFile(c)) return c;
+      if (isExecutableFile(c, process.env)) return c;
     }
   }
   return null;
@@ -373,34 +410,57 @@ export type ClaudeCliDetect =
   | { ok: true; path: string; source: "path" | "bundled" }
   | { ok: false; error: string; bundledPath?: string };
 
+let cachedClaudeCli: ClaudeCliDetect | undefined;
+
 /**
- * Prefer a PATH-installed `claude` (what `which claude` finds).
- * Claude Desktop’s bundled binary is noted separately so the UI can ask
- * the user to install the CLI instead of silently opening a folder picker.
+ * Prefer a PATH-installed `claude` (what Terminal `which claude` finds).
+ * Fast path: well-known installs (e.g. ~/.local/bin) without spawning a shell.
+ * Fallback: interactive-login PATH so Dock-launched Drift sees nvm / fnm.
+ * Result is cached for the process lifetime.
  */
 export function detectClaudeCli(): ClaudeCliDetect {
+  if (cachedClaudeCli) return cachedClaudeCli;
+
+  // Avoid login-shell cost when the native installer is already on disk.
+  for (const candidate of knownClaudeCliPaths()) {
+    if (isExecutableFile(candidate, process.env)) {
+      cachedClaudeCli = { ok: true, path: candidate, source: "path" };
+      return cachedClaudeCli;
+    }
+  }
+
+  const env = localShellEnv();
   try {
     const which = process.platform === "win32" ? "where" : "which";
     const out = execFileSync(which, ["claude"], {
       encoding: "utf8",
       timeout: 5000,
-      env: process.env,
+      env,
     })
       .split(/\r?\n/)
       .map((l) => l.trim())
       .find(Boolean);
-    if (out && isExecutableFile(out)) {
-      return { ok: true, path: out, source: "path" };
+    if (out && isExecutableFile(out, env)) {
+      cachedClaudeCli = { ok: true, path: out, source: "path" };
+      return cachedClaudeCli;
     }
   } catch {
     /* fall through */
   }
+  for (const candidate of knownClaudeCliPaths()) {
+    if (isExecutableFile(candidate, env)) {
+      cachedClaudeCli = { ok: true, path: candidate, source: "path" };
+      return cachedClaudeCli;
+    }
+  }
   const bundled = findBundledClaudeCli();
   if (bundled) {
     // Still return path for spawn/resume, but mark source so UI can require PATH install.
-    return { ok: true, path: bundled, source: "bundled" };
+    cachedClaudeCli = { ok: true, path: bundled, source: "bundled" };
+    return cachedClaudeCli;
   }
-  return { ok: false, error: "not_found" };
+  cachedClaudeCli = { ok: false, error: "not_found" };
+  return cachedClaudeCli;
 }
 
 function mapHookToStatus(eventName: string): ClaudeAgentStatus {
